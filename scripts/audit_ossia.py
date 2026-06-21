@@ -6,8 +6,11 @@ Run: .venv/bin/python scripts/audit_ossia.py
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
+import tempfile
+import time
 import traceback
 from contextlib import AsyncExitStack
 from typing import Any
@@ -16,12 +19,13 @@ from dotenv import find_dotenv, load_dotenv
 
 load_dotenv(find_dotenv(usecwd=True))
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, ToolMessage  # noqa: E402
 from langgraph.store.memory import InMemoryStore
 
-from ossia.agent import build_agent_async
-from ossia.config import Provider, Settings, get_settings
-from ossia.memory import PostgresMemoryStore, get_checkpointer, get_store
+from ossia.config import Provider, Settings as _S, get_settings
+from ossia.memory import get_checkpointer, get_store
+from ossia.agent import build_agent_async, build_agent  # noqa: E402
+from ossia.middleware import RevisionLoopCapMiddleware, RetryToolMiddleware  # noqa: E402
 
 
 def _section(title: str) -> None:
@@ -55,22 +59,24 @@ async def audit_memory() -> None:
     else:
         _ok("POSTGRES_URL is set; skipping unset-DSN error check")
 
-    # 2. PostgresMemoryStore wraps a BaseStore (InMemoryStore stand-in) correctly.
+    # 2. BaseStore-backed memory works via InMemoryStore (no PostgresMemoryStore wrapper).
     store = InMemoryStore()
     await store.aput(("users", "u1"), "pref", {"tone": "concise"})
-    mem = PostgresMemoryStore(store)
-    got = await mem.get(("users", "u1"), "pref")
+    item = await store.aget(("users", "u1"), "pref")
+    got = item.value if item else None
     assert got == {"tone": "concise"}, got
-    _ok(f"PostgresMemoryStore.get returns item.value: {got}")
+    _ok(f"BaseStore.get returns item.value: {got}")
 
-    await mem.put(("users", "u1"), "summary", {"last": "reset credentials"})
-    got2 = await mem.get(("users", "u1"), "summary")
+    await store.aput(("users", "u1"), "summary", {"last": "reset credentials"})
+    item2 = await store.aget(("users", "u1"), "summary")
+    got2 = item2.value if item2 else None
     assert got2 == {"last": "reset credentials"}, got2
-    _ok(f"PostgresMemoryStore.put/get round-trips: {got2}")
+    _ok(f"BaseStore.put/get round-trips: {got2}")
 
-    found = await mem.search(("users", "u1"))
-    assert any("reset" in str(v) for v in found), found
-    _ok(f"PostgresMemoryStore.search returns values: {[str(v)[:40] for v in found]}")
+    found = await store.asearch(("users", "u1"))
+    vals = [i.value for i in found]
+    assert any("reset" in str(v) for v in vals), vals
+    _ok(f"BaseStore.search returns values: {[str(v)[:40] for v in vals]}")
 
     # 3. get_store also raises a clear error when POSTGRES_URL is unset.
     if not settings.postgres_url:
@@ -85,7 +91,7 @@ async def audit_process_middleware() -> None:
     """Audit process: revision-loop cap and retry middleware behavior."""
     _section("PROCESS AUDIT (middleware)")
 
-    from ossia.middleware import RevisionLoopCapMiddleware, RetryToolMiddleware
+    from ossia.middleware import RetryToolMiddleware, RevisionLoopCapMiddleware
 
     # --- Revision loop cap ---
     cap = RevisionLoopCapMiddleware(max_loops=2)
@@ -93,7 +99,6 @@ async def audit_process_middleware() -> None:
     forced_seen: list[bool] = []
 
     async def grade_handler(_request: Any) -> Any:
-        from langchain_core.messages import ToolMessage
 
         return ToolMessage(content="grade ok", tool_call_id="t", name="grade_response")
 
@@ -102,7 +107,6 @@ async def audit_process_middleware() -> None:
             self.tool_call = {"name": name, "id": "t", "args": {}}
 
     # Simulate 4 grade calls; the 3rd (count=3 > max_loops=2) must force finalize.
-    from langchain_core.messages import ToolMessage
 
     for i in range(1, 5):
         result = await cap.awrap_tool_call(_Req("grade_response"), grade_handler)
@@ -123,7 +127,6 @@ async def audit_process_middleware() -> None:
         calls.append(1)
         if len(calls) < 3:
             raise RuntimeError("transient")
-        from langchain_core.messages import ToolMessage
 
         return ToolMessage(content="recovered", tool_call_id="t", name="search_knowledge_base")
 
@@ -175,7 +178,7 @@ async def audit_runtime_and_langsmith() -> None:
     """Audit runtime: build agent with MCP, run a real query, stream, trace."""
     _section("RUNTIME AUDIT (end-to-end + LangSmith)")
 
-    settings = Settings(
+    settings = _S(
         provider=Provider.OPENROUTER,
         model="openai/gpt-4o-mini",
         openrouter_api_key=os.environ.get("OPENROUTER_API_KEY"),
@@ -263,15 +266,9 @@ async def audit_fix_verifications() -> None:
     """Verify the second-round review fixes behave correctly."""
     _section("FIX VERIFICATIONS")
 
-    from ossia.config import Settings as _S
-    from ossia.middleware import RevisionLoopCapMiddleware
-
     # 1. MCP graceful degradation: a bad MCP server must not abort agent build.
-    import json as _json
-    import tempfile as _tf
-
-    bad_cfg = _tf.NamedTemporaryFile("w", suffix=".json", delete=False)  # noqa: SIM115
-    _json.dump(
+    bad_cfg = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)  # noqa: SIM115
+    json.dump(
         {
             "mcpServers": {
                 "bad-server": {
@@ -306,8 +303,6 @@ async def audit_fix_verifications() -> None:
         enable_human_review=True,
         postgres_url=None,
     )
-    from ossia.agent import build_agent
-
     graph = build_agent(settings=nr_settings, checkpointer=None)
     assert graph is not None
     _ok("Agent compiles with human review on and no checkpointer (interrupts skipped)")

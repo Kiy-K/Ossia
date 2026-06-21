@@ -92,6 +92,11 @@ class Settings(BaseSettings):
         description="Path to MCP server configuration file.",
     )
     mcp_connect_timeout: float = Field(
+        default=10.0,
+        gt=0,
+        description="Seconds to wait for each MCP server to connect before skipping.",
+    )
+    mcp_connect_timeout: float = Field(
         default=30.0,
         ge=1.0,
         le=60.0,

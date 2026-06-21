@@ -16,7 +16,9 @@ logger = logging.getLogger(__name__)
 _EXTERNAL_TOOLS: frozenset[str] = frozenset(
     {
         "search_knowledge_base",
+        "search_codebase",
         "send_response",
+        "fetch_issue",
     }
 )
 

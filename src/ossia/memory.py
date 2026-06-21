@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.store.base import BaseStore
@@ -77,68 +76,3 @@ async def get_store(
             yield store
     finally:
         await conn.close()
-
-
-class PostgresMemoryStore:
-    """Cross-session memory store backed by a LangGraph BaseStore.
-
-    Exposes simple get/put semantics for user-scoped values such as preferences
-    and previous conversation summaries.
-    """
-
-    def __init__(self, store: BaseStore) -> None:
-        """Initialize with a configured BaseStore.
-
-        Args:
-            store: A LangGraph BaseStore (e.g., AsyncPostgresStore).
-        """
-        self._store = store
-
-    async def get(self, namespace: tuple[str, ...], key: str) -> dict[str, Any] | None:
-        """Retrieve a stored value.
-
-        Args:
-            namespace: Hierarchical namespace tuple.
-            key: Item key.
-
-        Returns:
-            Stored value dict, or None when absent.
-        """
-        item = await self._store.aget(namespace, key)
-        if item is None:
-            return None
-        return item.value
-
-    async def put(
-        self,
-        namespace: tuple[str, ...],
-        key: str,
-        value: dict[str, Any],
-    ) -> None:
-        """Store a value.
-
-        Args:
-            namespace: Hierarchical namespace tuple.
-            key: Item key.
-            value: JSON-serializable value to store.
-        """
-        await self._store.aput(namespace, key, value)
-
-    async def search(
-        self,
-        namespace_prefix: tuple[str, ...],
-        query: str | None = None,
-        limit: int = 10,
-    ) -> list[dict[str, Any]]:
-        """Semantic search over stored values in a namespace.
-
-        Args:
-            namespace_prefix: Namespace prefix to search within.
-            query: Optional search query.
-            limit: Maximum number of results.
-
-        Returns:
-            List of stored value dicts.
-        """
-        items = await self._store.asearch(namespace_prefix, query=query, limit=limit)
-        return [item.value for item in items]

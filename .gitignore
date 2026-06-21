@@ -64,3 +64,40 @@ nebius/*.tfstate
 nebius/*.tfstate.*
 nebius/.terraform/
 nebius/*.plan
+
+# macOS / OS X
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Logs
+*.log
+logs/
+
+# conda / pipenv
+.conda/
+.pipenv/
+
+# uv
+.venv/
+uv.lock
+
+# LangChain cache
+.langchain/
+
+# Project-local scripts/scratch space
+scratch/
+*.tmp
+*.bak
+
+# IDEs
+.idea/
+*.swp
+*.swo
+*~
+.vscode/

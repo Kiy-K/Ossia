@@ -35,35 +35,18 @@ class KBSearchOutput(BaseModel):
     """Output schema for knowledge base search."""
 
     results: list[SearchResult]
-    fallback_used: bool = Field(
-        default=False,
-        description="True if KB was empty and web fallback was used.",
-    )
-    reasoning: str = Field(
-        default="",
-        description="Short explanation of how results were obtained.",
-    )
+    fallback_used: bool = Field(default=False, description="True if KB was empty and web fallback was used.")
+    reasoning: str = Field(default="", description="Short explanation of how results were obtained.")
 
 
 @dataclass
 class KnowledgeBase:
-    """In-memory knowledge base for local development and tests.
-
-    In production this is backed by a vector store (Postgres/pgvector, etc.).
-    """
+    """In-memory knowledge base for local development and tests."""
 
     documents: list[dict[str, Any]]
 
     def search(self, query: str, top_k: int = 3) -> list[SearchResult]:
-        """Return documents whose content contains any query token.
-
-        Args:
-            query: Search query.
-            top_k: Maximum number of results.
-
-        Returns:
-            List of matching search results.
-        """
+        """Return documents whose content contains any query token."""
         tokens = query.lower().split()
         scored: list[tuple[float, dict[str, Any]]] = []
         for doc in self.documents:
@@ -84,17 +67,7 @@ class KnowledgeBase:
 
 
 def create_kb(documents: list[dict[str, Any]] | None = None) -> KnowledgeBase:
-    """Create a knowledge base with optional seed documents.
-
-    When ``documents`` is None, a cached default knowledge base is returned so the
-    default document set is built only once per process.
-
-    Args:
-        documents: Optional list of seed documents.
-
-    Returns:
-        Configured knowledge base instance.
-    """
+    """Create a knowledge base with optional seed documents."""
     if documents is not None:
         return KnowledgeBase(documents=documents)
     return _default_kb()
@@ -150,31 +123,14 @@ async def search_knowledge_base(query: str, top_k: int = 3) -> KBSearchOutput:
     kb = create_kb()
     results = kb.search(query, top_k=top_k)
     if results:
-        return KBSearchOutput(
-            results=results,
-            fallback_used=False,
-            reasoning="Matched documents in the local knowledge base.",
-        )
-
-    # Web fallback when KB is empty. Run the synchronous DDGS client off the
-    # event loop and degrade gracefully on any search/network failure.
+        return KBSearchOutput(results=results, fallback_used=False, reasoning="Matched documents in the local knowledge base.")
     try:
         web_results = await asyncio.to_thread(_ddgs_text, query, top_k)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Web search fallback failed for query %r: %s", query, exc)
-        return KBSearchOutput(
-            results=[],
-            fallback_used=True,
-            reasoning="No KB match and web search failed; will use model internal knowledge.",
-        )
-
+        return KBSearchOutput(results=[], fallback_used=True, reasoning="No KB match and web search failed; will use model internal knowledge.")
     if not web_results:
-        return KBSearchOutput(
-            results=[],
-            fallback_used=True,
-            reasoning="No KB match and no web results; will use model internal knowledge.",
-        )
-
+        return KBSearchOutput(results=[], fallback_used=True, reasoning="No KB match and no web results; will use model internal knowledge.")
     return KBSearchOutput(
         results=[
             SearchResult(
@@ -191,30 +147,17 @@ async def search_knowledge_base(query: str, top_k: int = 3) -> KBSearchOutput:
 
 
 def _ddgs_text(query: str, max_results: int) -> list[dict[str, Any]]:
-    """Run a synchronous DuckDuckGo text search.
-
-    Args:
-        query: Search query.
-        max_results: Maximum number of results.
-
-    Returns:
-        List of result dicts.
-    """
     with DDGS() as ddgs:
         return list(ddgs.text(query, max_results=max_results))
 
 
 class GradeInput(BaseModel):
-    """Input schema for response grading."""
-
     query: str = Field(description="Original user query.")
     response: str = Field(description="Draft response to evaluate.")
     context: str = Field(default="", description="Retrieved context used for the response.")
 
 
 class GradeOutput(BaseModel):
-    """Output schema for response grading."""
-
     passes: bool = Field(description="Whether the response meets quality standards.")
     score: float = Field(ge=0.0, le=1.0, description="Quality score.")
     feedback: str = Field(description="Concise feedback for revision or approval.")
@@ -232,7 +175,6 @@ def grade_response(query: str, response: str, context: str = "") -> GradeOutput:
     Returns:
         Grade output with pass/fail decision and feedback.
     """
-    # Deterministic heuristic used for unit tests; replace with LLM-as-judge in prod.
     checks = 0
     total = 3
     if len(response) >= 40:
@@ -241,27 +183,20 @@ def grade_response(query: str, response: str, context: str = "") -> GradeOutput:
         checks += 1
     if context and not context.strip().startswith("No"):
         checks += 1
-
     score = checks / total
     return GradeOutput(
         passes=score >= 0.67,
         score=score,
-        feedback=(
-            "Response looks acceptable." if score >= 0.67 else "Response needs more detail."
-        ),
+        feedback=("Response looks acceptable." if score >= 0.67 else "Response needs more detail."),
     )
 
 
 class SendResponseInput(BaseModel):
-    """Input schema for the final send action."""
-
     response: str = Field(description="Final response text to deliver.")
     channel: str = Field(default="chat", description="Delivery channel.")
 
 
 class SendResponseOutput(BaseModel):
-    """Output schema for the final send action."""
-
     sent: bool = Field(description="Whether the response was delivered.")
     message: str = Field(description="Confirmation message.")
 
@@ -277,7 +212,186 @@ def send_response(response: str, channel: str = "chat") -> SendResponseOutput:
     Returns:
         Confirmation of delivery.
     """
-    return SendResponseOutput(
-        sent=True,
-        message=f"Response delivered via {channel}: {response[:120]}...",
+    return SendResponseOutput(sent=True, message=f"Response delivered via {channel}: {response[:120]}...")
+
+
+# ── Dev-concierge stubs ──────────────────────────────────────────────────────
+# Per CONTEXT.md §2, the dev-concierge path is the active runtime mode.
+# These stubs provide typing and a clear handoff for real implementations.
+
+
+class FetchIssueInput(BaseModel):
+    """Input schema for fetching a GitHub issue / PR."""
+
+    repo: str = Field(description="Owner/repo, e.g. 'octocat/Hello-World'.")
+    issue_number: int = Field(description="Issue or PR number.")
+
+
+class FetchIssueOutput(BaseModel):
+    """Output schema for fetching a GitHub issue / PR."""
+
+    number: int = Field(description="Issue / PR number.")
+    title: str = Field(description="Title.")
+    body: str = Field(description="Issue or PR body text.")
+    state: str = Field(description="open / closed.")
+    url: str = Field(description="HTML URL on GitHub.")
+
+
+@tool(args_schema=FetchIssueInput)
+def fetch_issue(repo: str, issue_number: int) -> FetchIssueOutput:
+    """Fetch a GitHub issue or pull request by repo and number.
+
+    TODO (CONTEXT.md §8 item 2): wire to GitHub API with authentication.
+
+    Args:
+        repo: ``owner/name`` repository string.
+        issue_number: Numeric issue or PR identifier.
+
+    Returns:
+        Fetch result with metadata and body text.
+    """
+    logger.info("fetch_issue stub: repo=%r number=%d", repo, issue_number)
+    return FetchIssueOutput(
+        number=issue_number,
+        title="[STUB] Issue title",
+        body="[STUB] Issue body — replace with GitHub REST call.",
+        state="open",
+        url=f"https://github.com/{repo}/issues/{issue_number}",
+    )
+
+
+class SearchCodebaseInput(BaseModel):
+    """Input schema for local code-base search."""
+
+    query: str = Field(description="Search query, e.g. a function name or error string.")
+    path: str = Field(default=".", description="Root directory to search.")
+
+
+class SearchCodebaseOutput(BaseModel):
+    """Output schema for local code-base search."""
+
+    matches: list[str] = Field(description="Matching file paths with snippets.")
+
+
+@tool(args_schema=SearchCodebaseInput)
+def search_codebase(query: str, path: str = ".") -> SearchCodebaseOutput:
+    """Search the local codebase for a code token, symbol, or error string.
+
+    TODO (CONTEXT.md §8 item 2): implement with ripgrep or embedding search.
+
+    Args:
+        query: Search term.
+        path: Root directory to search within.
+
+    Returns:
+        List of matched file paths and surrounding context.
+    """
+    logger.info("search_codebase stub: query=%r path=%r", query, path)
+    return SearchCodebaseOutput(
+        matches=[f"[STUB] No real search yet — query={query}, path={path}"]
+    )
+
+
+class RunTestsInput(BaseModel):
+    """Input schema for sandbox test execution."""
+
+    path: str = Field(default="tests/", description="Test path or file.")
+    command: str = Field(default="pytest", description="Test runner command.")
+
+
+class RunTestsOutput(BaseModel):
+    """Output schema for sandbox test execution."""
+
+    passed: bool = Field(description="Whether all tests passed.")
+    output: str = Field(description="Captured test runner output.")
+
+
+@tool(args_schema=RunTestsInput)
+def run_tests(path: str = "tests/", command: str = "pytest") -> RunTestsOutput:
+    """Run tests in a sandboxed environment and report the result.
+
+    TODO (CONTEXT.md §8 item 2): wire to a sandbox (Daytona / Docker / modal).
+
+    Args:
+        path: Root test directory or single file.
+        command: Test runner executable and args.
+
+    Returns:
+        Pass/fail flag with stdout/stderr capture.
+    """
+    logger.info("run_tests stub: path=%r command=%r", path, command)
+    return RunTestsOutput(
+        passed=True,
+        output=f"[STUB] No real sandbox yet — would run `{command} {path}`.",
+    )
+
+
+class ProposeFixInput(BaseModel):
+    """Input schema for proposing a code fix."""
+
+    issue_description: str = Field(description="Summary of the bug or issue.")
+    file_path: str = Field(description="Target file to modify, if known.")
+
+
+class ProposeFixOutput(BaseModel):
+    """Output schema for proposing a code fix."""
+
+    summary: str = Field(description="One-line description of the proposed fix.")
+    patch: str = Field(default="", description="Unified diff patch or code snippet.")
+
+
+@tool(args_schema=ProposeFixInput)
+def propose_fix(issue_description: str, file_path: str = "") -> ProposeFixOutput:
+    """Convert a diagnosis into a concrete fix proposal.
+
+    TODO (CONTEXT.md §6): implement with LLM-generated patch or RAG retrieval.
+
+    Args:
+        issue_description: Plain-text bug / feature description from triage.
+        file_path: Optional target file the agent should modify.
+
+    Returns:
+        Fix summary and optional patch.
+    """
+    logger.info("propose_fix stub: file=%r desc=%r", file_path, issue_description[:50])
+    return ProposeFixOutput(
+        summary=f"[STUB] Proposed fix for {'file ' + file_path if file_path else 'issue'}.",
+        patch="",
+    )
+
+
+class CreatePROutput(BaseModel):
+    """Output schema for opening a GitHub pull request."""
+
+    url: str = Field(description="PR HTML URL.")
+    number: int = Field(description="PR number.")
+
+
+@tool
+def create_pr(
+    repo: str,
+    title: str,
+    body: str = "",
+    head: str = "",
+    base: str = "main",
+) -> CreatePROutput:
+    """Open a GitHub pull request with the proposed changes.
+
+    TODO (CONTEXT.md §8 item 2): wire to GitHub REST API with auth + branch
+    creation, push, and PR creation.
+
+    Args:
+        repo: ``owner/name`` repository string.
+        title: Pull request title.
+        body: PR description body.
+        head: Source branch containing changes.
+        base: Target branch (default ``main``).
+
+    Returns:
+        Created PR URL and number.
+    """
+    logger.info("create_pr stub: repo=%r head=%s->%s", repo, head, base)
+    return CreatePROutput(
+        url=f"https://github.com/{repo}/pull/0",
+        number=0,
     )
