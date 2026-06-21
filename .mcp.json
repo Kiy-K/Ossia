@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "langchain-docs": {
+      "name": "LangChain Docs MCP Server",
+      "transport": "streamable_http",
+      "url": "https://docs.langchain.com/mcp",
+      "headers": {
+        "Accept": "application/json, text/event-stream"
+      }
+    }
+  }
+}

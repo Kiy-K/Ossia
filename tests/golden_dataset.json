@@ -1,0 +1,65 @@
+{
+  "_comment": "Golden eval dataset for the Ossia support agent (PRD: 10 support queries with expected intents/responses). expected_intent matches a subagent name exposed via the `task` tool; expected_terms are lowercase substrings a correct answer should contain. The eval harness checks response completeness (non-empty + key-term presence) and reports intent-routing observability.",
+  "queries": [
+    {
+      "id": "q01",
+      "query": "How much does a Serverless Endpoint cost per hour on an L40S GPU?",
+      "expected_intent": "billing-specialist",
+      "expected_terms": ["l40s", "cost", "hour"]
+    },
+    {
+      "id": "q02",
+      "query": "Why is my Nebius invoice higher than expected this month?",
+      "expected_intent": "billing-specialist",
+      "expected_terms": ["invoice", "usage"]
+    },
+    {
+      "id": "q03",
+      "query": "Can I set min_containers to 0 so I only pay when there is traffic?",
+      "expected_intent": "billing-specialist",
+      "expected_terms": ["min", "0"]
+    },
+    {
+      "id": "q04",
+      "query": "What are Nebius Serverless Jobs and when should I use them?",
+      "expected_intent": "technical-support",
+      "expected_terms": ["job", "batch"]
+    },
+    {
+      "id": "q05",
+      "query": "How do I serve a model with vLLM on a Nebius Serverless Endpoint?",
+      "expected_intent": "technical-support",
+      "expected_terms": ["vllm", "endpoint"]
+    },
+    {
+      "id": "q06",
+      "query": "My Serverless Endpoint cold starts are slow. How do I reduce the latency?",
+      "expected_intent": "technical-support",
+      "expected_terms": ["cold", "container"]
+    },
+    {
+      "id": "q07",
+      "query": "I lost my endpoint API key. How do I reset my endpoint credentials?",
+      "expected_intent": "account-access",
+      "expected_terms": ["credential", "regenerate"]
+    },
+    {
+      "id": "q08",
+      "query": "How do I grant a teammate access to my Nebius project?",
+      "expected_intent": "account-access",
+      "expected_terms": ["access", "project"]
+    },
+    {
+      "id": "q09",
+      "query": "What is Nebius Serverless and what products does it include?",
+      "expected_intent": "general-information",
+      "expected_terms": ["serverless", "endpoint"]
+    },
+    {
+      "id": "q10",
+      "query": "Where can I find the official documentation for Nebius Serverless?",
+      "expected_intent": "general-information",
+      "expected_terms": ["doc"]
+    }
+  ]
+}

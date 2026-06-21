@@ -1,0 +1,32 @@
+apiVersion: batch.nebius.ai/v1
+kind: Job
+metadata:
+  generateName: ossia-eval-
+  namespace: ossia
+  labels:
+    app: ossia
+spec:
+  template:
+    spec:
+      containers:
+        - name: eval
+          image: cr.nebius.ai/${NEBIUS_PROJECT_ID}/ossia:v0.1.0
+          command:
+            - python
+            - scripts/eval_ossia.py
+            - --dataset
+            - tests/golden_dataset.json
+            - --min-pass-rate
+            - "0.8"
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              cpu: "4"
+              memory: 8Gi
+          envFrom:
+            - secretRef:
+                name: ossia-env
+      restartPolicy: Never
+  backoffLimit: 2

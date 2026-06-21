@@ -1,0 +1,24 @@
+apiVersion: serverless.nebius.ai/v1
+kind: Endpoint
+metadata:
+  name: ossia-candidate
+  namespace: ossia
+spec:
+  image: vllm/vllm-openai:v0.7.3
+  model: meta-llama/Meta-Llama-3.1-8B-Instruct
+  resources:
+    gpu:
+      type: nvidia-l40s
+      count: 1
+    cpu: 4
+    memory: 32Gi
+  minContainers: 0
+  maxContainers: 3
+  env:
+    - name: VLLM_MODEL
+      value: meta-llama/Meta-Llama-3.1-8B-Instruct
+    - name: VLLM_API_KEY
+      valueFrom:
+        secretKeyRef:
+          name: ossia-env
+          key: NEBIUS_API_KEY
