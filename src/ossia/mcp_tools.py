@@ -131,7 +131,7 @@ class _ServerWorker:
             )
             await session.initialize()
             response = await session.list_tools()
-            self.tools = [_wrap_mcp_tool(session, info) for info in response.tools]
+            self.tools = [_wrap_mcp_tool(session, info, self.name) for info in response.tools]
             if not self.ready.done():
                 self.ready.set_result(self.tools)
             await self._shutdown.wait()
@@ -266,6 +266,11 @@ class MCPToolkit:
         self.settings = settings or get_settings()
         self._tools: list[BaseTool] = []
         self._workers: list[_ServerWorker] = []
+        # Parallel registry mapping MCP tool name -> server name. Kept
+        # outside the tool object because Pydantic does not preserve
+        # unknown attrs through ``model_validate`` round-trips; this is
+        # the source of truth for the /v1/tools provenance field.
+        self.mcp_tool_servers: dict[str, str] = {}
 
     async def __aenter__(self) -> MCPToolkit:
         """Open all configured MCP server sessions and discover their tools."""
@@ -334,6 +339,8 @@ class MCPToolkit:
                 else:
                     self._tools.extend(result)
                     self._workers.append(worker)
+                    for tool in result:
+                        self.mcp_tool_servers[tool.name] = worker.name
         except BaseException:
             # External cancellation (or unexpected error) during connect: tear
             # down every worker started so far, then propagate.
@@ -354,18 +361,21 @@ class MCPToolkit:
         workers = self._workers
         self._workers = []
         self._tools = []
+        self.mcp_tool_servers = {}
         await _teardown_workers(workers, force=False)
 
 
 def _wrap_mcp_tool(
     session: ClientSession,
     tool_info: Any,
+    server_name: str,
 ) -> BaseTool:
     """Wrap an MCP tool into a LangChain BaseTool.
 
     Args:
         session: Active MCP client session.
         tool_info: Tool metadata returned by the MCP server.
+        server_name: Human-readable name of the MCP server this tool came from.
 
     Returns:
         LangChain-compatible tool.
@@ -383,7 +393,15 @@ def _wrap_mcp_tool(
         def _run(self, **kwargs: Any) -> Any:
             raise NotImplementedError("MCP tools only support async execution.")
 
-    return _MCPTool()
+    instance = _MCPTool()
+    # Tag the instance with its MCP server name so the API can surface
+    # provenance without resorting to name-prefix heuristics. Pydantic
+    # does not preserve unknown attrs through model_validate, so the
+    # ``MCPToolkit`` keeps a parallel ``mcp_tool_servers`` registry as
+    # the source of truth and the attribute is only a hint for callers
+    # that have a direct reference.
+    instance._mcp_server = server_name  # type: ignore[attr-defined]
+    return instance
 
 
 def _sanitize_class_name(name: str) -> str:

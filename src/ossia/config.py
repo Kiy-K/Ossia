@@ -6,7 +6,7 @@ from enum import StrEnum
 from functools import lru_cache
 from typing import Any
 
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -61,6 +61,16 @@ class Settings(BaseSettings):
     openrouter_api_key: str | None = Field(default=None)
     fireworks_api_key: str | None = Field(default=None)
     baseten_api_key: str | None = Field(default=None)
+    tavily_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("TAVILY_API_KEY", "OSSIA_TAVILY_API_KEY"),
+        description=(
+            "Tavily API key for the internet_search / fetch_url / qna_search "
+            "tools. Read from TAVILY_API_KEY (preferred) or OSSIA_TAVILY_API_KEY. "
+            "When unset the web-search tools degrade to the DuckDuckGo fallback "
+            "or fail loudly for URL fetches."
+        ),
+    )
 
     # LangSmith tracing
     langsmith_tracing: bool = Field(default=False)
@@ -90,11 +100,6 @@ class Settings(BaseSettings):
     mcp_config_path: str = Field(
         default=".mcp.json",
         description="Path to MCP server configuration file.",
-    )
-    mcp_connect_timeout: float = Field(
-        default=10.0,
-        gt=0,
-        description="Seconds to wait for each MCP server to connect before skipping.",
     )
     mcp_connect_timeout: float = Field(
         default=30.0,

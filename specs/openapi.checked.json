@@ -1,0 +1,942 @@
+{
+  "components": {
+    "schemas": {
+      "AuditReport": {
+        "additionalProperties": false,
+        "description": "Top-level audit report.",
+        "properties": {
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/AuditSection"
+            },
+            "title": "Sections",
+            "type": "array"
+          }
+        },
+        "required": [
+          "sections",
+          "ok"
+        ],
+        "title": "AuditReport",
+        "type": "object"
+      },
+      "AuditSection": {
+        "additionalProperties": false,
+        "description": "A grouped batch of checks (memory / process / fix-verifications / runtime / langsmith).",
+        "properties": {
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/CheckResult"
+            },
+            "title": "Checks",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "checks",
+          "ok"
+        ],
+        "title": "AuditSection",
+        "type": "object"
+      },
+      "ChatMessage": {
+        "additionalProperties": false,
+        "description": "One message in a thread, normalized for the wire.",
+        "properties": {
+          "content": {
+            "default": "",
+            "title": "Content",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "role": {
+            "enum": [
+              "user",
+              "assistant",
+              "tool",
+              "system"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "tool_call_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Call Id"
+          },
+          "tool_calls": {
+            "items": {
+              "$ref": "#/components/schemas/ToolCall"
+            },
+            "title": "Tool Calls",
+            "type": "array"
+          }
+        },
+        "required": [
+          "role"
+        ],
+        "title": "ChatMessage",
+        "type": "object"
+      },
+      "ChatRequest": {
+        "additionalProperties": false,
+        "description": "Inbound payload for a single chat turn.",
+        "properties": {
+          "message": {
+            "description": "User message for this turn.",
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          },
+          "thread_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional thread id. Server scopes it to the authenticated caller.",
+            "title": "Thread Id"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "ChatRequest",
+        "type": "object"
+      },
+      "ChatResponse": {
+        "additionalProperties": false,
+        "description": "Response to a non-streaming chat request.",
+        "properties": {
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/ChatMessage"
+            },
+            "title": "Messages",
+            "type": "array"
+          },
+          "thread_id": {
+            "title": "Thread Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "thread_id",
+          "messages"
+        ],
+        "title": "ChatResponse",
+        "type": "object"
+      },
+      "CheckResult": {
+        "additionalProperties": false,
+        "description": "One named check inside an audit section.",
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "ok"
+        ],
+        "title": "CheckResult",
+        "type": "object"
+      },
+      "EvalQueryResult": {
+        "additionalProperties": false,
+        "description": "One graded query in an eval report.",
+        "properties": {
+          "answer_preview": {
+            "default": "",
+            "title": "Answer Preview",
+            "type": "string"
+          },
+          "expected_intent": {
+            "title": "Expected Intent",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "intent_match": {
+            "default": false,
+            "title": "Intent Match",
+            "type": "boolean"
+          },
+          "missing_terms": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing Terms",
+            "type": "array"
+          },
+          "passed": {
+            "title": "Passed",
+            "type": "boolean"
+          },
+          "routed_intents": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Routed Intents",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "expected_intent",
+          "passed"
+        ],
+        "title": "EvalQueryResult",
+        "type": "object"
+      },
+      "EvalReport": {
+        "additionalProperties": false,
+        "description": "Top-level eval report.",
+        "properties": {
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "pass_rate": {
+            "title": "Pass Rate",
+            "type": "number"
+          },
+          "queries": {
+            "items": {
+              "$ref": "#/components/schemas/EvalQueryResult"
+            },
+            "title": "Queries",
+            "type": "array"
+          },
+          "skip_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Human-readable reason for skipping, set when skipped=true.",
+            "title": "Skip Reason"
+          },
+          "skipped": {
+            "default": false,
+            "description": "True when the eval did not run (e.g. provider API key missing). Distinct from ok=false, which means the run completed below the pass-rate threshold.",
+            "title": "Skipped",
+            "type": "boolean"
+          },
+          "threshold": {
+            "title": "Threshold",
+            "type": "number"
+          }
+        },
+        "required": [
+          "queries",
+          "pass_rate",
+          "threshold",
+          "ok"
+        ],
+        "title": "EvalReport",
+        "type": "object"
+      },
+      "EvalRequest": {
+        "additionalProperties": false,
+        "description": "Inbound payload for POST /v1/eval.",
+        "properties": {
+          "dataset_path": {
+            "default": "tests/golden_dataset.json",
+            "description": "Path to a golden dataset JSON file (server-side resolvable).",
+            "title": "Dataset Path",
+            "type": "string"
+          },
+          "min_pass_rate": {
+            "default": 0.8,
+            "description": "Minimum pass rate (0.0-1.0) below which the report is marked not ok.",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Min Pass Rate",
+            "type": "number"
+          }
+        },
+        "title": "EvalRequest",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HealthResponse": {
+        "additionalProperties": false,
+        "description": "Response payload for GET /health.",
+        "properties": {
+          "status": {
+            "const": "ok",
+            "default": "ok",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "title": "HealthResponse",
+        "type": "object"
+      },
+      "ResumeDecision": {
+        "additionalProperties": false,
+        "description": "A single reviewer's decision on a pending action request.\n\nMirrors the DeepAgents HITL ``Command(resume={\"decisions\": [...]})`` shape;\none decision per ``action_request`` surfaced via ``result.interrupts``.\n\nDecision types:\n    - ``approve``: execute the tool call as-is.\n    - ``edit``:    replace the action with ``edited_action`` (must include\n      ``name`` and ``args``) and execute that instead.\n    - ``reject``:  do not execute; the optional ``message`` is forwarded\n      to the agent as feedback.\n    - ``respond``: do not execute; the optional ``message`` is returned\n      to the agent as a successful tool result (use only when the tool\n      is intentionally a placeholder for human input).",
+        "properties": {
+          "edited_action": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Required when type='edit'; the replacement action (name, args).",
+            "title": "Edited Action"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional reviewer message. For type='reject' it is added to the conversation as feedback. For type='respond' it is returned as the tool result. Ignored for type='approve' and (when omitted) for type='edit'.",
+            "title": "Message"
+          },
+          "type": {
+            "enum": [
+              "approve",
+              "edit",
+              "reject",
+              "respond"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "ResumeDecision",
+        "type": "object"
+      },
+      "ResumeRequest": {
+        "additionalProperties": false,
+        "description": "Inbound payload for resuming a thread paused on a human-review interrupt.\n\nMaps to ``agent.invoke(Command(resume={\"decisions\": [...]}), config, version=\"v2\")``.\nDecisions are applied to the pending ``action_requests`` in the order\nthey were surfaced by the run that produced the interrupt.",
+        "properties": {
+          "decisions": {
+            "description": "One decision per pending action request, in the order surfaced.",
+            "items": {
+              "$ref": "#/components/schemas/ResumeDecision"
+            },
+            "minItems": 1,
+            "title": "Decisions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "decisions"
+        ],
+        "title": "ResumeRequest",
+        "type": "object"
+      },
+      "ResumeResponse": {
+        "additionalProperties": false,
+        "description": "Result of resuming a thread. May itself contain fresh interrupts.",
+        "properties": {
+          "feedback": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional reviewer feedback forwarded to the agent on reject.",
+            "title": "Feedback"
+          },
+          "interrupted": {
+            "default": false,
+            "description": "True when the resumed run paused on a new interrupt.",
+            "title": "Interrupted",
+            "type": "boolean"
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/ChatMessage"
+            },
+            "title": "Messages",
+            "type": "array"
+          },
+          "thread_id": {
+            "title": "Thread Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "thread_id",
+          "messages"
+        ],
+        "title": "ResumeResponse",
+        "type": "object"
+      },
+      "ThreadHistoryResponse": {
+        "additionalProperties": false,
+        "description": "A thread's full message history.",
+        "properties": {
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/ChatMessage"
+            },
+            "title": "Messages",
+            "type": "array"
+          },
+          "thread_id": {
+            "title": "Thread Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "thread_id",
+          "messages"
+        ],
+        "title": "ThreadHistoryResponse",
+        "type": "object"
+      },
+      "ThreadStateResponse": {
+        "additionalProperties": false,
+        "description": "A thread's current graph state (values + next nodes).",
+        "properties": {
+          "config": {
+            "additionalProperties": true,
+            "title": "Config",
+            "type": "object"
+          },
+          "next": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Next",
+            "type": "array"
+          },
+          "thread_id": {
+            "title": "Thread Id",
+            "type": "string"
+          },
+          "values": {
+            "additionalProperties": true,
+            "title": "Values",
+            "type": "object"
+          }
+        },
+        "required": [
+          "thread_id",
+          "values",
+          "next"
+        ],
+        "title": "ThreadStateResponse",
+        "type": "object"
+      },
+      "ToolCall": {
+        "additionalProperties": false,
+        "description": "A single tool invocation produced by the model.",
+        "properties": {
+          "args": {
+            "additionalProperties": true,
+            "title": "Args",
+            "type": "object"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "ToolCall",
+        "type": "object"
+      },
+      "ToolInfo": {
+        "additionalProperties": false,
+        "description": "A tool the running agent has loaded.",
+        "properties": {
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "server": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "MCP server name, set only when source='mcp'.",
+            "title": "Server"
+          },
+          "source": {
+            "enum": [
+              "core",
+              "mcp"
+            ],
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "source"
+        ],
+        "title": "ToolInfo",
+        "type": "object"
+      },
+      "ToolListResponse": {
+        "additionalProperties": false,
+        "description": "Response payload for GET /v1/tools.",
+        "properties": {
+          "tools": {
+            "items": {
+              "$ref": "#/components/schemas/ToolInfo"
+            },
+            "title": "Tools",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tools"
+        ],
+        "title": "ToolListResponse",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "Unified HTTP API for the Ossia support agent.",
+    "title": "Ossia Support Agent",
+    "version": "1.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/health": {
+      "get": {
+        "description": "Liveness check.",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health"
+      }
+    },
+    "/v1/audit": {
+      "get": {
+        "description": "Run the in-process audit harness and return a structured report.",
+        "operationId": "run_audit_endpoint_v1_audit_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditReport"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Run Audit Endpoint"
+      }
+    },
+    "/v1/chat": {
+      "post": {
+        "description": "Run a single chat turn against the agent.",
+        "operationId": "chat_v1_chat_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Chat"
+      }
+    },
+    "/v1/chat/stream": {
+      "post": {
+        "description": "Stream a chat turn as Server-Sent Events, v3 protocol.\n\nBuilt on ``agent.astream_events(..., version=\"v3\")``. The v3 stream\nis caller-driven: the handler iterates the typed projections\n(``messages``, ``tool_calls``, ``subagents``, ``values``) concurrently\nand yields a :class:`StreamEvent` per projection update. The SSE\n``event:`` field is the ``kind`` discriminator, so clients can\nsubscribe to specific kinds via\n``EventSource.addEventListener(\"message\", ...)``.\n\nA final ``kind=\"complete\"`` event is always sent. ``interrupted=true``\nin that event means the run paused on a human-review interrupt;\nthe client should ``POST /v1/threads/{id}/resume`` to continue.\n\nThe v3 streaming protocol is marked experimental by langgraph; if\nthe upstream shape changes, only the projection adapters below need\nto update \u2014 the wire contract (``kind`` + per-kind ``data`` shape)\nis the part we promise to clients.",
+        "operationId": "chat_stream_v1_chat_stream_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Chat Stream"
+      }
+    },
+    "/v1/eval": {
+      "post": {
+        "description": "Run the golden-dataset eval and return a graded report.",
+        "operationId": "run_eval_endpoint_v1_eval_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalReport"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Eval Endpoint"
+      }
+    },
+    "/v1/threads/{thread_id}/history": {
+      "get": {
+        "description": "Return flattened message history for a thread, newest first.",
+        "operationId": "thread_history_v1_threads__thread_id__history_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "thread_id",
+            "required": true,
+            "schema": {
+              "title": "Thread Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThreadHistoryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Thread History"
+      }
+    },
+    "/v1/threads/{thread_id}/resume": {
+      "post": {
+        "description": "Resume a thread paused on a human-review interrupt.\n\nMaps to ``agent.invoke(Command(resume={\"decisions\": [...]}), config, version=\"v2\")``.\nEach decision's optional ``message`` is passed through to the agent as\ndescribed on :class:`ResumeDecision`; there is no top-level ``feedback``\nfield (the upstream API does not define one).",
+        "operationId": "thread_resume_v1_threads__thread_id__resume_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "thread_id",
+            "required": true,
+            "schema": {
+              "title": "Thread Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResumeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResumeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Thread Resume"
+      }
+    },
+    "/v1/threads/{thread_id}/state": {
+      "get": {
+        "description": "Return the latest checkpointed state for a thread.",
+        "operationId": "thread_state_v1_threads__thread_id__state_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "thread_id",
+            "required": true,
+            "schema": {
+              "title": "Thread Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThreadStateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Thread State"
+      }
+    },
+    "/v1/tools": {
+      "get": {
+        "description": "List tools the running agent has loaded, with provenance.",
+        "operationId": "list_tools_v1_tools_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Tools"
+      }
+    }
+  }
+}

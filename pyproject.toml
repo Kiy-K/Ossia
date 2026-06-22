@@ -44,7 +44,10 @@ dependencies = [
     "httpx>=0.28.0",
     "httpx-sse>=0.4.0",
 
-    # Web search fallback
+    # Web search and URL extraction (primary path)
+    "tavily-python>=0.7.0",
+
+    # Web search fallback when Tavily is unavailable
     "duckduckgo-search>=7.0.0",
 
     # HTTP server / utilities

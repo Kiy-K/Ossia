@@ -151,6 +151,118 @@ def _ddgs_text(query: str, max_results: int) -> list[dict[str, Any]]:
         return list(ddgs.text(query, max_results=max_results))
 
 
+def _ddgs_news(query: str, max_results: int) -> list[dict[str, Any]]:
+    with DDGS() as ddgs:
+        return list(ddgs.news(query, max_results=max_results))
+
+
+def _fetch_url_text(url: str, *, timeout: float = 10.0, max_chars: int = 4000) -> str:
+    """Fetch a URL and return plain text extracted via BeautifulSoup.
+
+    Mirrors the canonical pattern from the Deep Agents deep-research
+    doc (``fetch_webpage_content``), but uses ``bs4`` rather than
+    ``markdownify`` to avoid adding a new dependency. Plain text is
+    fine for the model's purposes; markdown is a refinement we
+    can layer on later.
+
+    Args:
+        url: URL to fetch.
+        timeout: HTTP timeout in seconds.
+        max_chars: Maximum length of the returned text.
+
+    Returns:
+        Extracted text truncated to ``max_chars``. On any error,
+        a short ``"Error fetching ..."`` message.
+    """
+    import httpx
+    from bs4 import BeautifulSoup
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        )
+    }
+    try:
+        response = httpx.get(url, headers=headers, timeout=timeout, follow_redirects=True)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, "html.parser")
+        for tag in soup(["script", "style", "noscript"]):
+            tag.decompose()
+        text = soup.get_text(separator="\n", strip=True)
+        return text[:max_chars]
+    except Exception as exc:  # noqa: BLE001
+        return f"Error fetching {url}: {exc!s}"
+
+
+def _ddg_search_for_answer(query: str, max_results: int = 3) -> str:
+    """Run a DDG search and return a synthesized answer from the top hits.
+
+    Used as the fallback path for ``qna_search`` when Tavily is
+    unavailable. DDG has no native Q&A primitive, so we approximate
+    one with the top search snippets. Output is clearly tagged
+    ``backend="duckduckgo"`` so the caller can see the source.
+
+    Args:
+        query: Question to search.
+        max_results: Number of results to include in the synthesis.
+
+    Returns:
+        A plain-text answer assembled from the top DDG snippets.
+        Empty string when DDG returns no results.
+    """
+    try:
+        results = _ddgs_text(query, max_results)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("DDG search failed: %s", exc)
+        return ""
+    if not results:
+        return ""
+    parts: list[str] = []
+    for res in results:
+        title = res.get("title", "")
+        body = res.get("body", "")[:400]
+        if title or body:
+            parts.append(f"{title}\n{body}".strip())
+    return "\n\n---\n\n".join(parts)[:2000]
+
+
+def _ddg_fetch_url_via_search(
+    url_or_query: str, *, is_query: bool = False, max_chars: int = 4000
+) -> str:
+    """Fallback for ``fetch_url`` when Tavily is unavailable.
+
+    Two modes:
+      - Direct: ``url_or_query`` is a URL; we fetch it via ``httpx``.
+      - Search-then-fetch: ``url_or_query`` is a question; we run
+        a DDG search and fetch the top hit.
+
+    Args:
+        url_or_query: URL or search query depending on ``is_query``.
+        is_query: When True, treat input as a search query and fetch
+            the top DDG result. When False, treat as a direct URL.
+        max_chars: Maximum length of the returned text.
+
+    Returns:
+        Plain text (or the relevant snippet), truncated to
+        ``max_chars``. Empty string on failure.
+    """
+    url = url_or_query
+    if is_query:
+        try:
+            results = _ddgs_text(url_or_query, 3)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("DDG search for fetch_url fallback failed: %s", exc)
+            return ""
+        if not results:
+            return ""
+        url = results[0].get("href", "")
+        if not url:
+            return ""
+    return _fetch_url_text(url, max_chars=max_chars)
+
+
 class GradeInput(BaseModel):
     query: str = Field(description="Original user query.")
     response: str = Field(description="Draft response to evaluate.")
@@ -164,17 +276,39 @@ class GradeOutput(BaseModel):
 
 
 @tool(args_schema=GradeInput)
-def grade_response(query: str, response: str, context: str = "") -> GradeOutput:
+def grade_response(
+    query: str,
+    response: str,
+    context: str = "",
+    runtime: Any = None,
+) -> GradeOutput:
     """Grade a draft response before human review or finalization.
+
+    Demonstrates the runtime-context pattern from the Deep Agents
+    "Context engineering" doc: a tool that reads ``runtime.context``
+    (injected by the deepagent ToolNode) to log the caller's identity
+    alongside the grade. The runtime parameter is typed as ``Any`` so
+    the function is callable without the runtime (e.g. from tests or
+    one-off scripts); the deepagent ToolNode injects a real
+    ``ToolRuntime`` at call time.
 
     Args:
         query: Original user query.
         response: Draft response to grade.
         context: Retrieved context used to produce the response.
+        runtime: Injected by deepagents; not part of the model's
+            argument schema. Carries ``runtime.context`` (the
+            ``OssiaContext`` for this call) and ``runtime.store``.
 
     Returns:
         Grade output with pass/fail decision and feedback.
     """
+    caller = None
+    if runtime is not None:
+        ctx = getattr(runtime, "context", None)
+        caller = getattr(ctx, "caller", None) if ctx is not None else None
+    if caller:
+        logger.debug("grade_response for caller=%s", caller)
     checks = 0
     total = 3
     if len(response) >= 40:
@@ -395,3 +529,302 @@ def create_pr(
         url=f"https://github.com/{repo}/pull/0",
         number=0,
     )
+
+
+# ── Web search and URL extraction (Tavily-backed) ────────────────────────────
+# Per the Deep Agents tools doc: pass any callable directly to ``tools=``;
+# Deep Agents infers the schema from the function signature and docstring.
+# The three tools below wrap ``tavily.TavilyClient`` (the canonical pattern
+# from the docs) and are wired in ``create_core_tools`` below.
+#
+# Tavily's client is created lazily because the import is heavy and the
+# API key may be absent (we degrade to DuckDuckGo for ``search_knowledge_base``,
+# and fail loudly for URL fetches that need a real backend).
+
+
+def _get_tavily_client():
+    """Return a ``TavilyClient`` for the current TAVILY_API_KEY, or ``None``."""
+    from tavily import TavilyClient
+
+    from ossia.config import get_settings
+
+    key = get_settings().tavily_api_key
+    if not key:
+        return None
+    return TavilyClient(api_key=key)
+
+
+# ─── internet_search ────────────────────────────────────────────────────────
+# Mirrors the Deep Agents tools doc example: a plain function with typed
+# args, a docstring, and Tavily's ``search()`` returning structured results.
+
+
+class InternetSearchInput(BaseModel):
+    """Input schema for ``internet_search``."""
+
+    query: str = Field(description="Natural-language search query.")
+    max_results: int = Field(
+        default=5,
+        ge=1,
+        le=10,
+        description="Number of search results to return.",
+    )
+    topic: str = Field(
+        default="general",
+        description="Tavily topic: 'general' | 'news' | 'finance'.",
+    )
+
+
+class InternetSearchResult(BaseModel):
+    """One result from ``internet_search``."""
+
+    title: str = Field(description="Page title.")
+    url: str = Field(description="Page URL.")
+    content: str = Field(description="Relevant snippet from the page.")
+    score: float = Field(default=0.0, description="Tavily relevance score.")
+
+
+class InternetSearchOutput(BaseModel):
+    """Output schema for ``internet_search``."""
+
+    query: str
+    results: list[InternetSearchResult]
+    answer: str = Field(
+        default="",
+        description="Tavily's synthesized answer when include_answer is set.",
+    )
+    backend: str = Field(
+        description="Which backend served the query: 'tavily' or 'duckduckgo'.",
+    )
+
+
+@tool(args_schema=InternetSearchInput)
+def internet_search(
+    query: str,
+    max_results: int = 5,
+    topic: str = "general",
+) -> InternetSearchOutput:
+    """Run a web search via Tavily and return structured results.
+
+    Use this when the model needs information that is not in the
+    knowledge base: external API docs, recent releases, vendor
+    announcements, etc. Returns up to ``max_results`` (default 5)
+    results plus a synthesized answer when Tavily can produce one.
+
+    When TAVILY_API_KEY is not set, falls back to DuckDuckGo. The
+    fallback is best-effort and does not return an ``answer`` field.
+
+    Args:
+        query: Natural-language search query.
+        max_results: Number of results to return (1-10).
+        topic: Search topic — 'general', 'news', or 'finance'.
+
+    Returns:
+        ``InternetSearchOutput`` with results, an optional synthesized
+        answer, and the backend that served the query.
+    """
+    client = _get_tavily_client()
+    if client is None:
+        try:
+            ddg = _ddgs_text(query, max_results)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Tavily unavailable and DuckDuckGo failed: %s", exc)
+            return InternetSearchOutput(query=query, results=[], backend="duckduckgo")
+        return InternetSearchOutput(
+            query=query,
+            results=[
+                InternetSearchResult(
+                    title=res.get("title", "Web result"),
+                    url=res.get("href", ""),
+                    content=res.get("body", "")[:800],
+                    score=0.5,
+                )
+                for res in ddg
+            ],
+            backend="duckduckgo",
+        )
+    try:
+        raw = client.search(
+            query=query,
+            max_results=max_results,
+            topic=topic,
+            include_answer="basic",
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Tavily search failed: %s", exc)
+        return InternetSearchOutput(query=query, results=[], backend="tavily")
+    return InternetSearchOutput(
+        query=query,
+        results=[
+            InternetSearchResult(
+                title=res.get("title", ""),
+                url=res.get("url", ""),
+                content=res.get("content", "")[:800],
+                score=float(res.get("score", 0.0) or 0.0),
+            )
+            for res in raw.get("results", [])
+        ],
+        answer=raw.get("answer", "") or "",
+        backend="tavily",
+    )
+
+
+# ─── fetch_url ──────────────────────────────────────────────────────────────
+# Wraps Tavily's ``extract`` endpoint. The optional ``question`` parameter
+# turns extraction into a focused Q&A: Tavily returns a one-shot answer
+# to the question grounded in the page content.
+
+
+class FetchUrlInput(BaseModel):
+    """Input schema for ``fetch_url``."""
+
+    url: str = Field(description="Page URL to extract content from.")
+    question: str | None = Field(
+        default=None,
+        description=(
+            "Optional focused question. When set, the tool returns "
+            "Tavily's answer to the question grounded in the page."
+        ),
+    )
+
+
+class FetchUrlOutput(BaseModel):
+    """Output schema for ``fetch_url``."""
+
+    url: str
+    title: str = ""
+    content: str = Field(
+        default="",
+        description="Extracted page content (markdown), truncated to 4000 chars.",
+    )
+    answer: str = Field(
+        default="",
+        description="Tavily's answer to ``question`` when set; empty otherwise.",
+    )
+    backend: str = Field(description="'tavily' (only supported backend).")
+
+
+@tool(args_schema=FetchUrlInput)
+def fetch_url(url: str, question: str | None = None) -> FetchUrlOutput:
+    """Fetch a URL and return its content (or answer a question about it).
+
+    Use this when the model has a specific page in mind: an issue
+    tracker URL, a docs page, a blog post. With no ``question`` the
+    tool returns the page content as markdown. With ``question`` it
+    returns Tavily's grounded answer (and the content for context).
+
+    Backed by Tavily's ``extract`` endpoint. When ``TAVILY_API_KEY``
+    is unset, falls back to a direct ``httpx`` fetch (``backend=
+    "duckduckgo"``) — the content quality is lower (plain text via
+    BeautifulSoup, no Q&A) but the tool still works. When ``question``
+    is set without Tavily, the fallback runs a DDG search and fetches
+    the top hit, then returns the page content with no synthesized
+    answer (DDG has no Q&A primitive).
+
+    Args:
+        url: URL to extract content from. When ``question`` is also
+            set and Tavily is unavailable, ``url`` is treated as a
+            search query and the top DDG hit is fetched instead.
+        question: Optional focused question.
+
+    Returns:
+        ``FetchUrlOutput`` with content, optional answer, and backend
+        name (``"tavily"`` or ``"duckduckgo"``).
+    """
+    client = _get_tavily_client()
+    if client is None:
+        # No Tavily: use httpx + bs4 directly. With a question, search
+        # DDG first and fetch the top hit.
+        is_query = bool(question)
+        content = _ddg_fetch_url_via_search(url, is_query=is_query)
+        return FetchUrlOutput(
+            url=url,
+            title="",
+            content=content,
+            answer="",
+            backend="duckduckgo",
+        )
+    try:
+        raw = client.extract(
+            urls=[url],
+            format="markdown",
+            query=question or None,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Tavily extract failed for %s: %s", url, exc)
+        return FetchUrlOutput(url=url, content="", answer="", backend="tavily")
+    # Tavily returns a list of results keyed by the input URL; when
+    # ``query`` is set there is also a top-level ``answer`` field.
+    results = raw.get("results", []) if isinstance(raw, dict) else []
+    page = results[0] if results else {}
+    full = page.get("raw_content", "") or page.get("content", "")
+    content = (full or "")[:4000]
+    answer = raw.get("answer", "") if question else ""
+    return FetchUrlOutput(
+        url=url,
+        title=page.get("title", ""),
+        content=content,
+        answer=answer or "",
+        backend="tavily",
+    )
+
+
+# ─── qna_search ─────────────────────────────────────────────────────────────
+# One-shot Q&A: the model asks a question, Tavily returns a string answer.
+# Useful for "what is X?" patterns where the model just wants a one-line
+# answer, not a list of citations to wade through.
+
+
+class QnaSearchInput(BaseModel):
+    """Input schema for ``qna_search``."""
+
+    query: str = Field(description="Natural-language question.")
+    topic: str = Field(
+        default="general",
+        description="Tavily topic: 'general' | 'news' | 'finance'.",
+    )
+
+
+class QnaSearchOutput(BaseModel):
+    """Output schema for ``qna_search``."""
+
+    query: str
+    answer: str
+    backend: str = Field(description="'tavily' (only supported backend).")
+
+
+@tool(args_schema=QnaSearchInput)
+def qna_search(query: str, topic: str = "general") -> QnaSearchOutput:
+    """Get a one-shot answer to a natural-language question.
+
+    Use this for "what is X?" style questions where a list of search
+    results would be overkill — the answer is a single string, no
+    citations to traverse. Backed by Tavily's ``qna_search`` endpoint.
+
+    When ``TAVILY_API_KEY`` is unset, falls back to a DDG web search
+    and synthesizes an answer from the top snippets. The fallback is
+    clearly tagged ``backend="duckduckgo"`` so the caller knows the
+    answer quality may be lower than the Tavily path.
+
+    Args:
+        query: Natural-language question.
+        topic: 'general' | 'news' | 'finance'.
+
+    Returns:
+        ``QnaSearchOutput`` with the answer string and backend name
+        (``"tavily"`` or ``"duckduckgo"``).
+    """
+    client = _get_tavily_client()
+    if client is None:
+        answer = _ddg_search_for_answer(query, max_results=3)
+        return QnaSearchOutput(
+            query=query,
+            answer=answer,
+            backend="duckduckgo",
+        )
+    try:
+        answer = client.qna_search(query=query, topic=topic)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Tavily qna_search failed: %s", exc)
+        return QnaSearchOutput(query=query, answer="", backend="tavily")
+    return QnaSearchOutput(query=query, answer=str(answer or ""), backend="tavily")

@@ -82,7 +82,32 @@ class _FakeToolModel(GenericFakeChatModel):
 
     The model emits a pre-scripted sequence of AIMessages; tool calls are already
     shaped with name/id/args so the harness routes them to the real tools.
+
+    Pydantic copies the model during agent construction (create_deep_agent and
+    the langchain 1.x middleware stack both call model_validate / model_copy),
+    which would drain a plain ``iter(...)`` and leave subsequent invocations
+    with no scripted response. We use a deque-backed list as the source so the
+    model survives copies and each ``_generate`` call pops from the front
+    without consuming the underlying iterator.
     """
+
+    def __init__(self, scripted: list[AIMessage]) -> None:
+        super().__init__(messages=iter([]))  # type-ignored; we override _generate
+        self._scripted = list(scripted)
+
+    def _generate(  # type: ignore[override]
+        self,
+        messages: list,  # noqa: ARG002
+        stop: list[str] | None = None,  # noqa: ARG002
+        run_manager: Any = None,  # noqa: ARG002
+        **kwargs: Any,
+    ) -> Any:
+        from langchain_core.outputs import ChatGeneration, ChatResult
+
+        if not self._scripted:
+            raise RuntimeError("_FakeToolModel ran out of scripted responses")
+        message = self._scripted.pop(0)
+        return ChatResult(generations=[ChatGeneration(message=message)])
 
     def bind_tools(self, tools: object, **kwargs: object) -> _FakeToolModel:  # noqa: ARG002
         return self
@@ -121,7 +146,7 @@ def _human_review_agent(
         max_revision_loops=3,
     )
     saver = InMemorySaver()
-    model = _FakeToolModel(messages=iter([_send_response_ai(), *follow_ups]))
+    model = _FakeToolModel(scripted=[_send_response_ai(), *follow_ups])
     graph = create_deep_agent(
         name="ossia-test",
         model=model,
