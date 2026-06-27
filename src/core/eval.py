@@ -58,7 +58,10 @@ def _load_dataset(path: str) -> list[dict[str, Any]]:
             f"Dataset path resolves outside the project directory: {path}"
         )
 
-    data = json.loads(resolved.read_text(encoding="utf-8"))
+    # Suppress CodeQL py/path-injection: the relative_to() guard above
+    # raises ValueError if the path escapes the project root, making this
+    # read safe from directory traversal.
+    data = json.loads(resolved.read_text(encoding="utf-8"))  # lgtm[py/path-injection]
     return data["queries"]
 
 
