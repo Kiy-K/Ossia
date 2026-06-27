@@ -18,7 +18,7 @@ import sys
 import httpx
 from dotenv import find_dotenv, load_dotenv
 
-from ossia.cli_helper import require_api_key, run_server_subprocess, terminate, wait_for_health
+from core.cli_helper import require_api_key, run_server_subprocess, terminate, wait_for_health
 
 load_dotenv(find_dotenv(usecwd=True))
 

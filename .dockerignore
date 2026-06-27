@@ -1,0 +1,63 @@
+# Git
+.git/
+.gitignore
+.gitattributes
+.github/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.pyright/
+.ruff_cache/
+
+# Test files (not needed at runtime)
+tests/
+coverage/
+htmlcov/
+.coverage
+*.cover
+
+# Development configs
+# Only exclude README.md if needed — pyproject.toml references it
+# Exclude specific doc directories but keep README.md in root
+docs/
+notebooks/
+scripts/
+
+# IDE / local tooling
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# TUI (separate project; not needed in the server image)
+src/tui/
+src/tui/node_modules/
+
+# LangGraph local runtime data
+.langgraph_api/
+
+# System
+.DS_Store
+Thumbs.db
+
+# Docker files (not needed inside the build)
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Environment files
+.env
+.env.*
+!specs/
+!langgraph.json
+!src/

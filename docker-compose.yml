@@ -1,0 +1,270 @@
+# Ossia — Docker Compose
+# ========================
+# Start:   docker compose up --build
+# Stop:    docker compose down
+#
+# The ossia app requires at minimum OSSIA_API_KEY and a provider API key
+# (e.g. OPENROUTER_API_KEY). Postgres is optional — only needed when
+# ENABLE_HUMAN_REVIEW=true or when you want persistent checkpoints.
+#
+# Copy .env.example to .env and fill in your keys before running.
+#
+# Reverse proxy (Caddy active by default — provides automatic HTTPS):
+#   docker compose up caddy -d
+#
+# To switch to Nginx instead (requires manual SSL certs):
+#   docker compose up nginx -d
+#
+# To expose ossia directly (dev mode, no proxy):
+#   OSSIA_EXPOSE_DIRECT=true docker compose up ossia
+#
+# Monitoring stack (start everything with monitoring):
+#   docker compose --profile monitoring up -d
+#   # Then open http://localhost:3000 (admin/ossia) for Grafana
+
+version: "3.9"
+
+x-ossia-env: &ossia-env
+  # Required
+  OSSIA_API_KEY: ${OSSIA_API_KEY:?OSSIA_API_KEY is required}
+  # Model provider (pick one + its key)
+  PROVIDER: ${PROVIDER:-openrouter}
+  MODEL: ${MODEL:-openai/gpt-4o-mini}
+  OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+  # Web search
+  TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+  # Postgres (leave blank to skip checkpointing)
+  POSTGRES_URL: ${POSTGRES_URL:-postgresql://ossia:ossia@postgres:5432/ossia}
+  # Agent behavior
+  ENABLE_HUMAN_REVIEW: ${ENABLE_HUMAN_REVIEW:-false}
+  MAX_REVISION_LOOPS: ${MAX_REVISION_LOOPS:-3}
+  # LangSmith tracing (optional)
+  LANGSMITH_TRACING: ${LANGSMITH_TRACING:-false}
+  LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
+  LANGSMITH_PROJECT: ${LANGSMITH_PROJECT:-ossia}
+  # MCP servers
+  MCP_CONFIG_PATH: ${MCP_CONFIG_PATH:-.mcp.json}
+
+services:
+  # ═══════════════════════════════════════════════════════════════════
+  # Ossia agent server (internal — not exposed directly in production)
+  # ═══════════════════════════════════════════════════════════════════
+  ossia:
+    build: .
+    image: ossia:latest
+    container_name: ossia-server
+    # In production, the reverse proxy handles external traffic.
+    # For local dev, set OSSIA_EXPOSE_DIRECT=true to access ossia directly.
+    ports:
+      - "${OSSIA_EXPOSE_DIRECT:+8000}:8000"
+    environment:
+      <<: *ossia-env
+    volumes:
+      - .mcp.json:/app/.mcp.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - ossia-net
+    logging:
+      driver: "${LOG_DRIVER:-json-file}"
+      options:
+        max-size: "${LOG_MAX_SIZE:-10m}"
+        max-file: "${LOG_MAX_FILE:-3}"
+        # To ship logs to Loki, install the Docker plugin:
+        #   docker plugin install grafana/loki-docker-driver:latest --alias loki --grant-all-permissions
+        # Then set LOG_DRIVER=loki and add:
+        #   loki-url: http://loki:3100/loki/api/v1/push
+        #   loki-external-labels: "job=ossia,container_name={{.Name}}"
+
+  # ═══════════════════════════════════════════════════════════════════
+  # Postgres — state persistence / HITL checkpointing
+  # ═══════════════════════════════════════════════════════════════════
+  postgres:
+    image: postgres:16-alpine
+    container_name: ossia-postgres
+    environment:
+      POSTGRES_USER: ossia
+      POSTGRES_PASSWORD: ossia
+      POSTGRES_DB: ossia
+    ports:
+      - "${POSTGRES_PORT:-127.0.0.1:5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ossia -d ossia"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - ossia-net
+    logging:
+      driver: "${LOG_DRIVER:-json-file}"
+      options:
+        max-size: "${LOG_MAX_SIZE:-10m}"
+        max-file: "${LOG_MAX_FILE:-3}"
+
+  # ═══════════════════════════════════════════════════════════════════
+  # Caddy — reverse proxy with automatic HTTPS (recommended)
+  # ═══════════════════════════════════════════════════════════════════
+  #
+  # Production:
+  #   DOMAIN=api.ossia.dev docker compose up caddy -d
+  #
+  # Local dev (HTTP only, no certs needed):
+  #   docker compose up caddy
+  #
+  caddy:
+    image: caddy:2-alpine
+    container_name: ossia-caddy
+    ports:
+      - "${CADDY_HTTP_PORT:-80}:80"
+      - "${CADDY_HTTPS_PORT:-443}:443"
+    environment:
+      - DOMAIN=${DOMAIN:-}          # Set for automatic HTTPS
+      - OSSIA_URL=http://ossia:8000
+      - ACME_AGREE=true             # Agree to Let's Encrypt ToS
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data             # Caddy stores certs here
+      - caddy_config:/config
+    depends_on:
+      - ossia
+    restart: unless-stopped
+    networks:
+      - ossia-net
+    logging:
+      driver: "${LOG_DRIVER:-json-file}"
+      options:
+        max-size: "${LOG_MAX_SIZE:-10m}"
+        max-file: "${LOG_MAX_FILE:-3}"
+
+  # ═══════════════════════════════════════════════════════════════════
+  # Nginx — alternative reverse proxy (requires manual SSL certs)
+  # ═══════════════════════════════════════════════════════════════════
+  #
+  # To use instead of Caddy:
+  #   1. Place SSL certs at ./certs/fullchain.pem and ./certs/privkey.pem
+  #   2. Run: docker compose up nginx -d
+  #
+  # For automatic Let's Encrypt, uncomment the certbot service below
+  # and run: docker compose run --rm certbot
+  #
+  # nginx:
+  #   image: nginx:1.27-alpine
+  #   container_name: ossia-nginx
+  #   ports:
+  #     - "${NGINX_HTTP_PORT:-80}:80"
+  #     - "${NGINX_HTTPS_PORT:-443}:443"
+  #   volumes:
+  #     - ./nginx.conf:/etc/nginx/nginx.conf:ro
+  #     - ./certs:/etc/nginx/certs:ro
+  #     - nginx_logs:/var/log/nginx
+  #   depends_on:
+  #     - ossia
+  #   restart: unless-stopped
+  #   networks:
+  #     - ossia-net
+  #   logging:
+  #     driver: "${LOG_DRIVER:-json-file}"
+  #     options:
+  #       max-size: "${LOG_MAX_SIZE:-10m}"
+  #       max-file: "${LOG_MAX_FILE:-3}"
+  #
+  # # Certbot sidecar for automatic Let's Encrypt certs
+  # certbot:
+  #   image: certbot/certbot:latest
+  #   container_name: ossia-certbot
+  #   volumes:
+  #     - ./certs:/etc/letsencrypt
+  #   entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+  #   # Initial setup: docker compose run --rm certbot certonly --webroot -w /tmp -d api.ossia.dev
+
+  # ═══════════════════════════════════════════════════════════════════
+  # Prometheus — metrics collection and storage
+  # ═══════════════════════════════════════════════════════════════════
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: ossia-prometheus
+    profiles:
+      - monitoring
+    ports:
+      - "${PROMETHEUS_PORT:-127.0.0.1:9090}:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-30d}"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+    depends_on:
+      - ossia
+    restart: unless-stopped
+    networks:
+      - ossia-net
+
+  # ═══════════════════════════════════════════════════════════════════
+  # Loki — log aggregation and storage
+  # ═══════════════════════════════════════════════════════════════════
+  loki:
+    image: grafana/loki:latest
+    container_name: ossia-loki
+    profiles:
+      - monitoring
+    ports:
+      - "${LOKI_PORT:-127.0.0.1:3100}:3100"
+    volumes:
+      - ./monitoring/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki_data:/var/loki
+    command:
+      - "-config.file=/etc/loki/loki-config.yml"
+    restart: unless-stopped
+    networks:
+      - ossia-net
+
+  # ═══════════════════════════════════════════════════════════════════
+  # Grafana — dashboards and visualization
+  # ═══════════════════════════════════════════════════════════════════
+  grafana:
+    image: grafana/grafana:latest
+    container_name: ossia-grafana
+    profiles:
+      - monitoring
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-ossia}
+      - GF_INSTALL_PLUGINS=
+      - GF_LOG_LEVEL=warn
+    volumes:
+      - ./monitoring/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ./monitoring/grafana/dashboard.json:/var/lib/grafana/dashboards/ossia.json:ro
+      - ./monitoring/grafana/dashboard-provider.yml:/etc/grafana/provisioning/dashboards/ossia.yml:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+      - loki
+    restart: unless-stopped
+    networks:
+      - ossia-net
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
+  nginx_logs:
+  prometheus_data:
+  loki_data:
+  grafana_data:
+
+networks:
+  ossia-net:
+    driver: bridge

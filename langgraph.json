@@ -1,0 +1,14 @@
+{
+  "graphs": {
+    "supervisor": "./src/core/graphs/supervisor.py:graph",
+    "researcher": "./src/core/graphs/researcher.py:graph",
+    "tester": "./src/core/graphs/tester.py:graph",
+    "auditor": "./src/core/graphs/auditor.py:graph"
+  },
+  "dependencies": ["."],
+  "env": ".env",
+  "python_version": "3.12",
+  "dockerfile_lines": [
+    "RUN apt-get update && apt-get install -y --no-install-recommends && rm -rf /var/lib/apt/lists/*"
+  ]
+}

@@ -6,44 +6,49 @@
 
 ## 1. Vision
 
-Ossia exposes **one** HTTP API for everything the runtime does: chat, streaming, thread state and resume, tool introspection, eval, and audit. Scripts, notebooks, and external clients all go through this API — no more direct imports of `ossia.agent` for runtime work.
+Ossia exposes **one** HTTP API for everything the runtime does: chat, streaming, thread state, event replay, resume, tool introspection, eval, audit, and metrics. Scripts, notebooks, TUIs, and external clients all go through this API — no more direct imports for runtime work.
 
 ## 2. Scope (v1)
 
 | Concern | In scope | Out of scope |
 |---|---|---|
 | Chat | `POST /v1/chat`, `POST /v1/chat/stream` | — |
-| Threads | `GET /v1/threads/{id}/state`, `/history`, `POST /v1/threads/{id}/resume` | Thread creation, deletion, listing |
+| Threads | `GET /v1/threads/{id}/state`, `/history`, `/events`, `DELETE /v1/threads/{id}/events`, `POST /v1/threads/{id}/resume` | Thread creation, deletion, listing |
 | Introspection | `GET /v1/tools` | Graph schema, subagent listing |
+| Observability | `GET /metrics` (Prometheus), `GET /health` | Readiness probes (use `/health`) |
 | Quality gates | `GET /v1/audit`, `POST /v1/eval` | Continuous integration, scheduling |
-| Liveness | `GET /health` | Readiness probes (use `/health`) |
 
 ## 3. Non-functional requirements
 
-- **Auth.** Every non-health route requires `X-API-Key` (constant-time compare against `OSSIA_API_KEY`). 401 on missing/wrong; 500 on server misconfig.
+- **Auth.** Every non-health/non-metrics route requires `X-API-Key` (constant-time compare against `OSSIA_API_KEY`). 401 on missing/wrong; 500 on server misconfig.
 - **Error contract.** Every non-2xx response is `{"error": {"code", "message", "request_id"}}`. Clients branch on `code`, not `detail`.
 - **Request tracing.** Every request gets an `X-Request-ID` (echoed on the response, included in error envelopes). If the client supplies one, we honor it.
 - **Thread isolation.** Server-side thread ids are prefixed with the caller's hash so authenticated callers cannot see each other's threads.
+- **Event replay.** Every streaming invocation's normalized events are buffered in-memory and available via `GET /v1/threads/{id}/events` for replay, debugging, and late-joining TUI sessions.
 - **Backwards compatibility.** We do not maintain deprecated aliases. Breaking changes bump the URL prefix (e.g. `/v2/...`) and update `specs/changelog.md`.
-- **No live LLM in tests.** Routes that would call the model are tested with `TestClient` against a graph built with no API key. Streaming and resume have dedicated unit tests in `tests/test_graph.py` and `tests/test_mcp_tools.py` that do not depend on a live LLM.
+- **No live LLM in tests.** Routes that would call the model are tested with `TestClient` against a graph built with no API key. Streaming and resume have dedicated unit tests that do not depend on a live LLM.
+- **Observability.** `/metrics` is exposed via `prometheus_fastapi_instrumentator` for Prometheus scraping. No auth on `/metrics` (internal network access only). A monitoring stack (Prometheus + Loki + Grafana) is available via `docker compose --profile monitoring up`.
 
 ## 4. Endpoint contracts
 
 | Method | Path | Request | Response |
 |---|---|---|---|
 | GET | `/health` | — | `HealthResponse` |
+| GET | `/metrics` | — | `text/plain` (Prometheus format) |
 | POST | `/v1/chat` | `ChatRequest` | `ChatResponse` |
-| POST | `/v1/chat/stream` | `ChatRequest` | `text/event-stream` of `StreamEvent` |
+| POST | `/v1/chat/stream` | `ChatRequest` | `text/event-stream` of `OssiaEvent` |
 | GET | `/v1/tools` | — | `ToolListResponse` |
 | GET | `/v1/threads/{id}/state` | — | `ThreadStateResponse` |
 | GET | `/v1/threads/{id}/history` | — | `ThreadHistoryResponse` |
+| GET | `/v1/threads/{id}/events` | — | `ThreadEventsResponse` |
+| DELETE | `/v1/threads/{id}/events` | — | `{"thread_id", "cleared"}` |
 | POST | `/v1/threads/{id}/resume` | `ResumeRequest` | `ResumeResponse` |
 | POST | `/v1/eval` | `EvalRequest` | `EvalReport` |
 | GET | `/v1/audit` | — | `AuditReport` |
 
 ## 5. Workflow for spec changes
 
-1. Change a handler or Pydantic model in `src/ossia/api.py` / `src/ossia/schemas.py`.
+1. Change a handler or Pydantic model in `src/core/api.py` / `src/core/schemas.py`.
 2. Run `pytest -k openapi_drift`. **It will fail** with a unified diff.
 3. If the change is intentional, run `.venv/bin/python scripts/update_openapi_spec.py` to regenerate `specs/openapi.checked.json`.
 4. Commit the spec, handler, and schemas in one PR.
@@ -57,6 +62,6 @@ The drift test makes the contract of record *executable*. Reviewers can see exac
 ## 7. What is NOT in scope for v1
 
 - Client SDK generation (Speakeasy / Fern / NSwag). Add later if needed.
-- Webhooks for thread events. Use `GET /v1/threads/{id}/state` to poll.
+- Webhooks for thread events. Use `GET /v1/threads/{id}/state` and `GET /v1/threads/{id}/events` to poll.
 - Multi-tenant scoping beyond per-caller thread prefixing.
 - A web UI. The API is for clients to build on.

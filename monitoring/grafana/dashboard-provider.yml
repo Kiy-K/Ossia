@@ -1,0 +1,19 @@
+# =============================================================================
+# Grafana Dashboard Provider — Auto-Provisioning
+# =============================================================================
+# Grafana loads dashboards from the json files listed here on startup.
+# =============================================================================
+
+apiVersion: 1
+
+providers:
+  - name: "Ossia Dashboards"
+    orgId: 1
+    folder: "Ossia"
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

@@ -6,7 +6,7 @@ Repo-specific guidance for OpenCode and other coding sessions in `/home/khoi/oss
 
 Ossia — a portable, model-agnostic support agent built on LangChain Deep Agents. The unified HTTP API at `/v1/*` is the only runtime entry point; CLI scripts, the notebook, and the TUI are thin HTTP clients. Spec-driven: `specs/openapi.checked.json` is the pinned contract, `tests/test_openapi_drift.py` fails the suite on drift.
 
-Architecture and intent: `README.md` (overview), `ARCHITECTURE.md` (full architectural map), `specs/SPEC.md` (narrative spec), `docs/adr/0001..0010.md` (the ten design decisions). Read those before changing behavior.
+Architecture and intent: `README.md` (overview), `specs/SPEC.md` (narrative spec), `docs/adr/0001..0012.md` (twelve design decisions). Read those before changing behavior.
 
 ## Quick start (the commands you actually need)
 
@@ -30,6 +30,12 @@ uv pip install -e ".[dev,notebook]"
 # Regenerate the pinned OpenAPI spec after a deliberate contract change
 .venv/bin/python scripts/update_openapi_spec.py
 
+# Run the coverage matrix (generates specs/coverage.md)
+.venv/bin/python scripts/coverage_matrix.py
+
+# Generate a draft changelog entry from implemented feature specs
+.venv/bin/python scripts/generate_changelog_entry.py --dry-run
+
 # Run the audit (spins up uvicorn, hits /v1/audit, tears down)
 OSSIA_API_KEY=dev .venv/bin/python scripts/audit_ossia.py
 
@@ -43,12 +49,61 @@ OSSIA_API_KEY=dev .venv/bin/python -m uvicorn core.api:app --host 127.0.0.1 --po
 cd src/tui && bun install && bun dev
 ```
 
+## Using the Makefile
+
+The project has a comprehensive `Makefile` with 40+ targets. **Prefer `make` over raw commands** for most workflows:
+
+```bash
+make install          # Install deps (auto-creates .venv)
+make env              # Create .env from .env.example
+make dev              # Start dev server with hot reload
+make test             # Run full test suite
+make docker-up        # Start full Docker stack (ossia + postgres + caddy)
+make monitor-up       # Start monitoring stack (prometheus + loki + grafana)
+make format           # Format + lint code with ruff
+make typecheck        # Typecheck with mypy + pyright
+make clean            # Stop Docker + remove Python caches
+```
+
+Run `make help` to see all targets with descriptions.
+
+## Makefile — key targets reference
+
+| Target | What it does |
+|--------|-------------|
+| `install` | Create venv + install deps |
+| `setup` | Alias for install |
+| `env` | Copy `.env.example` → `.env` |
+| `dev` | `uvicorn core.api:app --reload` on port 8000 |
+| `format` | `ruff check --fix` + `ruff format` |
+| `lint` | `ruff check src tests scripts` |
+| `typecheck` | `mypy src` + `pyright src` |
+| `check` | `lint` + `typecheck` (sequential) |
+| `test` | `pytest tests/ -v` |
+| `test-focused path=...` | Run a specific test |
+| `test-coverage` | Tests with `--cov` report |
+| `spec-docs` | Regenerate `openapi.checked.json` |
+| `spec-coverage` | Generate route×feature coverage table |
+| `docker-build` | `docker build -t ossia .` |
+| `docker-up` | `docker compose up -d --build` (ossia + postgres + caddy) |
+| `docker-down` | `docker compose down` |
+| `docker-logs` | `docker compose logs -f` |
+| `docker-ps` | `docker compose ps` |
+| `monitor-up` | Start stack with monitoring profile |
+| `monitor-down` | Stop monitoring services |
+| `metrics` | `curl localhost:9090/api/v1/query?query=up` |
+| `audit` | Run `scripts/audit_ossia.py` |
+| `eval` | Run `scripts/eval_ossia.py` |
+| `tui` | Start TUI (bun dev in src/tui) |
+| `clean` | Stop Docker + remove Python caches |
+| `clean-all` | Nuclear: removes `.venv`, `.env` too |
+
 ## Agent skills
 
 - **Issue tracker:** GitHub Issues on `Kiy-K/Ossia` (https://github.com/Kiy-K/Ossia/issues).
 - **Triage labels:** `bug`, `feature`, `enhancement`, `ready-for-agent`, `needs-triage`, `blocked`, `good-first-issue`.
 - **Domain docs:** `docs/agents/CONTEXT.md` (glossary, ADRs, architecture).
-- **ADR index:** `docs/adr/0001..0010.md` — the ten design decisions.
+- **ADR index:** `docs/adr/0001..0012.md` — the twelve design decisions (incl. 0011 QuickJS code interpreter, 0012 thread event buffer replay).
 
 - **Project name** is **Ossia** (brand, PyPI, env-var prefix `OSSIA_*`,
   Docker container name `ossia-postgres`).
@@ -71,6 +126,7 @@ cd src/tui && bun install && bun dev
 - **API tests set `ENABLE_HUMAN_REVIEW=false` and `POSTGRES_URL=""` around the module lifetime** (see `tests/test_api.py::_api_test_env`). They restore the original env on teardown. Don't add tests that depend on the user's real `.env` env inside the same suite.
 - **The HITL tests in `tests/test_graph.py` use a custom `_FakeToolModel`** that scripts a list of `AIMessage`s. Do not pass `messages=iter([...])` to `GenericFakeChatModel` — Pydantic's `model_copy` / `model_validate` (called by `create_deep_agent` and the langchain 1.x middleware) drains the iterator, leaving subsequent `_generate` calls with no scripted response. The repo's fake uses a deque-backed list and overrides `_generate` to pop from the front. Follow that pattern for any new test fake.
 - **`Settings` is `lru_cache`'d.** The API test module clears the cache after mutating env vars. If you add a test that needs different settings, clear `get_settings.cache_clear()` in your fixture's teardown.
+- **System `OSSIA_API_KEY` env var may override .env.** If you have a stray `export OSSIA_API_KEY=...` in your shell profile, it will override the `.env` file. Use `unset OSSIA_API_KEY` before `make docker-up` to ensure the .env value is used.
 
 ## Spec-driven workflow (do not skip this)
 
@@ -82,17 +138,75 @@ cd src/tui && bun install && bun dev
 
 There are **no deprecated aliases** in this codebase by house style. Do not add back-compat shims; remove and migrate.
 
+## Feature specs
+
+Feature specs live in `specs/features/<slug>.md`. They formalize capability
+coverage (what a feature does, which routes it touches, what NFRs it carries)
+and are validated by `tests/test_feature_specs.py`.
+
+### Creating a new feature spec
+
+Copy `specs/features/TEMPLATE.md` to `specs/features/<slug>.md` and fill in
+the sections. Required sections: What it does, Scope table, Endpoint impact,
+Safety/Permissions, NFRs, Affected modules, Testing notes.
+
+```bash
+cp specs/features/TEMPLATE.md specs/features/my-feature.md
+# Edit the new file, then validate:
+.venv/bin/python -m pytest tests/test_feature_specs.py -v
+```
+
+### Key scripts
+
+- `scripts/coverage_matrix.py` — generates `specs/coverage.md`, a route×feature
+  coverage table from the OpenAPI spec and all feature specs. Run after adding
+  or changing a feature spec.
+- `scripts/generate_changelog_entry.py` — scans implemented feature specs and
+  generates a draft `specs/changelog.md` entry. Use `--dry-run` to preview.
+
+## Feature spec validation
+
+`pytest tests/test_feature_specs.py` validates:
+- All required sections are present.
+- Status/Scope/ADR frontmatter fields exist and are valid.
+- Endpoint references in `## Endpoint impact` tables match actual API routes.
+- ADR cross-references resolve to existing files in `docs/adr/`.
+
+## Graph architecture (langgraph.json)
+
+Four graphs registered for the LangGraph Platform deployment model:
+
+| Graph | File | Purpose |
+|-------|------|---------|
+| `supervisor` | `src/core/graphs/supervisor.py` | Main agent — same as `build_agent_async()`. All sync subagents, middleware stack, 14 tools. |
+| `researcher` | `src/core/graphs/researcher.py` | Standalone graph for async `researcher` subagent tasks |
+| `tester` | `src/core/graphs/tester.py` | Standalone graph for async `tester` subagent tasks |
+| `auditor` | `src/core/graphs/auditor.py` | Standalone graph for async `auditor` subagent tasks |
+
+**Important:** All 4 graph files are structurally identical — they all call `core.agent.build_agent()`. They exist so the LangGraph Platform has separate `graph_id` values to route async subagent runs to. When running locally via `uvicorn core.api:app`, `langgraph.json` is not read; the main app creates the agent in-process.
+
+The 3 async subagents (researcher, tester, auditor) are wired into the main agent via `AsyncSubAgentMiddleware` in `core/agent.py`, which exposes `start_async_task`, `check_async_task`, etc. tools. They require a LangGraph Cloud deployment to actually execute.
+
 ## Layout (current)
 
 ```
 src/core/            # Library: agent, memory, tools, mcp_tools, middleware,
-                     # schemas, audit, eval, cli_helper, api, async_agents
+                     # schemas, audit, eval, cli_helper, api, events,
+                     # graphs (supervisor, researcher, tester, auditor),
+                     # orchestrators (bugfix, audit, refactor pipelines)
 src/tui/             # OpenTUI/React terminal client (bun)
 tests/               # test_api, test_graph, test_mcp_tools, test_openapi_drift,
-                     # test_context, test_episodic, test_memory, test_tools
-scripts/             # audit_ossia, eval_ossia, update_openapi_spec (HTTP clients)
-specs/               # SPEC.md, openapi.checked.json (pinned), changelog.md
-docs/adr/            # 0001..0010 — design decisions
+                     # test_context, test_episodic, test_memory, test_tools,
+                     # test_feature_specs, test_events, test_graph_id_consistency,
+                     # test_subagent_descriptions, test_tool_descriptions
+scripts/             # audit_ossia, eval_ossia, update_openapi_spec,
+                     # coverage_matrix, generate_changelog_entry
+specs/               # SPEC.md, openapi.checked.json (pinned), changelog.md,
+                     # features/ (feature specs), coverage.md
+monitoring/          # prometheus.yml, loki-config.yml, grafana/ (datasources,
+                     # dashboard.json, dashboard-provider.yml)
+docs/adr/            # 0001..0012 — design decisions
+docs/skills/         # SKILL.md files (web-search, code-review)
 notebooks/demo.ipynb # HTTP client via httpx
 ```
 
@@ -119,93 +233,77 @@ The real entrypoints:
     same `AGENTS.md`. There is no per-user scoping wired today.
   - **Episodic / per-thread recall** is the `recall_thread_turns`
     tool from `core.episodic`. It calls
-    `checkpointer.list({"configurable": {"thread_id": ...}})`,
-    which is the only stable cross-turn primitive on a bare
-    `BaseCheckpointSaver`. Cross-thread enumeration requires the
-    LangGraph SDK's `client.threads.search`; not wired in v1.
+    `checkpointer.list({"configurable": {"thread_id": ...}})`.
 - **Subagents** (see ADR-0008) are wired as the canonical
   `SubAgent` dict shape (name, description, system_prompt, tools,
-  model) per the Deep Agents subagents doc. Four custom roles:
-  `code-researcher`, `bug-diagnostician`, `fix-proposer`,
-  `test-runner`. Each has a specific, action-oriented description
-  starting with "Delegates here when ..." and a system prompt that
-  pins role + expected workflow + output format + a 200-250 word
-  cap. The Deep Agents `general-purpose` subagent is auto-added and
-  serves as a fallback. LangSmith traces carry
-  `lc_agent_name=<subagent>` automatically; filter on that key
-  to isolate a subagent's runs.
-- **Async subagents** (preview, see `changelog.md` v1.6.0) re-use the
+  model). Seven custom roles: `code-researcher`, `bug-diagnostician`,
+  `fix-proposer`, `test-runner`, `ui-debugger`, `diagram-analyzer`,
+  `visual-regression-reviewer`. The Deep Agents `general-purpose`
+  subagent is auto-added as a fallback.
+- **Async subagents** (see `changelog.md` v1.6.0) re-use the
   same role catalogue as `AsyncSubAgent` specs. The
   `AsyncSubAgentMiddleware` is auto-injected by `create_deep_agent`
   when async subagents are wired; it exposes five tools
   (`start_async_task`, `check_async_task`, `update_async_task`,
-  `cancel_async_task`, `list_async_tasks`) and a `async_tasks` state
-  channel. Gated by `Settings.enable_async_subagents` (default
-  `true`).
+  `cancel_async_task`, `list_async_tasks`). Gated by
+  `Settings.enable_async_subagents` (default `true`).
 - **Code interpreter** (`langchain-quickjs`):
   `CodeInterpreterMiddleware` adds an `eval` tool for sandboxed
-  QuickJS JavaScript execution. PTC (Programmatic Tool Calling)
-  allowlist: `search_codebase`, `read_file`, `recall_thread_turns`
-  — read-only tools only; no destructive operations are exposed to
-  JS. The `task` tool is **not** in the PTC allowlist because it
-  mutates state. `inspect.signature` introspects the middleware's
-  `__init__` to pick the right persistence kwarg
-  (`snapshot_between_turns` vs `mode`) — this guards against
-  upstream signature changes. Interpreter events surface in
-  `/v1/chat/stream` as `tool_call` SSE events (no wire contract
-  change).
-- **Tools** (see ADR-0009) follow the Deep Agents tools doc: every
-  tool is a plain `@tool`-decorated function with a Pydantic
-  `args_schema`; Deep Agents infers the schema from the signature
-  and docstring. Tavily-backed web tools (`internet_search`,
-  `fetch_url`, `qna_search`) read `TAVILY_API_KEY` (alias:
-  `OSSIA_TAVILY_API_KEY`). When the key is unset, every tool has
-  a working fallback: `internet_search` falls back to DuckDuckGo
-  search; `fetch_url` falls back to a direct `httpx` + `bs4`
-  text extraction (the canonical pattern from the deep-research
-  doc); with `question` set, it falls back to a DDG search + top
-  hit. `qna_search` falls back to a DDG-synthesized answer.
-  Every fallback is clearly tagged ``backend="duckduckgo"``.
+  QuickJS JavaScript execution. PTC allowlist: `search_codebase`,
+  `read_file`, `recall_thread_turns` — read-only tools only.
+- **Tools** (see ADR-0009): every tool is a plain `@tool`-decorated
+  function with a Pydantic `args_schema`. Tavily-backed web tools
+  fall back to DuckDuckGo when key is unset.
 - **Runtime context** (see ADR-0010) flows through every call as
-  a frozen ``OssiaContext`` dataclass (``caller``, ``request_id``,
-  ``provider``). The FastAPI layer constructs one per request and
-  passes it as ``context=`` to ``agent.ainvoke`` /
-  ``agent.astream_events``. Tools that want the caller's identity
-  read ``runtime.context.caller`` (the deepagent ``ToolRuntime`` is
-  injected at call time). Context propagates to all subagents
-  automatically. No middleware yet surfaces the caller in the
-  system prompt itself — the doc's ``@dynamic_prompt`` pattern
-  is a future enhancement.
-- `interrupt_on` is `dict[str, bool | InterruptOnConfig]`; it is silently skipped when there is no checkpointer (see `_interrupt_config` in `agent.py`).
+  a frozen `OssiaContext` dataclass (`caller`, `request_id`,
+  `provider`).
+- `interrupt_on` is `dict[str, bool | InterruptOnConfig]`; silently skipped when there is no checkpointer.
 
 ## MCP gotchas
 
-- `mcp.client.streamable_http.streamable_http_client` uses an anyio task group with task-affine cancel scopes. The worker-per-task pattern in `MCPToolkit` keeps the cancel scope out of the parent's task. Don't try to "simplify" it back to a direct `try/except Exception` around connect — that will resurrect the original bug (transport `CancelledError` is `BaseException`, the parent's `except Exception` misses it, and anyio then refuses to exit the scope from a different task).
-- Per-server connect timeout is bounded (`mcp_connect_timeout` 1.0–60.0 s); misconfiguration cannot block startup indefinitely.
-- `MCPToolkit.mcp_tool_servers` (a `dict[tool_name, server_name]`) is the source of truth for `/v1/tools` provenance. The `_mcp_server` attribute on wrapped tools is a hint; Pydantic drops unknown attrs on `model_validate`, so don't rely on the attribute alone.
+- `mcp.client.streamable_http.streamable_http_client` uses an anyio task group with task-affine cancel scopes. The worker-per-task pattern in `MCPToolkit` keeps the cancel scope out of the parent's task.
+- Per-server connect timeout is bounded (`mcp_connect_timeout` 1.0–60.0 s).
+- `MCPToolkit.mcp_tool_servers` (a `dict[tool_name, server_name]`) is the source of truth for `/v1/tools` provenance.
 
 ## Terminal UI (src/tui)
 
 `src/tui/` is a separate OpenTUI/React 19 project (Bun runtime). It is
 purely a client — it consumes `/v1/chat/stream` over SSE and renders
-the run as a multi-pane terminal app (Coordinator, subagents, tool
-activity, todo board, interrupt modal).
+the run as a multi-pane terminal app.
 
-- **Do not import from `src/tui/`** in Python. The TUI has no Python
-  module path; it's a TypeScript project with its own `package.json`
-  and `bun.lock`.
-- The TUI is a thin consumer: every state mutation is driven by SSE
-  events from `/v1/chat/stream` (see `src/tui/src/events/normalize.ts`).
-  When the wire contract changes, update the normalizer and the
-  reducers in lockstep.
-- Default `API_URL=http://localhost:8000`, `API_KEY="dev"` (matches
-  `OSSIA_API_KEY=dev` in the server env). These are inlined for the
-  preview; promote to env-driven config when this graduates out of
-  preview.
+- **Do not import from `src/tui/`** in Python.
+- Default `API_URL=http://localhost:8000`, `API_KEY="dev"`.
+
+## Docker compose
+
+`docker compose up -d --build` starts three services by default:
+- **ossia** (the FastAPI agent server)
+- **postgres** (state persistence)
+- **caddy** (reverse proxy with auto HTTPS)
+
+With `--profile monitoring`, also starts:
+- **prometheus** (metrics scraping)
+- **loki** (log aggregation)
+- **grafana** (pre-configured dashboards)
+
+See `docker-compose.yml` for full service definitions and env var references.
+
+## Monitoring stack
+
+Config files in `monitoring/`:
+- `monitoring/prometheus.yml` — scrape config (ossia, prometheus, loki, grafana)
+- `monitoring/loki-config.yml` — single-node Loki with filesystem storage
+- `monitoring/grafana/datasources.yml` — auto-provisions Prometheus + Loki
+- `monitoring/grafana/dashboard.json` — 11-panel pre-loaded dashboard
+- `monitoring/grafana/dashboard-provider.yml` — auto-loads dashboards
+
+Start with: `make monitor-up` (or `docker compose --profile monitoring up -d`)
 
 ## Deploy
 
-`./nebius/deploy.sh` is the one-command path. Requires `docker`, `kubectl`, `envsubst` (from `gettext`), and `NEBIUS_PROJECT_ID` exported. Image is pinned to `v0.1.0` by default; override with `IMAGE_TAG=...`.
+- **Docker-based:** `make docker-build` + `make docker-up` (or `docker compose up -d --build`)
+- **Raw process:** `uvicorn core.api:app --host 0.0.0.0 --port 8000`
+- **LangGraph Platform** (`make docker-langgraph-build`): builds a LangGraph Platform server image. Only serves the 4 sub-graphs via generic `/runs` API — does NOT serve custom `/v1/*` routes. Not recommended unless you're deploying the async subagent infrastructure separately.
 
 ## What not to do
 

@@ -23,7 +23,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import START, MessagesState, StateGraph
 
-from ossia.episodic import make_episodic_recall_tool
+from core.episodic import make_episodic_recall_tool
 
 
 def _build_echo_graph(saver: InMemorySaver):

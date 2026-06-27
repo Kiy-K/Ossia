@@ -19,7 +19,7 @@ import asyncio
 from deepagents.backends.utils import create_file_data
 from langgraph.store.memory import InMemoryStore
 
-from ossia.memory import (
+from core.memory import (
     AGENT_NAMESPACE,
     AGENTS_MEMORY_KEY,
     initial_agents_memory,
@@ -36,7 +36,7 @@ def test_initial_agents_memory_includes_identity_and_learned_section() -> None:
     body = initial_agents_memory()
     assert "Ossia" in body
     assert "Things I've learned" in body
-    assert "MAX_REVISION_LOOPS" in body  # prompt placeholder; we don't expand it here
+    assert "3 times before finalizing" in body  # matches the seed's revision loop guidance
 
 
 async def test_seed_memory_creates_file_on_fresh_store() -> None:
@@ -90,7 +90,7 @@ async def test_agent_filesystem_surfaces_seeded_memory() -> None:
     building the agent must not fail when a store is supplied, and the
     seed must be present in the store that the agent is built with.
     """
-    from ossia.agent import _make_backend
+    from core.agent import _make_backend
 
     store = InMemoryStore()
     # Pre-seed (build_agent_async also does this; we double-seed to

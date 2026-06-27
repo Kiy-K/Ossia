@@ -1,6 +1,152 @@
 {
   "components": {
     "schemas": {
+      "Artifact": {
+        "additionalProperties": false,
+        "description": "A multimodal artifact attached to a chat turn.\n\nArtifacts are normalized content blocks (images, documents, audio, video)\nthat flow through the agent alongside the user's text message. The\nnormalizer in ``api.py`` converts these to LangChain content blocks\nbefore passing them to the agent.\n\nOne of ``data`` (base64) or ``url`` must be set, but not both.",
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Base64-encoded content. Mutually exclusive with ``url``.",
+            "title": "Data"
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Original filename for display / TUI metadata.",
+            "title": "Filename"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "description": "Optional metadata (size_bytes, dimensions, duration, etc.).",
+            "title": "Metadata",
+            "type": "object"
+          },
+          "mime_type": {
+            "description": "MIME type, e.g. 'image/png' or 'application/pdf'.",
+            "title": "Mime Type",
+            "type": "string"
+          },
+          "type": {
+            "description": "Media type of the artifact.",
+            "enum": [
+              "image",
+              "document",
+              "audio",
+              "video"
+            ],
+            "title": "Type",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Public URL to the artifact. Mutually exclusive with ``data``.",
+            "title": "Url"
+          }
+        },
+        "required": [
+          "type",
+          "mime_type"
+        ],
+        "title": "Artifact",
+        "type": "object"
+      },
+      "ArtifactInfo": {
+        "additionalProperties": false,
+        "description": "Lightweight artifact metadata for TUI rendering and thread history.\n\nDoes not carry the raw binary data \u2014 only metadata needed to render an\nartifact entry in the TUI (filename, type, analysis state) and to drive\nthe analysis lifecycle.",
+        "properties": {
+          "analysis_result": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Short text result from multimodal analysis, once completed.",
+            "title": "Analysis Result"
+          },
+          "analysis_state": {
+            "default": "pending",
+            "description": "Current state of multimodal analysis.",
+            "enum": [
+              "pending",
+              "analyzing",
+              "completed",
+              "failed"
+            ],
+            "title": "Analysis State",
+            "type": "string"
+          },
+          "filename": {
+            "description": "Original filename.",
+            "title": "Filename",
+            "type": "string"
+          },
+          "id": {
+            "description": "Unique artifact identifier within the thread.",
+            "title": "Id",
+            "type": "string"
+          },
+          "mime_type": {
+            "description": "MIME type.",
+            "title": "Mime Type",
+            "type": "string"
+          },
+          "size_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "File size in bytes.",
+            "title": "Size Bytes"
+          },
+          "type": {
+            "description": "Media type.",
+            "enum": [
+              "image",
+              "document",
+              "audio",
+              "video"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "filename",
+          "mime_type"
+        ],
+        "title": "ArtifactInfo",
+        "type": "object"
+      },
       "AuditReport": {
         "additionalProperties": false,
         "description": "Top-level audit report.",
@@ -56,6 +202,14 @@
         "additionalProperties": false,
         "description": "One message in a thread, normalized for the wire.",
         "properties": {
+          "artifacts": {
+            "description": "Artifact metadata for multimodal content in this message.",
+            "items": {
+              "$ref": "#/components/schemas/ArtifactInfo"
+            },
+            "title": "Artifacts",
+            "type": "array"
+          },
           "content": {
             "default": "",
             "title": "Content",
@@ -111,6 +265,14 @@
         "additionalProperties": false,
         "description": "Inbound payload for a single chat turn.",
         "properties": {
+          "artifacts": {
+            "description": "Optional multimodal artifacts (images, documents, etc.).",
+            "items": {
+              "$ref": "#/components/schemas/Artifact"
+            },
+            "title": "Artifacts",
+            "type": "array"
+          },
           "message": {
             "description": "User message for this turn.",
             "minLength": 1,
@@ -444,6 +606,36 @@
           "messages"
         ],
         "title": "ResumeResponse",
+        "type": "object"
+      },
+      "ThreadEventsResponse": {
+        "additionalProperties": false,
+        "description": "A thread's buffered normalized event stream.",
+        "properties": {
+          "count": {
+            "description": "Number of events in the response.",
+            "title": "Count",
+            "type": "integer"
+          },
+          "events": {
+            "description": "Normalized OssiaEvent dicts in emit order.",
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "thread_id": {
+            "title": "Thread Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "thread_id",
+          "count"
+        ],
+        "title": "ThreadEventsResponse",
         "type": "object"
       },
       "ThreadHistoryResponse": {
@@ -787,6 +979,82 @@
           }
         },
         "summary": "Run Eval Endpoint"
+      }
+    },
+    "/v1/threads/{thread_id}/events": {
+      "delete": {
+        "description": "Clear the buffered normalized event stream for a thread.\n\nRemoves all buffered events for the thread from the in-memory buffer.\nSubsequent ``GET /v1/threads/{id}/events`` will return an empty list.",
+        "operationId": "thread_events_delete_v1_threads__thread_id__events_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "thread_id",
+            "required": true,
+            "schema": {
+              "title": "Thread Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Thread Events Delete"
+      },
+      "get": {
+        "description": "Return the buffered normalized event stream for a thread.\n\nEvents are stored in-memory after each ``POST /v1/chat/stream`` completes.\nClients can use this endpoint to replay or late-join a thread's event\nstream for debugging, audit, or TUI session recovery.\n\nOnly threads that have had at least one streaming invocation since server\nstart will have buffered events. The buffer is bounded per-thread to\nprevent unbounded memory growth (~5 MB max per thread).\n\nReturns:\n    A ``ThreadEventsResponse`` containing the ordered list of normalized\n    ``OssiaEvent`` dicts and the event count.",
+        "operationId": "thread_events_v1_threads__thread_id__events_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "thread_id",
+            "required": true,
+            "schema": {
+              "title": "Thread Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThreadEventsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Thread Events"
       }
     },
     "/v1/threads/{thread_id}/history": {

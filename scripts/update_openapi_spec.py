@@ -21,7 +21,7 @@ load_dotenv(find_dotenv(usecwd=True))
 # server here, just inspect the app's OpenAPI schema. No env overrides
 # are required for this.
 
-from ossia.api import app  # noqa: E402
+from core.api import app  # noqa: E402
 
 SPEC_PATH = Path(__file__).resolve().parent.parent / "specs" / "openapi.checked.json"
 

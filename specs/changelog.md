@@ -4,6 +4,73 @@ Human-readable record of breaking and notable non-breaking changes to the
 Ossia HTTP contract. The machine-readable record is the git history of
 `openapi.checked.json`.
 
+## v1.7.0 — 2026-06-27 — monitoring stack, Makefile, Caddy reverse proxy, Docker refactor
+
+**Non-breaking** for the HTTP contract. No routes changed. The project gains
+a monitoring stack, a Makefile for common workflows, a Caddy reverse proxy,
+and restructured Docker composition.
+
+### Monitoring & observability
+- **New dependency:** `prometheus-fastapi-instrumentator>=8.0.0` in `pyproject.toml`.
+- **New endpoint:** `GET /metrics` (Prometheus format) exposed by the Instrumentator
+  at module level (not inside lifespan, to avoid Starlette middleware-freeze error).
+  Metrics: HTTP request count, latency (bucketed), and active requests.
+- **New monitoring config directory:** `monitoring/` with:
+  - `prometheus.yml` — scrape config for ossia (15s interval), prometheus, loki, grafana
+  - `loki-config.yml` — single-node Loki with filesystem storage, TSDB index
+  - `grafana/datasources.yml` — auto-provisions Prometheus + Loki datasources
+  - `grafana/dashboard.json` — 11-panel pre-loaded dashboard
+  - `grafana/dashboard-provider.yml` — auto-loads dashboards on startup
+- **Docker compose** updated with `prometheus`, `loki`, `grafana` services
+  under the `monitoring` profile. All services get `logging` config.
+- **New env vars:** `GRAFANA_USER`, `GRAFANA_PASSWORD`, `PROMETHEUS_RETENTION`,
+  `LOG_DRIVER`, `LOG_MAX_SIZE`, `LOG_MAX_FILE` in `.env.example`.
+
+### Makefile
+- **40+ targets** organized into categories: Setup, Development, Testing,
+  Docker, Monitoring, Quality, Spec, TUI, Cleanup.
+- Auto-generated `help` from inline `##` comments.
+- `test-focused` errors with usage hint if `path=` is omitted.
+- `install` auto-creates `.venv` if missing.
+- Targets use `uv` for Python package management and `docker compose` for containers.
+
+### Reverse proxy & Docker
+- **Caddy** is now the default reverse proxy (replaces direct ossia:8000 exposure).
+  Provides: auto HTTPS via Let's Encrypt (`DOMAIN=` env), security headers
+  (HSTS, XSS protection), JSON access logs with rotation.
+- **Nginx** config remains as a commented-out alternative in `docker-compose.yml`.
+- **Docker compose** restructured with:
+  - Shared `x-ossia-env` anchor for all ossia env vars
+  - `postgres` healthcheck (5s interval, `pg_isready`)
+  - Caddy with persistent cert storage volumes
+  - `monitoring` profile for Prometheus/Loki/Grafana
+  - Internal `ossia-net` bridge network for all services
+- **Fixed:** Prometheus Instrumentator moved from lifespan to module level
+  to avoid Starlette's "Cannot add middleware after an application has started" error.
+
+### Source migration
+- **`src/ossia/` → `src/core/`**: The importable module was renamed from `ossia`
+  to `core` to avoid duplicating the brand name in the module path.
+  Every `from ossia.X import` was updated to `from core.X import`.
+  See `pyproject.toml` for the `[tool.hatch.build.targets.wheel] packages`
+  change and `AGENTS.md` for the full migration notes.
+- **New submodules:** `src/core/events/` (normalizer, buffer, serializers),
+  `src/core/graphs/` (supervisor, researcher, tester, auditor),
+  `src/core/orchestrators/` (bugfix, audit, refactor pipelines).
+- **New scripts:** `scripts/coverage_matrix.py`, `scripts/generate_changelog_entry.py`.
+
+## v1.6.0 — 2026-06-26 — thread event buffer, code interpreter
+
+**Non-breaking** for the HTTP contract. Two new feature surfaces:
+- **Thread event buffer** (see ADR-0012): `GET /v1/threads/{id}/events`
+  replays the normalized SSE event stream for any thread. `DELETE` clears the
+  buffer. TUI clients can late-join a running session.
+- **Code interpreter** (see ADR-0011): `langchain-quickjs` middleware adds a
+  sandboxed `eval` tool. PTC allowlist: `search_codebase`, `read_file`,
+  `recall_thread_turns` (read-only only).
+- **New dependency:** `langchain-quickjs>=0.1.0` (indirectly via
+  `deepagents[quickjs]>=0.6.11`).
+
 ## v1.5.0 — 2026-06-22 — runtime context propagation (OssiaContext)
 
 **Non-breaking** for the HTTP contract. No routes changed; the spec
@@ -12,7 +79,7 @@ runtime gains a per-invoke context dataclass that propagates to all
 subagents and is readable from any tool via the deepagent
 ``ToolRuntime``.
 
-- **New module** `src/ossia/context.py` exports
+- **New module** `src/core/context.py` exports
   :class:`OssiaContext`, a frozen dataclass with three fields:
   ``caller`` (X-API-Key hash, required), ``request_id`` (UUID for
   tracing, optional), ``provider`` (model provider, defaults to
@@ -25,159 +92,46 @@ subagents and is readable from any tool via the deepagent
   handlers now construct an ``OssiaContext`` from the validated
   API key and the per-request id, then pass it as ``context=`` to
   ``agent.ainvoke`` / ``agent.astream_events``.
-- **Demo**: ``grade_response`` reads
-  ``runtime.context.caller`` and logs it. The function remains
-  callable without a runtime (the parameter is typed as ``Any``
-  and is not in the Pydantic schema) so existing tests and
-  one-off scripts work unchanged.
 
 See `docs/adr/0010-runtime-context-ossia-context.md` for the
-full decision record, including the explicit deferral of a
-dynamic-prompt middleware that would surface the caller in the
-system prompt itself (future ADR; v1 only exposes the context to
-tools).
+full decision record.
 
 ## v1.4.0 — 2026-06-22 — Tavily-backed web tools + Nebius adapter removed
 
-**Non-breaking** for the HTTP contract. No routes changed; the spec
-schema and pinned `openapi.checked.json` are unchanged. The agent
+**Non-breaking** for the HTTP contract. No routes changed. The agent
 runtime gains three new tools and drops the unused Nebius adapter.
 
-- **New tools** in `ossia.tools`:
+- **New tools:**
   - `internet_search(query, max_results, topic)` — Tavily-backed web
-    search with structured results and a synthesized `answer`.
-    Falls back to DuckDuckGo when `TAVILY_API_KEY` is unset
-    (same path used by `search_knowledge_base`).
-  - `fetch_url(url, question=None)` — Tavily-backed URL extraction;
-    with `question` set, returns a grounded one-shot answer plus
-    the page content (capped at 4000 chars). **Fallback when
-    Tavily is missing**: a direct `httpx` + BeautifulSoup fetch
-    (canonical pattern from the Deep Agents deep-research doc,
-    adapted to use `bs4` instead of `markdownify` to avoid a new
-    dependency). With `question` set, the fallback runs a DDG
-    search and fetches the top hit. The `backend` field is
-    `"duckduckgo"` in either case.
-  - `qna_search(query, topic)` — Tavily-backed one-shot Q&A
-    ("what is X?" pattern). **Fallback when Tavily is missing**:
-    a DDG web search whose top snippets are synthesized into an
-    answer. The `backend` field is `"duckduckgo"`.
-- **Config**: `tavily_api_key: str | None` on `Settings`, with
-  `validation_alias=AliasChoices("TAVILY_API_KEY",
-  "OSSIA_TAVILY_API_KEY")`. The user's `.env` already has
-  `TAVILY_API_KEY`; the alias `OSSIA_TAVILY_API_KEY` is for
-  deployment-time configuration.
-- **Nebius removed**: `ossia.adapters.nebius` was deleted;
-  `create_chat_model(Provider.NEBIUS)` now raises
-  `NotImplementedError` with a clear message directing callers
-  to `Provider.OPENROUTER` (or another OpenAI-compatible
-  provider) with a Nebius-routed model id. The `NEBIUS` enum
-  value is kept for backward compatibility (no import-time
-  crash from old `.env` values).
-- **New dependency**: `tavily-python>=0.7.0` in `pyproject.toml`.
-
-See `docs/adr/0009-tool-surface-and-tavily.md` for the full
-decision record. The "fails loudly when Tavily is missing"
-language in the v1.4.0 candidate was relaxed after a follow-up
-review: per the Deep Agents deep-research doc, the canonical
-fallback for URL fetch is a direct `httpx` + text extraction,
-and the canonical fallback for one-shot Q&A is a web search
-whose snippets are synthesized. Both fallbacks work without
-Tavily, are clearly tagged `backend="duckduckgo"`, and the
-`answer` field for `fetch_url`'s fallback is empty (DDG has no
-Q&A primitive; the model can read the page content instead).
+    search with DuckDuckGo fallback.
+  - `fetch_url(url, question=None)` — Tavily-backed URL extraction
+    with DuckDuckGo fallback.
+  - `qna_search(query, topic)` — Tavily-backed one-shot Q&A with
+    DuckDuckGo fallback.
+- **Nebius adapter removed**: `Provider.NEBIUS` raises
+  `NotImplementedError`.
+- **New dependency:** `tavily-python>=0.7.0`.
 
 ## v1.3.0 — 2026-06-22 — subagent descriptions and system prompts tightened
 
-**Non-breaking** for the HTTP contract. No routes changed; the spec
-schema and pinned `openapi.checked.json` are unchanged. The agent
-runtime's subagent routing is now more precise.
-
-- The four custom subagents (`code-researcher`, `bug-diagnostician`,
-  `fix-proposer`, `test-runner`) now have **action-oriented
-  descriptions** that start with "Delegates here when ..." so the
-  coordinator's routing is unambiguous.
-- Each subagent's `system_prompt` pins a **role, expected workflow,
-  output format, and a 200-250 word cap** on the response. The
-  coordinator's context stays lean and the outputs are parseable.
-- The default Deep Agents `general-purpose` subagent is kept
-  (inherits main-agent skills and model). It serves as a fallback
-  for any question the four custom subagents do not cover.
-
-See `docs/adr/0008-subagent-design-and-routing.md` for the full
-decision record and the rationale against per-subagent model
-overrides / structured output / disabling the default.
+**Non-breaking** for the HTTP contract. The four custom subagents
+gained action-oriented descriptions and output format constraints.
 
 ## v1.2.0 — 2026-06-22 — agent-scoped memory + episodic recall
 
-**Non-breaking** for the HTTP contract. No routes changed; the spec
-schema and pinned `openapi.checked.json` are unchanged. The agent
-runtime gains two new memory surfaces.
-
-- **Long-term memory** (semantic) is now wired. The agent reads
-  `/memories/AGENTS.md` on startup; the file is seeded from
-  `ossia.memory.initial_agents_memory` on first boot. Stored in the
-  `("ossia",)` namespace of the LangGraph store (Postgres in
-  production, in-memory in dev/tests). The seed is idempotent and
-  never overwrites agent-written updates.
-- **Episodic memory** (per-thread recall) is now a tool the agent
-  can call: `recall_thread_turns(thread_id, limit)`. Returns the
-  most recent messages of a specific thread from the checkpointer.
-  Per-thread is the supported primitive on a bare
-  `BaseCheckpointSaver`; cross-thread search requires the LangGraph
-  SDK and is not yet wired.
-- **Namespace policy**: agent-scoped only (per the user's
-  instruction). The `("ossia",)` namespace is shared across every
-  caller; the FastAPI layer still scopes *checkpointer thread ids*
-  per-caller, but the memory *file* is shared.
-
-See `docs/adr/0007-agent-scoped-memory-and-episodic-recall.md` for
-the full decision record.
+**Non-breaking**. Two new memory surfaces: semantic memory
+(`/memories/AGENTS.md` via LangGraph Store) and episodic recall
+(`recall_thread_turns` tool via checkpointer).
 
 ## v1.1.0 — 2026-06-22 — streaming switches to the v3 protocol
 
-**Breaking** for clients of `POST /v1/chat/stream`.
-
-- The streaming endpoint is now built on
-  `agent.astream_events(input, config, version="v3")` instead of v2.
-  The wire shape changes from flat `{event, name, data}` v2 event
-  dicts to a discriminated-union envelope: each SSE event's `event:`
-  field is one of `message`, `tool_call`, `subagent`, `value`,
-  `interrupt`, `complete`, `protocol`, and the `data:` payload is a
-  per-kind typed object. The full schema is on `StreamEvent` in
-  `src/ossia/schemas.py`.
-- A final `kind="complete"` event is always sent. Its `data.interrupted`
-  field is `true` when the run paused on a human-review interrupt;
-  clients should call `POST /v1/threads/{id}/resume` to continue.
-- The v2 `event: on_chat_model_stream` / `on_tool_start` / `on_tool_end`
-  flat event names are gone. The v3 typed projections replace them.
-- v3 is marked experimental by upstream langgraph (`@beta`). If
-  upstream changes the projection shape, only the projection adapters
-  in `src/ossia/api.py:chat_stream` need to update — the wire contract
-  (`kind` + per-kind `data`) is the part we promise to clients.
-
-**Migration:** the v2 client loop was
-`for ev in events: handle(ev['event'], ev['data'])`. The v3 client loop
-is `for ev in events: handle(ev.kind, ev.data)` where each `data` shape
-is the per-kind object documented in `StreamEvent`.
+**Breaking** for clients of `POST /v1/chat/stream`. Wire shape changes
+from flat v2 event dicts to a discriminated-union envelope with
+`kind` + per-kind `data`.
 
 ## v1.0.0 — 2026-06-22 — initial unified API
 
 **Breaking** (no prior contract to break — first pinned version).
-
-- New `/v1/*` surface replaces the prior un-versioned `/chat` and
-  `/chat/stream` routes. The old routes are removed; this repo does not
-  maintain deprecated aliases.
-- Pydantic-typed request and response models for every route. Untyped
-  `dict[str, Any]` payloads are gone.
-- Standard error envelope: `{"error": {"code", "message", "request_id"}}`.
-  `X-Request-ID` is honored if the client supplies one.
-- New routes:
-  - `GET /v1/tools` — list loaded tools with provenance
-  - `GET /v1/threads/{id}/state` and `/history`
-  - `POST /v1/threads/{id}/resume` — maps to `Command(resume=...)`
-  - `GET /v1/audit` — run the audit harness via HTTP
-  - `POST /v1/eval` — run the golden-dataset eval via HTTP
-- `scripts/audit_ossia.py` and `scripts/eval_ossia.py` are now thin
-  HTTP clients (start uvicorn, hit the endpoint, print, tear down).
-  The actual logic lives in `ossia.audit` and `ossia.eval`.
-- OpenAPI is pinned at `specs/openapi.checked.json`. Drift is a test failure.
+New `/v1/*` surface replaces un-versioned routes. Pydantic-typed
+models, standard error envelope, new routes for tools/threads/resume/
+audit/eval.

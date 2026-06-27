@@ -19,8 +19,8 @@ from dotenv import find_dotenv, load_dotenv
 
 load_dotenv(find_dotenv(usecwd=True))
 
-from ossia.api import app  # noqa: E402
-from ossia.config import get_settings  # noqa: E402
+from core.api import app  # noqa: E402
+from core.config import get_settings  # noqa: E402
 
 SPEC_PATH = Path(__file__).resolve().parent.parent / "specs" / "openapi.checked.json"
 

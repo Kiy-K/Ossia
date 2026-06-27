@@ -22,9 +22,9 @@ from typing import Any
 
 import pytest
 
-from ossia.agent import build_agent_async
-from ossia.config import Provider, Settings
-from ossia.mcp_tools import MCPToolkit
+from core.agent import build_agent_async
+from core.config import Provider, Settings
+from core.mcp_tools import MCPToolkit
 
 
 def _write_mcp_config(servers: dict[str, dict[str, Any]]) -> str:

@@ -1,9 +1,16 @@
-# PRD: Spec-Driven Feature Development & Code Interpreter for Ossia
+# Feature: Spec-Driven Feature Development
 
-**Date:** 2026-06-25
-**Status:** draft
+- Status: draft
+- ADR: docs/adr/0005-spec-driven-openapi-as-contract.md
+- Scope: infrastructure
+
+## What it does
+
+Establishes a formal feature spec system under `specs/features/` with a template, validation tests, coverage matrix, and changelog auto-generation to document new features alongside the existing OpenAPI contract.
 
 ## Problem Statement
+
+(Background context from the original PRD.)
 
 Ossia's existing spec-driven workflow (`specs/openapi.checked.json` + drift test) catches API contract regressions, but it doesn't help developers document new features, reason about the interpreter middleware's safety boundaries, or compose multi-tool pipelines efficiently. Three gaps exist:
 
@@ -46,7 +53,7 @@ Feature specs live at `specs/features/<slug>.md`. Each spec follows a fixed stru
 ```
 # Feature: <Title>
 - Status: draft | accepted | implemented
-- ADR: docs/adr/NNNN-slug.md
+- ADR: docs/adr/0005-spec-driven-openapi-as-contract.md
 - Scope: tool | middleware | route | memory | subagent | infrastructure
 
 ## What it does
@@ -103,7 +110,7 @@ A standalone script `scripts/coverage_matrix.py` runs without a server:
 
 - Reads `specs/openapi.checked.json` for the current route set.
 - Reads all feature specs for their endpoint impact tables.
-- Produces `specs/coverage.md`: a table with rows = routes, columns = feature specs, cells = ✓ (covered) or — (uncovered).
+- Produces `specs/coverage.md`: a table with rows = routes, columns = feature specs, cells = `[covered]` or `[uncovered]`).
 - The final column counts how many features touch each route. Routes with 0 are flagged.
 
 ### 5. Changelog auto-generation
@@ -137,6 +144,41 @@ None of the above modifies routes, schemas, or the OpenAPI contract. The `test_o
 - `tests/test_openapi_drift.py` — identical pattern (generate expected, diff against pinned).
 - `tests/test_api.py` — same FastAPI `TestClient` fixture pattern.
 - `tests/test_graph.py` — same `_FakeToolModel` pattern for any agent-internal tests.
+
+## Scope table
+
+| Concern | In scope | Out of scope |
+|---|---|---|
+| Feature spec template | `specs/features/TEMPLATE.md` with required sections | Auto-enforcing spec writing before code commits |
+| Spec validation test | `tests/test_feature_specs.py` checks sections, endpoints, ADRs | Runtime behavior validation (covered by existing tests) |
+| Coverage matrix | `scripts/coverage_matrix.py` produces `specs/coverage.md` | A web UI for browsing coverage |
+| Changelog generation | `scripts/generate_changelog_entry.py` auto-drafts entries | Client SDK generation from specs |
+
+## Endpoint impact
+
+None — this feature does not modify the HTTP contract.
+
+## NFRs
+
+- **Streaming:** Not affected.
+- **Checkpointing:** Not affected.
+- **HITL:** Not affected.
+- **Performance:** The scripts and tests are offline artifacts; no runtime impact.
+
+## Affected modules
+
+- `specs/features/TEMPLATE.md` — feature spec template
+- `specs/features/code-interpreter.md` — updated to conform to template
+- `specs/features/async-subagents.md` — updated to conform to template
+- `scripts/coverage_matrix.py` — coverage matrix generator
+- `scripts/generate_changelog_entry.py` — changelog entry generator
+- `tests/test_feature_specs.py` — spec validation test
+
+## Testing notes
+
+- `tests/test_feature_specs.py` validates required sections, frontmatter fields, endpoint references, and ADR cross-references.
+- The coverage matrix can be verified by running `scripts/coverage_matrix.py` and checking `specs/coverage.md`.
+- The changelog generator can be verified via `--dry-run`.
 
 ## Out of Scope
 

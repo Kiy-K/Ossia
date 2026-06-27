@@ -14,10 +14,10 @@ single turn instead of round-tripping through the LLM for each invocation.
 
 | Concern | In scope | Out of scope |
 |---|---|---|
-| Interpreter | ✅ `eval` tool, sandboxed JS execution | ❌ Full OS sandbox |
-| PTC | ✅ Read-only tool composition in JS | ❌ Write-capable tools |
-| Streaming | ✅ Events flow through existing `/v1/chat/stream` | ❌ Protocol changes |
-| HITL | ✅ Unaffected — PTC bypasses interrupts | ❌ Nested approvals |
+| Interpreter | `eval` tool, sandboxed JS execution | Full OS sandbox |
+| PTC | Read-only tool composition in JS | Write-capable tools |
+| Streaming | Events flow through existing `/v1/chat/stream` | Protocol changes |
+| HITL | Unaffected — PTC bypasses interrupts | Nested approvals |
 
 ## Endpoint impact
 

@@ -39,7 +39,7 @@ from unittest.mock import patch
 import pytest
 from pydantic import ValidationError
 
-from ossia.tools import fetch_url, internet_search, qna_search
+from core.tools import fetch_url, internet_search, qna_search
 
 # ---------------------------------------------------------------------------
 # Mock helpers
@@ -93,15 +93,14 @@ def _patched_tavily(client: _FakeTavilyClient | None, *, key: str = "tvly-test")
     """
     if client is None:
         with (
-            patch("ossia.tools._get_tavily_client", return_value=None),
-            patch("ossia.config.get_settings") as gs,
-        ):
+            patch("core.tools._get_tavily_client", return_value=None),        patch("core.config.get_settings") as gs,
+            ):
             gs.return_value.tavily_api_key = None
             yield
     else:
         with (
-            patch("ossia.tools._get_tavily_client", return_value=client),
-            patch("ossia.config.get_settings") as gs,
+        patch("core.tools._get_tavily_client", return_value=client),
+        patch("core.config.get_settings") as gs,
         ):
             gs.return_value.tavily_api_key = key
             yield
@@ -141,8 +140,7 @@ def test_internet_search_falls_back_to_duckduckgo_when_key_missing() -> None:
     canned_ddg = [
         {"title": "DDG result", "href": "https://ddg.example.com", "body": "snippet"}
     ]
-    with _patched_tavily(client=None), patch(
-        "ossia.tools._ddgs_text", return_value=canned_ddg
+    with _patched_tavily(client=None),        patch("core.tools._ddgs_text", return_value=canned_ddg
     ):
         result = internet_search.invoke(
             {"query": "x", "max_results": 3, "topic": "general"}
@@ -193,7 +191,7 @@ def test_fetch_url_falls_back_to_httpx_when_key_missing() -> None:
     use for the DDG-side fallback family).
     """
     with _patched_tavily(client=None), patch(
-        "ossia.tools._ddg_fetch_url_via_search", return_value="Hello world"
+        "core.tools._ddg_fetch_url_via_search", return_value="Hello world"
     ) as mock:
         result = fetch_url.invoke(
             {"url": "https://example.com/article", "question": None}
@@ -213,7 +211,7 @@ def test_fetch_url_falls_back_to_ddg_search_when_question_and_no_tavily() -> Non
     Q&A primitive).
     """
     with _patched_tavily(client=None), patch(
-        "ossia.tools._ddg_fetch_url_via_search", return_value="page text"
+        "core.tools._ddg_fetch_url_via_search", return_value="page text"
     ) as mock:
         result = fetch_url.invoke(
             {"url": "what is X?", "question": "what is X?"}
@@ -268,7 +266,7 @@ def test_qna_search_falls_back_to_ddg_when_key_missing() -> None:
     ``"duckduckgo"`` so the caller can see the lower quality path.
     """
     with _patched_tavily(client=None), patch(
-        "ossia.tools._ddg_search_for_answer", return_value="DDG answer"
+        "core.tools._ddg_search_for_answer", return_value="DDG answer"
     ):
         result = qna_search.invoke({"query": "what is X?", "topic": "general"})
     assert result.backend == "duckduckgo"

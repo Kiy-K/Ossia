@@ -14,8 +14,8 @@ etc., without blocking the main conversation turn.
 
 | Concern | In scope | Out of scope |
 |---|---|---|
-| Subagent dispatch | ✅ `start_async_task`, `check_async_task`, ... | ❌ Cross-thread search |
-| Roles | ✅ code-researcher, bug-diagnostician, fix-proposer, test-runner | ❌ Per-user model overrides |
+| Subagent dispatch | `start_async_task`, `check_async_task`, ... | Cross-thread search |
+| Roles | code-researcher, bug-diagnostician, fix-proposer, test-runner | Per-user model overrides |
 
 ## Endpoint impact
 

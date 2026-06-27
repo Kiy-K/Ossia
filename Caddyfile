@@ -1,0 +1,64 @@
+# =============================================================================
+# Caddyfile — Reverse proxy for Ossia
+# =============================================================================
+#
+# Local development (HTTP only):
+#   docker compose up caddy
+#
+# Production (with domain — uncomment the production site block below):
+#   DOMAIN=api.ossia.dev docker compose up caddy -d
+#
+# For production, choose one SSL approach:
+#   A) Edge TLS: Terminate SSL at your CDN/load balancer (Cloudflare, AWS ALB,
+#      etc.) and point it at port 80. No certs needed on the server.
+#   B) Caddy auto-HTTPS: Set DOMAIN and uncomment the production block below.
+#      Caddy provisions Let's Encrypt certs automatically.
+# =============================================================================
+
+# ─── Reusable proxy config (imported by both site blocks) ────────────────────
+(proxy) {
+    reverse_proxy {$OSSIA_URL:http://ossia:8000} {
+        # Preserve the original Host header
+        header_up Host {host}
+    }
+
+    # Security headers
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        X-XSS-Protection "1; mode=block"
+        Referrer-Policy "same-origin"
+    }
+
+    # JSON access logs with rotation
+    log {
+        output file /data/access.log {
+            roll_size 100mb
+            roll_keep 5
+            roll_keep_for 720h
+        }
+        format json
+    }
+}
+
+# ─── Default: HTTP on :80 (local dev, or behind edge TLS) ────────────────────
+:80 {
+    import proxy
+
+    # When behind an edge TLS terminator (Cloudflare, etc.), uncomment:
+    # header {
+    #     Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+    # }
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Production: uncomment this block and set DOMAIN=your.domain
+# Caddy will automatically provision Let's Encrypt certs.
+# ─────────────────────────────────────────────────────────────────────────────
+# {$DOMAIN} {
+#     import proxy
+#
+#     header {
+#         Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+#     }
+# }

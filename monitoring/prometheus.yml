@@ -1,0 +1,92 @@
+# =============================================================================
+# Prometheus Configuration — Ossia Monitoring Stack
+# =============================================================================
+# Scrapes metrics from the ossia FastAPI app (at /metrics) and the other
+# monitoring components. Prometheus itself is scraped as a health signal.
+#
+# Loaded by the prometheus service in docker-compose.yml.
+# =============================================================================
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_timeout: 10s
+
+  # Labels applied to all time series
+  # Note: Prometheus does not expand env vars in config files, so values
+  # must be static here. Set them via docker-compose environment or the
+  # prometheus --web.external-label command line flag if customization is needed.
+  external_labels:
+    monitor: "ossia"
+    env: "production"
+
+# Alertmanager (future — not yet configured)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets: []
+
+# Rule files (future — not yet configured)
+# rule_files:
+#   - "alerts/*.yml"
+
+scrape_configs:
+  # ──────────────────────────────────────────────────────────────────
+  # Ossia FastAPI agent — /metrics endpoint exposed by
+  # prometheus_fastapi_instrumentator at port 8000
+  # ──────────────────────────────────────────────────────────────────
+  - job_name: "ossia"
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+      - targets: ["ossia:8000"]
+        labels:
+          service: "ossia-agent"
+
+  # ──────────────────────────────────────────────────────────────────
+  # Prometheus itself — health & performance
+  # ──────────────────────────────────────────────────────────────────
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+        labels:
+          service: "prometheus"
+
+  # ──────────────────────────────────────────────────────────────────
+  # Caddy reverse proxy (disabled by default — uncomment if you add
+  # prometheus metrics plugin to Caddy)
+  # ──────────────────────────────────────────────────────────────────
+  # - job_name: "caddy"
+  #   metrics_path: /metrics
+  #   static_configs:
+  #     - targets: ["caddy:2019"]
+  #       labels:
+  #         service: "caddy"
+
+  # ──────────────────────────────────────────────────────────────────
+  # Postgres exporter (disabled by default — uncomment if you add a
+  # postgres-exporter sidecar to the postgres service)
+  # ──────────────────────────────────────────────────────────────────
+  # - job_name: "postgres"
+  #   static_configs:
+  #     - targets: ["postgres-exporter:9187"]
+  #       labels:
+  #         service: "postgres"
+
+  # ──────────────────────────────────────────────────────────────────
+  # Loki — for log-based metrics (alerts, error rates)
+  # ──────────────────────────────────────────────────────────────────
+  - job_name: "loki"
+    static_configs:
+      - targets: ["loki:3100"]
+        labels:
+          service: "loki"
+
+  # ──────────────────────────────────────────────────────────────────
+  # Grafana (optional — for dashboard uptime monitoring)
+  # ──────────────────────────────────────────────────────────────────
+  - job_name: "grafana"
+    static_configs:
+      - targets: ["grafana:3000"]
+        labels:
+          service: "grafana"

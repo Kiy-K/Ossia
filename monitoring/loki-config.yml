@@ -1,0 +1,73 @@
+# =============================================================================
+# Loki Configuration — Log Aggregation for Ossia
+# =============================================================================
+# Minimal Loki config for receiving Docker container logs via the Loki
+# Docker log driver. Logs are stored locally on a persistent volume.
+#
+# For production, consider S3/GCS object storage instead of filesystem.
+# =============================================================================
+
+auth:
+  # Disable multi-tenancy for single-deployment setups
+  # Set to true if you need to isolate logs per team/project
+  # (requires X-Scope-OrgID header in log pushes)
+  type: disabled
+
+common:
+  # Ring replication factor (1 is fine for single-node deployments)
+  replication_factor: 1
+  # Path prefix for all storage
+  path_prefix: /var/loki
+  # Storage configuration
+  storage:
+    filesystem:
+      chunks_directory: /var/loki/chunks
+      rules_directory: /var/loki/rules
+
+# Schema configuration — keep track of index versions
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+# Table management
+table_manager:
+  retention_deletes_enabled: false
+  retention_period: 0
+
+# Limits — adjust for your throughput
+limits_config:
+  # Allow up to 10 MB log lines (default is 256 KB)
+  max_line_size: 10MB
+  # Max streams per tenant
+  max_streams_per_user: 10000
+  # Allow ingestion without an org ID
+  ingestion_rate_mb: 10
+  ingestion_burst_size_mb: 20
+
+# Server config
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9095
+  # Log level
+  log_level: info
+
+# Ingester config
+ingester:
+  lifecycler:
+    ring:
+      kvstore:
+        store: inmemory
+      replication_factor: 1
+  chunk_idle_period: 30m
+  chunk_target_size: 1536000
+  max_chunk_age: 2h
+
+# Query frontend (for multi-instance, not used in single-node)
+# frontend:
+#   compress_responses: true

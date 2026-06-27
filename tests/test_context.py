@@ -28,7 +28,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from dotenv import find_dotenv, load_dotenv
 
-from ossia.context import OssiaContext
+from core.context import OssiaContext
 
 # Match the env shape used by test_api.py: a known API key, human
 # review off, no Postgres. Required for the FastAPI lifespan to boot.
@@ -70,13 +70,13 @@ def test_ossia_context_with_request_id() -> None:
 def test_compiled_agent_passes_context_schema() -> None:
     """``create_deep_agent`` is called with ``context_schema=OssiaContext``."""
 
-    from ossia.agent import build_agent
-    from ossia.config import Provider, Settings
+    from core.agent import build_agent
+    from core.config import Provider, Settings
 
     with (
-        patch("ossia.agent.create_deep_agent") as mock_create,
-        patch("ossia.agent.create_chat_model"),
-        patch("ossia.agent.load_system_prompt", return_value="sys"),
+        patch("core.agent.create_deep_agent") as mock_create,
+        patch("core.agent.create_chat_model"),
+        patch("core.agent.load_system_prompt", return_value="sys"),
     ):
         mock_create.return_value = MagicMock()
         s = Settings(
@@ -100,13 +100,13 @@ def test_chat_handler_passes_ossia_context_to_ainvoke() -> None:
     """
     from fastapi.testclient import TestClient
 
-    from ossia.api import app
-    from ossia.context import OssiaContext
+    from core.api import app
+    from core.context import OssiaContext
 
     fake_agent = MagicMock()
     fake_agent.ainvoke = AsyncMock(return_value={"messages": []})
 
-    with patch("ossia.api.build_agent_async") as ba:
+    with patch("core.api.build_agent_async") as ba:
 
         class _CM:
             async def __aenter__(self):
@@ -139,8 +139,8 @@ def test_chat_stream_handler_passes_ossia_context() -> None:
     """
     from fastapi.testclient import TestClient
 
-    from ossia.api import app
-    from ossia.context import OssiaContext
+    from core.api import app
+    from core.context import OssiaContext
 
     captured: dict[str, Any] = {}
 
@@ -168,7 +168,7 @@ def test_chat_stream_handler_passes_ossia_context() -> None:
 
     fake_agent.astream_events = _capture
 
-    with patch("ossia.api.build_agent_async") as ba:
+    with patch("core.api.build_agent_async") as ba:
 
         class _CM:
             async def __aenter__(self):
@@ -201,7 +201,7 @@ def test_grade_response_callable_without_runtime() -> None:
     """``grade_response`` works without a ``ToolRuntime`` (e.g. from
     tests or one-off scripts).
     """
-    from ossia.tools import grade_response
+    from core.tools import grade_response
 
     # Response includes the query word "what" so the token-match
     # check passes, and is long enough (>= 40 chars) and has a
@@ -225,12 +225,12 @@ def test_grade_response_reads_runtime_context() -> None:
     the public ``StructuredTool.invoke`` strips non-schema args, so the
     runtime path is only exercised by the deepagent ToolNode at runtime.
     """
-    from ossia.tools import grade_response
+    from core.tools import grade_response
 
     fake_runtime = MagicMock()
     fake_runtime.context.caller = "test-caller-42"
 
-    with patch("ossia.tools.logger") as log:
+    with patch("core.tools.logger") as log:
         result = grade_response.func(
             query="what is X?",
             response=(
