@@ -21,47 +21,13 @@ from core.config import Provider, Settings
 from core.schemas import EvalQueryResult, EvalReport
 
 
-def _resolve_safe_path(user_path: str) -> Path:
-    """Resolve a dataset path safely, preventing directory traversal.
-
-    The resolved path must be within the project root directory.
-    If the path starts with ``/``, it is rejected outright.
-    Absolute paths from the resolver (e.g. via ``..`` traversal) are
-    checked against the project root.
-
-    Args:
-        user_path: User-supplied path string.
-
-    Returns:
-        Resolved absolute ``Path`` guaranteed to be under the project root.
-
-    Raises:
-        ValueError: If the path is absolute, or resolves outside the project.
-    """
-    # Reject absolute paths immediately.
-    if user_path.startswith("/"):
-        raise ValueError(f"Absolute dataset paths are not allowed: {user_path}")
-
-    # Resolve against the project root (src/core/eval.py → src/core/ → src/ → root).
-    project_root = Path(__file__).resolve().parent.parent.parent
-    candidate = (project_root / user_path).resolve()
-
-    # Verify the resolved path is within the project root.
-    try:
-        candidate.relative_to(project_root)
-    except ValueError:
-        raise ValueError(
-            f"Dataset path resolves outside the project directory: {user_path}"
-        )
-
-    return candidate
-
-
 def _load_dataset(path: str) -> list[dict[str, Any]]:
     """Load the golden dataset from a JSON file.
 
     The path is resolved relative to the project root and validated
-    to prevent directory traversal attacks.
+    to prevent directory traversal attacks. The validation guard
+    (``relative_to``) is in the same function as the file read so
+    static analysis tools can trace the check before the I/O.
 
     Args:
         path: Path to a JSON file (project-relative) with shape
@@ -71,10 +37,23 @@ def _load_dataset(path: str) -> list[dict[str, Any]]:
         List of golden query records.
 
     Raises:
-        ValueError: If the resolved path is outside the project directory.
+        ValueError: If the path is absolute, or resolves outside the project.
     """
-    safe_path = _resolve_safe_path(path)
-    data = json.loads(safe_path.read_text(encoding="utf-8"))
+    # Resolve against the project root (src/core/eval.py → src/core/ → src/ → root).
+    project_root = Path(__file__).resolve().parent.parent.parent
+
+    # Reject absolute paths immediately.
+    if path.startswith("/"):
+        raise ValueError(f"Absolute dataset paths are not allowed: {path}")
+
+    resolved = (project_root / path).resolve()
+
+    # Guard: this raises ValueError if the resolved path escapes the project
+    # root. Kept in the same function as the file read so CodeQL can verify
+    # the path is constrained before it's used for I/O.
+    resolved.relative_to(project_root)
+
+    data = json.loads(resolved.read_text(encoding="utf-8"))
     return data["queries"]
 
 
