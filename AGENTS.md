@@ -316,3 +316,45 @@ Start with: `make monitor-up` (or `docker compose --profile monitoring up -d`)
   updating `pyproject.toml`, the test `pythonpath`, and every doc
   reference in lockstep. The repo on disk is `ossia/` and the importable
   module is `core` by design — keep them that way.
+
+## Ponytail — lazy senior dev mode
+
+Ponytail is an always-on set of rules that makes the AI agent think like a lazy
+senior dev. The best code is the code never written. Load the full skill with
+`skill ponytail` for progressional levels (lite, full, ultra) and details.
+
+### The ladder
+Before writing any code, stop at the first rung that holds:
+1. **Does this need to exist at all?** (YAGNI)
+2. **Already in this codebase?** Reuse it, don't rewrite.
+3. **Stdlib does it?** Use it.
+4. **Native platform feature covers it?** Use it.
+5. **Already-installed dependency solves it?** Use it.
+6. **Can it be one line?** One line.
+7. **Only then:** the minimum code that works.
+
+The ladder runs *after* you understand the problem, not instead of it.
+
+### Rules
+- No abstractions that weren't explicitly requested.
+- No new dependency if it can be avoided.
+- No boilerplate nobody asked for.
+- Deletion over addition. Boring over clever. Fewest files possible.
+- Shortest working diff wins, but only once you understand the problem.
+- Question complex requests: "Do you actually need X, or does Y cover it?"
+- Mark intentional simplifications with a `ponytail:` comment naming the ceiling and upgrade path.
+
+### Not lazy about
+Understanding the problem (read it fully before picking a rung), input
+validation at trust boundaries, error handling that prevents data loss,
+security, accessibility, anything explicitly requested.
+
+### Available skills
+| Skill | What it does |
+|-------|-------------|
+| `ponytail` | Always-on lazy mode. Levels: lite, full (default), ultra. |
+| `ponytail-review` | Over-engineering review of diffs. |
+| `ponytail-audit` | Whole-repo over-engineering audit. |
+| `ponytail-debt` | Collect shortcuts into a debt ledger. |
+| `ponytail-gain` | Show benchmark impact scoreboard. |
+| `ponytail-help` | Quick reference card for all commands. |

@@ -8,55 +8,10 @@ Pipeline stages:
   1. code-researcher — explore target area
   2. bug-diagnostician — identify issues
 
-Each stage returns a typed JavaScript object via ``responseSchema``,
-so no ``JSON.parse`` is needed.
+Each stage returns a typed JavaScript object via ``responseSchema``.
+All schemas are generated from the Pydantic models in
+:mod:`core.orchestrators.schemas`.
 """
-
-# JSON Schema for research output (code-researcher stage)
-_RESEARCH_RESULT_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "files": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "Relevant file paths discovered.",
-        },
-        "architecture": {
-            "type": "string",
-            "description": "High-level architecture summary.",
-        },
-        "areas_needing_attention": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "Areas that likely need review.",
-        },
-    },
-    "required": ["files"],
-}
-
-# JSON Schema for audit findings (bug-diagnostician stage)
-_AUDIT_FINDING_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "findings": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "file_path": {"type": "string"},
-                    "line": {"type": ["integer", "null"]},
-                    "category": {"type": "string", "enum": ["security", "performance", "style", "bug", "docs"]},
-                    "severity": {"type": "string", "enum": ["critical", "high", "medium", "low", "info"]},
-                    "message": {"type": "string"},
-                    "suggestion": {"type": "string"},
-                },
-                "required": ["file_path", "category", "severity", "message"],
-            },
-        },
-        "summary": {"type": "string", "description": "High-level audit summary."},
-    },
-    "required": ["findings"],
-}
 
 AUDIT_PIPELINE_JS = r"""
 const target = `TARGET`;
@@ -104,15 +59,18 @@ def get_audit_pipeline_js(target: str = ".", focus: str = "general") -> str:
         JavaScript code string ready for ``eval()``, with parameters
         interpolated and schema constants prepended.
     """
-    from core.orchestrators.schemas import serialize_schema_js
+    from core.orchestrators.schemas import (
+        AuditReport, AuditResearchResult,
+        pydantic_to_js_response_schema, serialize_schema_js,
+    )
     escaped_target = target.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
     escaped_focus = focus.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
     js = AUDIT_PIPELINE_JS
     js = js.replace("TARGET", escaped_target)
     js = js.replace("FOCUS", escaped_focus)
     return (
-        f"const RESEARCH_RESULT_SCHEMA = {serialize_schema_js(_RESEARCH_RESULT_SCHEMA)};\n"
-        f"const AUDIT_FINDING_SCHEMA = {serialize_schema_js(_AUDIT_FINDING_SCHEMA)};\n\n"
+        f"const RESEARCH_RESULT_SCHEMA = {serialize_schema_js(pydantic_to_js_response_schema(AuditResearchResult))};\n"
+        f"const AUDIT_FINDING_SCHEMA = {serialize_schema_js(pydantic_to_js_response_schema(AuditReport))};\n\n"
         f"{js}"
     )
 

@@ -207,7 +207,7 @@ openapi-drift: ## Check for OpenAPI drift against the pinned spec
 # TUI (terminal UI — separate Bun project)
 # ──────────────────────────────────────────────────────────────────────────────
 
-.PHONY: tui tui-install tui-dev
+.PHONY: tui tui-install tui-dev tui-test tui-test-watch tui-test-coverage
 
 tui-install: ## Install TUI dependencies
 	cd src/tui && bun install
@@ -216,6 +216,15 @@ tui-dev: ## Start the TUI in development mode
 	cd src/tui && bun dev
 
 tui: tui-dev ## Start the TUI (alias)
+
+tui-test: ## Run TUI tests
+	cd src/tui && bun test
+
+tui-test-watch: ## Run TUI tests in watch mode
+	cd src/tui && bun test --watch
+
+tui-test-coverage: ## Run TUI tests with coverage report
+	cd src/tui && bun test --coverage
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Cleanup

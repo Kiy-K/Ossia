@@ -37,15 +37,16 @@ def _get_async_subagent_graph_ids() -> list[str]:
 def _get_graph_modules() -> list[str]:
     """Return all graph module file stems (minus ``.py``) in ``src/core/graphs/``.
 
-    Excludes ``__init__`` and ``supervisor`` because ``supervisor.py`` is the
-    main entry-point graph, not an async subagent.
+    Excludes ``__init__`` (package marker), ``supervisor`` (main entry-point
+    graph, not an async subagent), and ``_shared`` (internal helper shared
+    by the other graph modules).
     """
     modules: list[str] = []
     for fpath in sorted(GRAPHS_DIR.iterdir()):
         if fpath.suffix != ".py":
             continue
         stem = fpath.stem
-        if stem in ("__init__", "supervisor"):
+        if stem in ("__init__", "supervisor", "_shared"):
             continue
         modules.append(stem)
     return modules

@@ -14,66 +14,10 @@ Pipeline stages:
   3. test-runner — validate the fix
 
 Each stage passes a ``responseSchema`` to ``task()`` so the result is a
-structured JavaScript object (no ``JSON.parse`` needed). Schemas are
-inlined as JSON Schema objects derived from the Pydantic models in
-:mod:`core.orchestrators.schemas`.
+structured JavaScript object. Schemas are generated at call time from the
+Pydantic models in :mod:`core.orchestrators.schemas` via
+:func:`~core.orchestrators.schemas.pydantic_to_js_response_schema`.
 """
-
-# JSON Schema for BugReport (used by bug-diagnostician stage)
-_BUG_REPORT_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "title": {"type": "string", "description": "Concise bug title."},
-        "summary": {"type": "string", "description": "One-sentence summary of the bug."},
-        "root_cause": {"type": "string", "description": "Likely root cause (1-2 sentences)."},
-        "reproduction_steps": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "Numbered reproduction steps.",
-        },
-        "affected_files": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "Paths to affected source files.",
-        },
-        "severity": {
-            "type": "string",
-            "enum": ["critical", "high", "medium", "low"],
-            "description": "Severity level.",
-        },
-    },
-    "required": ["title", "summary", "root_cause"],
-}
-
-# JSON Schema for PatchProposal (used by fix-proposer stage)
-_PATCH_PROPOSAL_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "summary": {"type": "string", "description": "One-line description of the proposed fix."},
-        "file_path": {"type": "string", "description": "Target file to modify."},
-        "before": {"type": "string", "description": "Original code snippet."},
-        "after": {"type": "string", "description": "Replacement code snippet."},
-        "risk_notes": {"type": "string", "description": "Things to double-check."},
-    },
-    "required": ["summary", "file_path"],
-}
-
-# JSON Schema for TestResult (used by test-runner stage)
-_TEST_RESULT_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "passed": {"type": "boolean", "description": "Whether all tests passed."},
-        "total": {"type": "integer", "description": "Total test count."},
-        "passed_count": {"type": "integer", "description": "Passed test count."},
-        "failures": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "Names of failing tests.",
-        },
-        "output": {"type": "string", "description": "Captured test runner output."},
-    },
-    "required": ["passed"],
-}
 
 BUGFIX_PIPELINE_JS = r"""
 const issue = `ISSUE_DESCRIPTION`;
@@ -124,13 +68,16 @@ def get_bugfix_pipeline_js(issue_description: str) -> str:
         JavaScript code string ready for ``eval()``, with the issue
         description interpolated and schema constants prepended.
     """
-    from core.orchestrators.schemas import serialize_schema_js
+    from core.orchestrators.schemas import (
+        BugReport, PatchProposal, TestResult,
+        pydantic_to_js_response_schema, serialize_schema_js,
+    )
     escaped = issue_description.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
     js = BUGFIX_PIPELINE_JS.replace("ISSUE_DESCRIPTION", escaped)
     return (
-        f"const BUG_REPORT_SCHEMA = {serialize_schema_js(_BUG_REPORT_SCHEMA)};\n"
-        f"const PATCH_PROPOSAL_SCHEMA = {serialize_schema_js(_PATCH_PROPOSAL_SCHEMA)};\n"
-        f"const TEST_RESULT_SCHEMA = {serialize_schema_js(_TEST_RESULT_SCHEMA)};\n\n"
+        f"const BUG_REPORT_SCHEMA = {serialize_schema_js(pydantic_to_js_response_schema(BugReport))};\n"
+        f"const PATCH_PROPOSAL_SCHEMA = {serialize_schema_js(pydantic_to_js_response_schema(PatchProposal))};\n"
+        f"const TEST_RESULT_SCHEMA = {serialize_schema_js(pydantic_to_js_response_schema(TestResult))};\n\n"
         f"{js}"
     )
 

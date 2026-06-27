@@ -11,98 +11,9 @@ Pipeline stages:
   4. test-runner — validate the refactoring
 
 Each stage passes a ``responseSchema`` to ``task()`` so the result is a
-structured JavaScript object.
+structured JavaScript object. All schemas are generated from the Pydantic
+models in :mod:`core.orchestrators.schemas`.
 """
-
-# JSON Schema for research output (code-researcher stage)
-_RESEARCH_RESULT_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "files": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "Affected file paths.",
-        },
-        "dependencies": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "Key dependencies between modules.",
-        },
-        "simplification_opportunities": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "Areas where simplification is possible.",
-        },
-    },
-    "required": ["files"],
-}
-
-# JSON Schema for refactoring plan (fix-proposer as planner)
-_REFACTOR_PLAN_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "target": {"type": "string", "description": "Module or file to refactor."},
-        "motivation": {"type": "string", "description": "Why this refactoring is needed."},
-        "changes": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "file": {"type": "string"},
-                    "description": {"type": "string"},
-                },
-                "required": ["file", "description"],
-            },
-            "description": "Planned changes with file and description.",
-        },
-        "estimated_impact": {
-            "type": "string",
-            "enum": ["low", "medium", "high"],
-            "description": "Estimated impact.",
-        },
-    },
-    "required": ["target", "motivation", "changes"],
-}
-
-# JSON Schema for patch set (fix-proposer as patch-writer)
-_PATCH_SET_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "patches": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "file_path": {"type": "string"},
-                    "before": {"type": "string"},
-                    "after": {"type": "string"},
-                    "description": {"type": "string"},
-                },
-                "required": ["file_path", "after"],
-            },
-        },
-    },
-    "required": ["patches"],
-}
-
-# JSON Schema for validation result (test-runner stage)
-_VALIDATION_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "passed": {"type": "boolean", "description": "Whether all tests passed."},
-        "issues": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "Issues found.",
-        },
-        "recommendations": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "Recommended fixes.",
-        },
-    },
-    "required": ["passed"],
-}
 
 REFACTOR_PIPELINE_JS = r"""
 const target = `TARGET`;
@@ -172,17 +83,20 @@ def get_refactor_pipeline_js(target: str, goal: str) -> str:
         JavaScript code string ready for ``eval()``, with parameters
         interpolated and schema constants prepended.
     """
-    from core.orchestrators.schemas import serialize_schema_js
+    from core.orchestrators.schemas import (
+        RefactorPlan, RefactorResearchResult, PatchSet, ValidationResult,
+        pydantic_to_js_response_schema, serialize_schema_js,
+    )
     escaped_target = target.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
     escaped_goal = goal.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
     js = REFACTOR_PIPELINE_JS
     js = js.replace("TARGET", escaped_target)
     js = js.replace("GOAL", escaped_goal)
     return (
-        f"const RESEARCH_RESULT_SCHEMA = {serialize_schema_js(_RESEARCH_RESULT_SCHEMA)};\n"
-        f"const REFACTOR_PLAN_SCHEMA = {serialize_schema_js(_REFACTOR_PLAN_SCHEMA)};\n"
-        f"const PATCH_SET_SCHEMA = {serialize_schema_js(_PATCH_SET_SCHEMA)};\n"
-        f"const VALIDATION_SCHEMA = {serialize_schema_js(_VALIDATION_SCHEMA)};\n\n"
+        f"const RESEARCH_RESULT_SCHEMA = {serialize_schema_js(pydantic_to_js_response_schema(RefactorResearchResult))};\n"
+        f"const REFACTOR_PLAN_SCHEMA = {serialize_schema_js(pydantic_to_js_response_schema(RefactorPlan))};\n"
+        f"const PATCH_SET_SCHEMA = {serialize_schema_js(pydantic_to_js_response_schema(PatchSet))};\n"
+        f"const VALIDATION_SCHEMA = {serialize_schema_js(pydantic_to_js_response_schema(ValidationResult))};\n\n"
         f"{js}"
     )
 

@@ -1,5 +1,14 @@
 # Ossia — Portable AI Support Agent
 
+<p align="center">
+  <a href="https://github.com/Kiy-K/Ossia/actions/workflows/tui-test.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/Kiy-K/Ossia/tui-test.yml?label=TUI%20tests&logo=github" alt="TUI tests">
+  </a>
+  <img src="https://img.shields.io/badge/coverage-87%25-brightgreen" alt="coverage">
+  <img src="https://img.shields.io/badge/python-3.12-blue" alt="python">
+  <img src="https://img.shields.io/badge/license-MIT-blue" alt="license">
+</p>
+
 **Ossia** is a portable, model-agnostic AI support agent built on [LangChain Deep Agents](https://docs.langchain.com/oss/python/deepagents/overview). It bridges the gap between a raw LLM and a production-ready assistant — providing structured subagent delegation, human-in-the-loop approval, multimodal understanding, programmatic pipelines, and a real-time streaming event protocol.
 
 Think of Ossia as a **digital teammate**: it can research your codebase, diagnose bugs, propose fixes, run tests, audit architecture, and execute multi-step workflows — all through a single unified HTTP API.

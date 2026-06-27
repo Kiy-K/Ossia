@@ -118,6 +118,60 @@ class ValidationResult(BaseModel):
     recommendations: list[str] = Field(default_factory=list, description="Recommended fixes.")
 
 
+# ── Refactor Research ────────────────────────────────────────────────────────
+
+class RefactorResearchResult(BaseModel):
+    """Structured output from the code-researcher subagent (refactor pipeline)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    files: list[str] = Field(description="Affected file paths.")
+    dependencies: list[str] = Field(
+        default_factory=list,
+        description="Key dependencies between modules.",
+    )
+    simplification_opportunities: list[str] = Field(
+        default_factory=list,
+        description="Areas where simplification is possible.",
+    )
+
+
+# ── Audit Research ───────────────────────────────────────────────────────────
+
+class AuditResearchResult(BaseModel):
+    """Structured output from the code-researcher subagent (audit pipeline)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    files: list[str] = Field(description="Relevant file paths discovered.")
+    architecture: str = Field(default="", description="High-level architecture summary.")
+    areas_needing_attention: list[str] = Field(
+        default_factory=list,
+        description="Areas that likely need review.",
+    )
+
+
+# ── Patch Set ────────────────────────────────────────────────────────────────
+
+class Patch(BaseModel):
+    """A single code patch within a ``PatchSet``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    file_path: str = Field(description="Target file to modify.")
+    before: str = Field(default="", description="Original code snippet.")
+    after: str = Field(default="", description="Replacement code snippet.")
+    description: str = Field(default="", description="What this patch does.")
+
+
+class PatchSet(BaseModel):
+    """Structured output from the fix-proposer subagent (patch-writer stage)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    patches: list[Patch] = Field(description="List of code patches to apply.")
+
+
 # ── Schema serialization helpers ─────────────────────────────────────────────
 
 

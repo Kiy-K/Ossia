@@ -34,6 +34,27 @@ class RefactorPipelineInput(BaseModel):
     goal: str = Field(description="Description of the desired refactoring.")
 
 
+def _pipeline_result(name: str, js: str) -> dict:
+    """Build the standard pipeline tool return dict.
+
+    Args:
+        name: Pipeline name (e.g. ``"bugfix"``, ``"audit"``, ``"refactor"``).
+        js: JavaScript code string to execute via ``eval()``.
+
+    Returns:
+        Dict with ``status``, ``pipeline``, ``js_code``, and ``instruction``.
+    """
+    return {
+        "status": "ready",
+        "pipeline": name,
+        "js_code": js,
+        "instruction": (
+            f"Run this JavaScript code via eval({{ code: js_code }}) "
+            f"to execute the {name} pipeline in the interpreter."
+        ),
+    }
+
+
 @tool(args_schema=BugfixPipelineInput)
 def run_bugfix_pipeline(
     issue_description: str,
@@ -61,15 +82,7 @@ def run_bugfix_pipeline(
     del repo, issue_number  # used for context but not in JS template yet
     from core.orchestrators.bugfix_pipeline import get_bugfix_pipeline_js
     js = get_bugfix_pipeline_js(issue_description)
-    return {
-        "status": "ready",
-        "pipeline": "bugfix",
-        "js_code": js,
-        "instruction": (
-            "Run this JavaScript code via eval({ code: js_code }) "
-            "to execute the bugfix pipeline in the interpreter."
-        ),
-    }
+    return _pipeline_result("bugfix", js)
 
 
 @tool(args_schema=AuditPipelineInput)
@@ -96,15 +109,7 @@ def run_audit_pipeline(
     """
     from core.orchestrators.audit_pipeline import get_audit_pipeline_js
     js = get_audit_pipeline_js(target=target, focus=focus)
-    return {
-        "status": "ready",
-        "pipeline": "audit",
-        "js_code": js,
-        "instruction": (
-            "Run this JavaScript code via eval({ code: js_code }) "
-            "to execute the audit pipeline in the interpreter."
-        ),
-    }
+    return _pipeline_result("audit", js)
 
 
 @tool(args_schema=RefactorPipelineInput)
@@ -131,12 +136,4 @@ def run_refactor_pipeline(
     """
     from core.orchestrators.refactor_pipeline import get_refactor_pipeline_js
     js = get_refactor_pipeline_js(target=target, goal=goal)
-    return {
-        "status": "ready",
-        "pipeline": "refactor",
-        "js_code": js,
-        "instruction": (
-            "Run this JavaScript code via eval({ code: js_code }) "
-            "to execute the refactor pipeline in the interpreter."
-        ),
-    }
+    return _pipeline_result("refactor", js)
