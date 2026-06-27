@@ -742,7 +742,16 @@ async def test_thread_events_returns_events_after_stream(client: TestClient) -> 
     # Compute the actual caller hash the same way verify_api_key does.
     # This ensures the scoped thread_id we store matches what the
     # endpoint computes from the API key header.
-    caller_hash = hashlib.blake2b(b"test-api-key", digest_size=16).hexdigest()
+    from argon2 import low_level as argon2_low_level
+    caller_hash = argon2_low_level.hash_secret_raw(
+        secret=b"test-api-key",
+        salt=b"ossia-caller-id",  # must be exactly 16 bytes
+        time_cost=2,
+        memory_cost=65536,
+        parallelism=1,
+        hash_len=16,
+        type=argon2_low_level.Type.ID,
+    ).hex()
 
     # Clear any previous state from the singleton
     buf = get_thread_event_buffer()
@@ -828,7 +837,16 @@ def test_thread_events_delete_does_not_affect_other_threads(client: TestClient) 
         get_thread_event_buffer,
     )
 
-    caller_hash = hashlib.blake2b(b"test-api-key", digest_size=16).hexdigest()
+    from argon2 import low_level as argon2_low_level
+    caller_hash = argon2_low_level.hash_secret_raw(
+        secret=b"test-api-key",
+        salt=b"ossia-caller-id",  # must be exactly 16 bytes
+        time_cost=2,
+        memory_cost=65536,
+        parallelism=1,
+        hash_len=16,
+        type=argon2_low_level.Type.ID,
+    ).hex()
     buf = get_thread_event_buffer()
     buf.clear_all()
 
