@@ -152,7 +152,7 @@ def test_eval_with_no_api_key_returns_empty_report(
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     r = client.post(
         "/v1/eval",
-        json={"dataset_path": "tests/golden_dataset.json", "min_pass_rate": 0.5},
+        json={"min_pass_rate": 0.5},
         headers={"X-API-Key": API_KEY},
     )
     assert r.status_code == 200

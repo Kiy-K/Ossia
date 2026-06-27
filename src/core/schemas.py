@@ -548,14 +548,15 @@ class EvalQueryResult(BaseModel):
 
 
 class EvalRequest(BaseModel):
-    """Inbound payload for POST /v1/eval."""
+    """Inbound payload for POST /v1/eval.
+
+    The golden dataset is hardcoded to ``tests/golden_dataset.json``
+    — no user-controlled path reaches the filesystem. Only the pass
+    rate threshold is configurable from the client.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    dataset_path: str = Field(
-        default="tests/golden_dataset.json",
-        description="Path to a golden dataset JSON file (server-side resolvable).",
-    )
     min_pass_rate: float = Field(
         default=0.8,
         ge=0.0,

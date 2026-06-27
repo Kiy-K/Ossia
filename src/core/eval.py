@@ -21,47 +21,21 @@ from core.config import Provider, Settings
 from core.schemas import EvalQueryResult, EvalReport
 
 
-def _load_dataset(path: str) -> list[dict[str, Any]]:
-    """Load the golden dataset from a JSON file.
+def _load_dataset() -> list[dict[str, Any]]:
+    """Load the golden dataset from the default JSON file.
 
-    The path is resolved relative to the project root and validated
-    to prevent directory traversal attacks. The validation guard
-    (``relative_to``) is in the same function as the file read so
-    static analysis tools can trace the check before the I/O.
-
-    Args:
-        path: Path to a JSON file (project-relative) with shape
-            ``{"queries": [...]}``.
+    The path is hardcoded to prevent any user-controlled data from flowing
+    into a file read operation. The project-relative path is resolved
+    against the project root directory.
 
     Returns:
         List of golden query records.
-
-    Raises:
-        ValueError: If the path is absolute, or resolves outside the project.
     """
-    # Resolve against the project root (src/core/eval.py → src/core/ → src/ → root).
+    # Hardcoded path — no user input reaches this function, eliminating
+    # CodeQL path-injection false positives.
     project_root = Path(__file__).resolve().parent.parent.parent
-
-    # Reject absolute paths immediately.
-    if path.startswith("/"):
-        raise ValueError(f"Absolute dataset paths are not allowed: {path}")
-
-    resolved = (project_root / path).resolve()
-
-    # Guard: raises ValueError if the resolved path escapes the project root.
-    # Kept in the same function as the file read so CodeQL can verify the
-    # path is constrained before it's used for I/O.
-    try:
-        resolved.relative_to(project_root)
-    except ValueError:
-        raise ValueError(
-            f"Dataset path resolves outside the project directory: {path}"
-        )
-
-    # Suppress CodeQL py/path-injection: the relative_to() guard above
-    # raises ValueError if the path escapes the project root, making this
-    # read safe from directory traversal.
-    data = json.loads(resolved.read_text(encoding="utf-8"))  # lgtm[py/path-injection]
+    default_path = project_root / "tests" / "golden_dataset.json"
+    data = json.loads(default_path.read_text(encoding="utf-8"))
     return data["queries"]
 
 
@@ -145,13 +119,16 @@ async def _run_one(
 
 
 async def run_eval(
-    dataset_path: str = "tests/golden_dataset.json",
     min_pass_rate: float = 0.8,
 ) -> EvalReport:
     """Run the golden eval and return a structured report.
 
+    The golden dataset is loaded from the default path
+    (``tests/golden_dataset.json``). The path is hardcoded so no
+    user-controlled input can reach a file operation, eliminating path
+    traversal as a risk surface.
+
     Args:
-        dataset_path: Path to the golden dataset JSON (server-resolvable).
         min_pass_rate: Pass rate threshold (0.0-1.0) below which the report
             is marked not ok.
 
@@ -159,7 +136,7 @@ async def run_eval(
         Structured :class:`EvalReport` with per-query results and an aggregate
         pass rate.
     """
-    queries = _load_dataset(dataset_path)
+    queries = _load_dataset()
     api_key = os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
         return EvalReport(

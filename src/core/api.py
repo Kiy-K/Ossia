@@ -689,7 +689,6 @@ async def run_eval_endpoint(
     """Run the golden-dataset eval and return a graded report."""
     del caller
     return await run_eval(
-        dataset_path=payload.dataset_path,
         min_pass_rate=payload.min_pass_rate,
     )
 
