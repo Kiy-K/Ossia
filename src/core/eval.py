@@ -48,10 +48,15 @@ def _load_dataset(path: str) -> list[dict[str, Any]]:
 
     resolved = (project_root / path).resolve()
 
-    # Guard: this raises ValueError if the resolved path escapes the project
-    # root. Kept in the same function as the file read so CodeQL can verify
-    # the path is constrained before it's used for I/O.
-    resolved.relative_to(project_root)
+    # Guard: raises ValueError if the resolved path escapes the project root.
+    # Kept in the same function as the file read so CodeQL can verify the
+    # path is constrained before it's used for I/O.
+    try:
+        resolved.relative_to(project_root)
+    except ValueError:
+        raise ValueError(
+            f"Dataset path resolves outside the project directory: {path}"
+        )
 
     data = json.loads(resolved.read_text(encoding="utf-8"))
     return data["queries"]
