@@ -21,16 +21,60 @@ from core.config import Provider, Settings
 from core.schemas import EvalQueryResult, EvalReport
 
 
+def _resolve_safe_path(user_path: str) -> Path:
+    """Resolve a dataset path safely, preventing directory traversal.
+
+    The resolved path must be within the project root directory.
+    If the path starts with ``/``, it is rejected outright.
+    Absolute paths from the resolver (e.g. via ``..`` traversal) are
+    checked against the project root.
+
+    Args:
+        user_path: User-supplied path string.
+
+    Returns:
+        Resolved absolute ``Path`` guaranteed to be under the project root.
+
+    Raises:
+        ValueError: If the path is absolute, or resolves outside the project.
+    """
+    # Reject absolute paths immediately.
+    if user_path.startswith("/"):
+        raise ValueError(f"Absolute dataset paths are not allowed: {user_path}")
+
+    # Resolve against the project root (src/core/eval.py → src/core/ → src/ → root).
+    project_root = Path(__file__).resolve().parent.parent.parent
+    candidate = (project_root / user_path).resolve()
+
+    # Verify the resolved path is within the project root.
+    try:
+        candidate.relative_to(project_root)
+    except ValueError:
+        raise ValueError(
+            f"Dataset path resolves outside the project directory: {user_path}"
+        )
+
+    return candidate
+
+
 def _load_dataset(path: str) -> list[dict[str, Any]]:
     """Load the golden dataset from a JSON file.
 
+    The path is resolved relative to the project root and validated
+    to prevent directory traversal attacks.
+
     Args:
-        path: Path to a JSON file with shape ``{"queries": [...]}``.
+        path: Path to a JSON file (project-relative) with shape
+            ``{"queries": [...]}``.
 
     Returns:
         List of golden query records.
+
+    Raises:
+        ValueError: If the resolved path is outside the project directory.
     """
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    safe_path = _resolve_safe_path(path)
+    data = json.loads(safe_path.read_text(encoding="utf-8"))
     return data["queries"]
 
 

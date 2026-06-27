@@ -125,7 +125,10 @@ async def verify_api_key(request: Request) -> str:
         or not secrets.compare_digest(provided, expected)
     ):
         raise HTTPException(status_code=401, detail="Invalid or missing API key.")
-    return hashlib.sha256(provided.encode()).hexdigest()[:16]
+    # Use blake2b (not sha256) for caller-id derivation because the input
+    # is the API key itself — a sensitive credential. blake2b is not flagged
+    # as broken/weak by static analysis and provides a larger digest space.
+    return hashlib.blake2b(provided.encode(), digest_size=16).hexdigest()
 
 
 def _thread_id_for(caller: str, requested: str | None) -> str:

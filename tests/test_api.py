@@ -742,7 +742,7 @@ async def test_thread_events_returns_events_after_stream(client: TestClient) -> 
     # Compute the actual caller hash the same way verify_api_key does.
     # This ensures the scoped thread_id we store matches what the
     # endpoint computes from the API key header.
-    caller_hash = hashlib.sha256(b"test-api-key").hexdigest()[:16]
+    caller_hash = hashlib.blake2b(b"test-api-key", digest_size=16).hexdigest()
 
     # Clear any previous state from the singleton
     buf = get_thread_event_buffer()
@@ -828,7 +828,7 @@ def test_thread_events_delete_does_not_affect_other_threads(client: TestClient) 
         get_thread_event_buffer,
     )
 
-    caller_hash = hashlib.sha256(b"test-api-key").hexdigest()[:16]
+    caller_hash = hashlib.blake2b(b"test-api-key", digest_size=16).hexdigest()
     buf = get_thread_event_buffer()
     buf.clear_all()
 
