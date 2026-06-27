@@ -4,7 +4,7 @@ Human-readable record of breaking and notable non-breaking changes to the
 Ossia HTTP contract. The machine-readable record is the git history of
 `openapi.checked.json`.
 
-## v1.8.0 — 2026-06-27 — security hardening (Argon2id, path traversal, dependency audit)
+## v0.8.0 — 2026-06-27 — security hardening (Argon2id, path traversal, dependency audit)
 
 **Non-breaking** for the HTTP contract. No routes changed. Multiple security
 fixes applied based on GitHub code scanning results.
@@ -38,7 +38,7 @@ fixes applied based on GitHub code scanning results.
 ### GitHub code scanning status
 - **9 alerts total, 0 open** as of this release.
 
-## v1.7.0 — 2026-06-27 — monitoring stack, Makefile, Caddy reverse proxy, Docker refactor
+## v0.7.0 — 2026-06-27 — monitoring stack, Makefile, Caddy reverse proxy, Docker refactor
 
 **Non-breaking** for the HTTP contract. No routes changed. The project gains
 a monitoring stack, a Makefile for common workflows, a Caddy reverse proxy,
@@ -93,7 +93,7 @@ and restructured Docker composition.
   `src/core/orchestrators/` (bugfix, audit, refactor pipelines).
 - **New scripts:** `scripts/coverage_matrix.py`, `scripts/generate_changelog_entry.py`.
 
-## v1.6.0 — 2026-06-26 — thread event buffer, code interpreter
+## v0.6.0 — 2026-06-26 — thread event buffer, code interpreter
 
 **Non-breaking** for the HTTP contract. Two new feature surfaces:
 - **Thread event buffer** (see ADR-0012): `GET /v1/threads/{id}/events`
@@ -105,7 +105,7 @@ and restructured Docker composition.
 - **New dependency:** `langchain-quickjs>=0.1.0` (indirectly via
   `deepagents[quickjs]>=0.6.11`).
 
-## v1.5.0 — 2026-06-22 — runtime context propagation (OssiaContext)
+## v0.5.0 — 2026-06-22 — runtime context propagation (OssiaContext)
 
 **Non-breaking** for the HTTP contract. No routes changed; the spec
 schema and pinned `openapi.checked.json` are unchanged. The agent
@@ -130,7 +130,7 @@ subagents and is readable from any tool via the deepagent
 See `docs/adr/0010-runtime-context-ossia-context.md` for the
 full decision record.
 
-## v1.4.0 — 2026-06-22 — Tavily-backed web tools + Nebius adapter removed
+## v0.4.0 — 2026-06-22 — Tavily-backed web tools + Nebius adapter removed
 
 **Non-breaking** for the HTTP contract. No routes changed. The agent
 runtime gains three new tools and drops the unused Nebius adapter.
@@ -146,24 +146,24 @@ runtime gains three new tools and drops the unused Nebius adapter.
   `NotImplementedError`.
 - **New dependency:** `tavily-python>=0.7.0`.
 
-## v1.3.0 — 2026-06-22 — subagent descriptions and system prompts tightened
+## v0.3.0 — 2026-06-22 — subagent descriptions and system prompts tightened
 
 **Non-breaking** for the HTTP contract. The four custom subagents
 gained action-oriented descriptions and output format constraints.
 
-## v1.2.0 — 2026-06-22 — agent-scoped memory + episodic recall
+## v0.2.0 — 2026-06-22 — agent-scoped memory + episodic recall
 
 **Non-breaking**. Two new memory surfaces: semantic memory
 (`/memories/AGENTS.md` via LangGraph Store) and episodic recall
 (`recall_thread_turns` tool via checkpointer).
 
-## v1.1.0 — 2026-06-22 — streaming switches to the v3 protocol
+## v0.1.0 — 2026-06-22 — streaming switches to the v3 protocol
 
 **Breaking** for clients of `POST /v1/chat/stream`. Wire shape changes
 from flat v2 event dicts to a discriminated-union envelope with
 `kind` + per-kind `data`.
 
-## v1.0.0 — 2026-06-22 — initial unified API
+## v0.0.1 — 2026-06-22 — initial unified API
 
 **Breaking** (no prior contract to break — first pinned version).
 New `/v1/*` surface replaces un-versioned routes. Pydantic-typed
