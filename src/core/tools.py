@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
 
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 

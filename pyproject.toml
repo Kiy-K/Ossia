@@ -45,7 +45,7 @@ dependencies = [
     # Web search and URL extraction (primary path)
     "tavily-python>=0.7.0",
     # Web search fallback when Tavily is unavailable
-    "duckduckgo-search>=7.0.0",
+    "ddgs>=9.0.0",
 
     # Password/key hashing for caller-id derivation
     "argon2-cffi>=23.1.0",
