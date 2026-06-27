@@ -226,6 +226,12 @@ Human-in-the-loop interrupts on sensitive actions (`send_response`). Reviewers c
 ### Spec-Driven Contract
 The OpenAPI spec at `specs/openapi.checked.json` is the pinned source of truth. `pytest -k openapi_drift` catches any drift between the code and the contract. Breaking changes bump the URL prefix.
 
+### Security Hardening
+All code scanning alerts are resolved (0 open). Caller authentication uses
+**Argon2id** for key hashing (memory-hard, GPU-resistant). The eval endpoint
+uses a hardcoded dataset path to prevent path traversal. Web search fallback
+uses the modern `ddgs` package. See `specs/changelog.md` for details.
+
 ## Configuration
 
 All settings are driven by environment variables parsed through Pydantic in `src/core/config.py`.
