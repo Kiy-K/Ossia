@@ -290,6 +290,48 @@ clean-all: clean-docker ## Nuclear cleanup — removes .venv and .env too
 	@echo "Full cleanup complete. Run 'make setup' to reinitialize."
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Versioning & release
+# ──────────────────────────────────────────────────────────────────────────────
+
+.PHONY: bump-version show-version
+
+CURRENT_VERSION := $(shell $(PYTHON) -c "import re; print(re.search(r'''^version\s*=\s*\"([^\"]+)\"''', open('pyproject.toml').read(), re.M).group(1))" 2>/dev/null || echo "unknown")
+
+show-version: ## Show the current version from pyproject.toml
+	@echo "$(CURRENT_VERSION)"
+
+bump-version: ## Bump version, commit, and tag. Usage: make bump-version VERSION=0.9.0 [MESSAGE='...']
+ifndef VERSION
+	$(error Usage: make bump-version VERSION=0.9.0)
+endif
+	@if echo "$(VERSION)" | grep -vqE '^[0-9]+\.[0-9]+\.[0-9]+$$'; then \
+		echo "ERROR: VERSION must be in X.Y.Z format (e.g. 0.9.0)"; \
+		exit 1; \
+	fi
+	@if ! git diff --quiet --cached; then \
+		echo "ERROR: You have staged but uncommitted changes. Commit or stash them first."; \
+		exit 1; \
+	fi
+	@if ! git diff --quiet; then \
+		echo "ERROR: You have unstaged changes. Commit or stash them first."; \
+		exit 1; \
+	fi
+	@echo "Bumping version from $(CURRENT_VERSION) to $(VERSION)..."
+	$(PYTHON) -c "\
+import re;\
+content = open('pyproject.toml').read();\
+new = re.sub(r'(?m)^version\s*=\s*\"[^\"]+\"', 'version = \"$(VERSION)\"', content);\
+open('pyproject.toml', 'w').write(new)\
+"
+	@git add pyproject.toml
+	MESSAGE="$(or $(MESSAGE),Release v$(VERSION))"
+	git commit -m "$$MESSAGE"
+	git tag -a "v$(VERSION)" -m "$$MESSAGE"
+	@echo ""
+	@echo "Created tag v$(VERSION). Push with:"
+	@echo "  git push origin master --tags"
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Help
 # ──────────────────────────────────────────────────────────────────────────────
 

@@ -62,8 +62,30 @@ jobs:
       - name: Typecheck with pyright
         run: .venv/bin/python -m pyright src
 
-      - name: Run Python tests
-        run: .venv/bin/python -m pytest tests/ -v --timeout=120
+      - name: Run Python tests with coverage
+        run: |
+          .venv/bin/python -m pytest tests/ -v --timeout=120 --cov=src/core --cov-report=term-missing 2>&1 | tee /tmp/test_output.txt
+          # Parse coverage from the TOTAL line: "TOTAL                    1234     56    95%"
+          COV_LINE=$(grep "^TOTAL" /tmp/test_output.txt 2>/dev/null | tail -1 || true)
+          PCT=$(echo "$COV_LINE" | awk '{print $NF}' | tr -d '%')
+          if [ -n "$PCT" ]; then
+            if [ "$PCT" -ge 90 ]; then COLOR=brightgreen
+            elif [ "$PCT" -ge 80 ]; then COLOR=green
+            elif [ "$PCT" -ge 70 ]; then COLOR=yellow
+            elif [ "$PCT" -ge 60 ]; then COLOR=orange
+            else COLOR=red
+            fi
+            mkdir -p badges
+            cat > badges/coverage-python.json <<EOF
+            {
+              "schemaVersion": 1,
+              "label": "Python coverage",
+              "message": "${PCT}%",
+              "color": "${COLOR}"
+            }
+          EOF
+            echo "Generated badges/coverage-python.json (${PCT}%, ${COLOR})"
+          fi
         env:
           OSSIA_API_KEY: ci-test-key
           ENABLE_HUMAN_REVIEW: "false"
@@ -75,6 +97,13 @@ jobs:
           OSSIA_API_KEY: drift-test-key
           ENABLE_HUMAN_REVIEW: "false"
           POSTGRES_URL: ""
+
+      - name: Upload Python coverage badge
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-badge-python
+          path: badges/coverage-python.json
+          if-no-files-found: ignore
 
   # ── TUI: Typecheck + Test ────────────────────────────────────────────────
   test-tui:
@@ -97,9 +126,16 @@ jobs:
         working-directory: src/tui
         run: bunx tsc --noEmit
 
-      - name: Run TUI tests
+      - name: Run TUI tests with coverage
         working-directory: src/tui
-        run: bun test
+        run: bash scripts/check-coverage.sh 80
+
+      - name: Upload TUI coverage badge
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-badge-tui
+          path: src/tui/badges/coverage.json
+          if-no-files-found: ignore
 
   # ── Release (tag push only) ──────────────────────────────────────────────
   release:
