@@ -12,7 +12,6 @@ stream completes (in ``chat_stream``). The buffer is bounded per-thread to
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from core.events.types import OssiaEvent
 

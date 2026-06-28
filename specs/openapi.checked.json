@@ -454,14 +454,8 @@
       },
       "EvalRequest": {
         "additionalProperties": false,
-        "description": "Inbound payload for POST /v1/eval.",
+        "description": "Inbound payload for POST /v1/eval.\n\nThe golden dataset is hardcoded to ``tests/golden_dataset.json``\n\u2014 no user-controlled path reaches the filesystem. Only the pass\nrate threshold is configurable from the client.",
         "properties": {
-          "dataset_path": {
-            "default": "tests/golden_dataset.json",
-            "description": "Path to a golden dataset JSON file (server-side resolvable).",
-            "title": "Dataset Path",
-            "type": "string"
-          },
           "min_pass_rate": {
             "default": 0.8,
             "description": "Minimum pass rate (0.0-1.0) below which the report is marked not ok.",

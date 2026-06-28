@@ -60,8 +60,10 @@ def get_audit_pipeline_js(target: str = ".", focus: str = "general") -> str:
         interpolated and schema constants prepended.
     """
     from core.orchestrators.schemas import (
-        AuditReport, AuditResearchResult,
-        pydantic_to_js_response_schema, serialize_schema_js,
+        AuditReport,
+        AuditResearchResult,
+        pydantic_to_js_response_schema,
+        serialize_schema_js,
     )
     escaped_target = target.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
     escaped_focus = focus.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")

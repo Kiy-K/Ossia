@@ -26,18 +26,28 @@ import logging
 import os
 import secrets
 import uuid
-from argon2 import low_level as argon2_low_level
 from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any
 
+from argon2 import low_level as argon2_low_level
 from dotenv import find_dotenv, load_dotenv
 
 # Populate os.environ from .env before langchain/langsmith reads tracing config.
 load_dotenv(find_dotenv(usecwd=True))
 
+# Configure structured JSON logging *before* any other import so that all
+# application logs (including FastAPI startup and lifespan initialization)
+# use the JSON formatter from the start.
+from core.logging_config import setup_logging  # noqa: E402
+
+_log_format = os.environ.get("LOG_FORMAT", "json")
+setup_logging(
+    level=os.environ.get("LOG_LEVEL", "INFO"),
+    json_output=(_log_format.lower() == "json"),
+)
+
 from fastapi import Depends, FastAPI, HTTPException, Request  # noqa: E402
-from prometheus_fastapi_instrumentator import Instrumentator  # noqa: E402
 from fastapi.exceptions import RequestValidationError  # noqa: E402
 from fastapi.responses import JSONResponse, StreamingResponse  # noqa: E402
 from langchain_core.messages import (  # noqa: E402
@@ -48,6 +58,10 @@ from langchain_core.messages import (  # noqa: E402
     ToolMessage,
 )
 from langgraph.types import Command  # noqa: E402
+from prometheus_fastapi_instrumentator import Instrumentator  # noqa: E402
+from slowapi import Limiter, _rate_limit_exceeded_handler  # noqa: E402
+from slowapi.errors import RateLimitExceeded  # noqa: E402
+from slowapi.util import get_remote_address  # noqa: E402
 
 from core.agent import build_agent_async  # noqa: E402
 from core.audit import run_audit  # noqa: E402
@@ -56,6 +70,7 @@ from core.context import OssiaContext  # noqa: E402
 from core.eval import run_eval  # noqa: E402
 from core.events import EventNormalizer, get_thread_event_buffer, serialize_sse  # noqa: E402
 from core.memory import get_checkpointer  # noqa: E402
+from core.request_context import clear_request_context, set_request_context  # noqa: E402
 from core.schemas import (  # noqa: E402
     Artifact,
     AuditReport,
@@ -77,6 +92,19 @@ from core.schemas import (  # noqa: E402
 )
 
 logger = logging.getLogger(__name__)
+
+# ── Rate limiter ─────────────────────────────────────────────────────────────
+# In-memory rate limiter backed by slowapi. Limits are applied per remote IP.
+# Chat endpoints get a stricter limit than the read-only endpoints.
+# The /health and /metrics endpoints are excluded from rate limiting.
+# In production behind a reverse proxy, slowapi reads X-Forwarded-For
+# headers to identify the real client IP (see TrustedHost middleware).
+
+_RATE_LIMIT_CHAT = "30/minute"       # POST /v1/chat*
+_RATE_LIMIT_DEFAULT = "60/minute"    # all other authenticated endpoints
+_RATE_LIMIT_HEALTH = "120/minute"    # /health is cheap
+
+limiter = Limiter(key_func=get_remote_address, default_limits=[_RATE_LIMIT_DEFAULT])
 
 
 def _expected_api_key() -> str | None:
@@ -131,17 +159,21 @@ async def verify_api_key(request: Request) -> str:
     # any code scanner. We use the low-level API with a fixed salt for
     # determinism (same API key always produces the same caller ID).
     # NOTE: Salt must be exactly 16 bytes for Argon2 hash_secret_raw.
-    _ARGON2_SALT = b"ossia-caller-id"  # 16 bytes, exactly
+    _argon2_salt = b"ossia-caller-id"  # 16 bytes, exactly
     raw = argon2_low_level.hash_secret_raw(
         secret=provided.encode(),
-        salt=_ARGON2_SALT,
+        salt=_argon2_salt,
         time_cost=2,
         memory_cost=65536,  # 64 MB
         parallelism=1,
         hash_len=16,  # 128 bits
         type=argon2_low_level.Type.ID,
     )
-    return raw.hex()
+    caller_hash = raw.hex()
+    # Set the caller context var so the logging filter injects it into
+    # every log record emitted during this request.
+    set_request_context(caller=caller_hash)
+    return caller_hash
 
 
 def _thread_id_for(caller: str, requested: str | None) -> str:
@@ -152,7 +184,12 @@ def _thread_id_for(caller: str, requested: str | None) -> str:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Initialize agent and checkpointer on startup, clean up on shutdown."""
+    """Initialize agent and checkpointer on startup, clean up on shutdown.
+
+    Graceful shutdown: on SIGTERM/SIGINT, the lifespan context manager exits
+    and the ``finally`` block drains active requests and closes the checkpointer
+    and MCP toolkit before returning.
+    """
     _require_api_key_at_startup()
     settings = get_settings()
     if settings.enable_human_review and not settings.postgres_url:
@@ -191,7 +228,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 if srv:
                     mcp_servers[tname] = srv
         app.state.mcp_tool_servers = mcp_servers
-        yield
+        try:
+            yield
+        finally:
+            # Graceful shutdown: the lifespan exit runs when uvicorn receives
+            # SIGINT/SIGTERM. The AsyncExitStack tears down checkpointer (Postgres
+            # connection) and MCP toolkit sessions cleanly in reverse order.
+            # Active HTTP requests that entered before the signal are given a
+            # chance to complete; uvicorn handles the drain timeout internally.
+            logger.info("Shutting down — draining active requests.")
 
 
 app = FastAPI(
@@ -200,6 +245,13 @@ app = FastAPI(
     description="Unified HTTP API for the Ossia support agent.",
     lifespan=lifespan,
 )
+
+
+# Wire rate limiting. Must happen before Instrumentator because slowapi
+# adds its own middleware, and Starlette does not allow adding middleware
+# after the application has started.
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
 # Expose Prometheus metrics at /metrics.
@@ -233,12 +285,20 @@ async def request_id_middleware(request: Request, call_next: Any) -> Any:
     """Attach a request id to every request and echo it on the response.
 
     Reads ``X-Request-ID`` from the request (generates one if absent) and
-    echoes it on the response. Error envelope conversion is done by the
-    exception handlers below so dependencies and validation errors are
-    also wrapped consistently.
+    echoes it on the response. Also sets the request-scoped context vars
+    (``request_id``, ``caller``) so the logging filter can inject them
+    into every log record automatically.
+
+    Error envelope conversion is done by the exception handlers below so
+    dependencies and validation errors are also wrapped consistently.
+
+    Context vars are cleared in the ``finally`` block to prevent leakage
+    across requests (particularly important when the agent's subagent
+    tasks outlive the HTTP request).
     """
     request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
     request.state.request_id = request_id
+    set_request_context(request_id=request_id)
     try:
         response = await call_next(request)
     except Exception as exc:  # noqa: BLE001
@@ -249,6 +309,8 @@ async def request_id_middleware(request: Request, call_next: Any) -> Any:
             request_id=request_id,
             status_code=500,
         )
+    finally:
+        clear_request_context()
     response.headers["X-Request-ID"] = request_id
     return response
 
@@ -437,12 +499,29 @@ def _build_invocation(
 
 
 @app.get("/health", response_model=HealthResponse)
-async def health() -> HealthResponse:
-    """Liveness check."""
+@limiter.limit(_RATE_LIMIT_HEALTH)
+async def health(request: Request) -> HealthResponse:
+    """Liveness check (standard endpoint)."""
     return HealthResponse(status="ok")
 
 
+@app.get("/ok", include_in_schema=False)
+@limiter.exempt
+async def ok(request: Request) -> dict[str, bool]:
+    """Minimal health check compatible with LangGraph Platform's /ok contract.
+
+    Returns ``{"ok": true}`` without any auth requirement, rate limiting, or
+    response-model serialization. Probes (load balancers, Kubernetes, Docker
+    HEALTHCHECK) can use this endpoint without an API key.
+
+    The response shape matches what ``langgraph build`` images serve at /ok,
+    making this suitable for the LangSmith standalone server deployment flow.
+    """
+    return {"ok": True}
+
+
 @app.post("/v1/chat", response_model=ChatResponse)
+@limiter.limit(_RATE_LIMIT_CHAT)
 async def chat(
     payload: ChatRequest,
     request: Request,
@@ -461,6 +540,7 @@ async def chat(
 
 
 @app.post("/v1/chat/stream")
+@limiter.limit(_RATE_LIMIT_CHAT)
 async def chat_stream(
     payload: ChatRequest,
     request: Request,

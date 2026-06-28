@@ -407,6 +407,82 @@
           "max": 100
         }
       }
+    },
+    {
+      "title": "Circuit Breaker: Opens & Blocks",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 28 },
+      "id": 12,
+      "targets": [
+        {
+          "expr": "rate(circuit_breaker_opens_total{job='ossia'}[5m])",
+          "legendFormat": "opens ({{tool}})"
+        },
+        {
+          "expr": "rate(circuit_breaker_blocks_total{job='ossia'}[5m])",
+          "legendFormat": "blocks ({{tool}})"
+        }
+      ],
+      "options": {
+        "legend": {
+          "calcs": ["max", "mean"],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "lineInterpolation": "smooth",
+            "spanNulls": true,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "title": "Circuit Breaker: Probe Success Rate",
+      "type": "stat",
+      "gridPos": { "h": 3, "w": 4, "x": 12, "y": 28 },
+      "id": 13,
+      "targets": [
+        {
+          "expr": "rate(circuit_breaker_probe_successes_total[5m]) / (rate(circuit_breaker_probes_total[5m]) + 1) * 100",
+          "legendFormat": "probe success %"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 50 },
+              { "color": "green", "value": 95 }
+            ]
+          },
+          "min": 0,
+          "max": 100
+        }
+      }
     }
   ]
 }

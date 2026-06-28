@@ -189,6 +189,37 @@ metrics: ## Prometheus metrics query (requires monitoring stack running)
 	@curl -s http://localhost:9090/api/v1/query?query=up | $(PYTHON) -m json.tool
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Deployment — production operations
+# ──────────────────────────────────────────────────────────────────────────────
+
+.PHONY: deploy-up deploy-down deploy-logs deploy-ps deploy-restart deploy-status
+
+deploy-up: ## Start the production stack (ossia + postgres + caddy, no monitoring)
+	$(COMPOSE) up -d --build
+	@echo ""
+	@echo "Deployment started. Check status with:"
+	@echo "  make deploy-ps"
+	@echo "  curl http://localhost:80/ok"
+
+deploy-down: ## Stop the production stack
+	$(COMPOSE) down
+
+deploy-logs: ## Tail production logs
+	$(COMPOSE) logs -f
+
+deploy-ps: ## List production containers and their health
+	$(COMPOSE) ps
+
+deploy-restart: ## Restart a specific service, e.g. make deploy-restart svc=ossia
+	$(COMPOSE) restart $(svc)
+
+deploy-status: ## Quick health check of all services
+	@echo "=== OSSIA health check ==="
+	@curl -sf http://localhost:80/ok && echo "  ossia: OK" || echo "  ossia: DOWN"
+	@echo "=== Docker status ==="
+	$(COMPOSE) ps --services --filter "status=running"
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Quality & audit
 # ──────────────────────────────────────────────────────────────────────────────
 

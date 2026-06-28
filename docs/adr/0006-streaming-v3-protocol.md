@@ -6,6 +6,122 @@
 
 ## Context
 
+```mermaid
+flowchart TB
+    subgraph Input["📥 DeepAgent v3 Stream"]
+        direction LR
+        MS["stream.messages<br/><i>coordinator text</i>"]
+        TC["stream.tool_calls<br/><i>tool lifecycle</i>"]
+        SA["stream.subagents<br/><i>subagent lifecycle</i>"]
+        VL["stream.values<br/><i>state updates</i>"]
+    end
+
+    subgraph Normalizer["🔄 EventNormalizer"]
+        direction TB
+        Q["asyncio.Queue<br/><i>shared event queue</i>"]
+
+        RM["_relay_messages<br/><i>→ message_started/delta/completed</i>"]
+        RT["_relay_tool_calls<br/><i>→ tool_started/progress/completed/failed<br/>detects pipeline orchestrator tools</i>"]
+        RS["_relay_subagents<br/><i>→ subagent_spawned/completed/failed<br/>annotates pipeline step events</i>"]
+        RV["_relay_values<br/><i>→ async_task_started/updated/completed</i>"]
+        RA["_relay_artifacts<br/><i>→ artifact_received</i>"]
+
+        RM -->|put events| Q
+        RT -->|put events| Q
+        RS -->|put events| Q
+        RV -->|put events| Q
+        RA -->|put events| Q
+
+        MAIN["normalize()<br/><i>→ consumes queue → yields OssiaEvent<br/>→ emits interrupt + complete at end</i>"]
+        Q --> MAIN
+    end
+
+    subgraph Events["📦 OssiaEvent Stream"]
+        direction LR
+        MSG["message_*<br/><i>coordinator tokens</i>"]
+        SUB["subagent_*<br/><i>subagent lifecycle</i>"]
+        TOL["tool_*<br/><i>tool call lifecycle</i>"]
+        PL["pipeline_*<br/><i>pipeline orchestration</i>"]
+        AT["async_task_*<br/><i>background tasks</i>"]
+        ART["artifact_*<br/><i>multimodal artifacts</i>"]
+        SYS["interrupt / complete / error"]
+    end
+
+    subgraph Output["📤 Serialization & Storage"]
+        direction LR
+        SSE["serialize_sse()<br/><i>→ SSE text/event-stream</i>"]
+        BUF["ThreadEventBuffer<br/><i>→ GET /v1/threads/{id}/events<br/>bounded at 10K events/thread</i>"]
+        JSON["serialize_json()<br/><i>→ standalone JSON</i>"]
+    end
+
+    MS --> RM
+    TC --> RT
+    SA --> RS
+    VL --> RV
+
+    MAIN --> MSG
+    MAIN --> SUB
+    MAIN --> TOL
+    MAIN --> PL
+    MAIN --> AT
+    MAIN --> ART
+    MAIN --> SYS
+
+    MSG --> SSE
+    SUB --> SSE
+    TOL --> SSE
+    PL --> SSE
+    AT --> SSE
+    ART --> SSE
+    SYS --> SSE
+
+    MSG --> BUF
+    SUB --> BUF
+    TOL --> BUF
+    PL --> BUF
+    AT --> BUF
+    ART --> BUF
+    SYS --> BUF
+
+    MSG --> JSON
+    SUB --> JSON
+    TOL --> JSON
+    PL --> JSON
+    AT --> JSON
+    ART --> JSON
+    SYS --> JSON
+
+    style MS fill:#1a1a2e,stroke:#0f3460,stroke-width:2px,color:#fff
+    style TC fill:#1a1a2e,stroke:#0f3460,stroke-width:2px,color:#fff
+    style SA fill:#1a1a2e,stroke:#0f3460,stroke-width:2px,color:#fff
+    style VL fill:#1a1a2e,stroke:#0f3460,stroke-width:2px,color:#fff
+
+    style RM fill:#1a1a2e,stroke:#e94560,stroke-width:2px,color:#fff
+    style RT fill:#1a1a2e,stroke:#e94560,stroke-width:2px,color:#fff
+    style RS fill:#1a1a2e,stroke:#e94560,stroke-width:2px,color:#fff
+    style RV fill:#1a1a2e,stroke:#e94560,stroke-width:2px,color:#fff
+    style RA fill:#1a1a2e,stroke:#e94560,stroke-width:2px,color:#fff
+    style Q fill:#1a1a2e,stroke:#533483,stroke-width:2px,color:#fff
+    style MAIN fill:#1a1a2e,stroke:#e94560,stroke-width:2px,color:#fff
+
+    style MSG fill:#1a1a2e,stroke:#0f3460,stroke-width:2px,color:#fff
+    style SUB fill:#1a1a2e,stroke:#533483,stroke-width:2px,color:#fff
+    style TOL fill:#1a1a2e,stroke:#16213e,stroke-width:2px,color:#fff
+    style PL fill:#1a1a2e,stroke:#e94560,stroke-width:2px,color:#fff
+    style AT fill:#1a1a2e,stroke:#0f3460,stroke-width:2px,color:#fff
+    style ART fill:#1a1a2e,stroke:#533483,stroke-width:2px,color:#fff
+    style SYS fill:#1a1a2e,stroke:#e94560,stroke-width:2px,color:#fff
+
+    style SSE fill:#1a1a2e,stroke:#16213e,stroke-width:2px,color:#fff
+    style BUF fill:#1a1a2e,stroke:#0f3460,stroke-width:2px,color:#fff
+    style JSON fill:#1a1a2e,stroke:#16213e,stroke-width:2px,color:#fff
+
+    style Input fill:#0d0d1a,stroke:#0f3460,stroke-width:1px,color:#888
+    style Normalizer fill:#0d0d1a,stroke:#e94560,stroke-width:1px,color:#888
+    style Events fill:#0d0d1a,stroke:#533483,stroke-width:1px,color:#888
+    style Output fill:#0d0d1a,stroke:#16213e,stroke-width:1px,color:#888
+```
+
 The first cut of `POST /v1/chat/stream` (ADR-0004) used the v2 protocol: `agent.astream_events(input, config, version="v2")` returns a flat async stream of `{event, name, data}` dicts that clients narrow by `event` (e.g. `on_chat_model_stream`, `on_tool_start`, `on_tool_end`).
 
 langgraph 1.x ships a v3 protocol (`astream_events(..., version="v3")`) that returns a typed projection object with `.messages`, `.values`, `.subagents`, `.tool_calls`, `.output`, `.interrupted`, `.interrupts`. The consumer drives the run by iterating typed projections rather than receiving a stream of opaque events.

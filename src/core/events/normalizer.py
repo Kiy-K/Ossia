@@ -30,10 +30,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from collections.abc import AsyncGenerator
 from typing import Any
-
-import uuid
 
 from core.events.types import (
     OssiaEvent,
@@ -185,7 +184,7 @@ class EventNormalizer:
     # ── Message relay ────────────────────────────────────────────────────────
 
     async def _relay_messages(
-        self, stream: Any, queue: "asyncio.Queue[OssiaEvent | None]"
+        self, stream: Any, queue: asyncio.Queue[OssiaEvent | None]
     ) -> None:
         """Convert ``stream.messages`` to ``message_started/delta/completed``.
 
@@ -245,7 +244,7 @@ class EventNormalizer:
     # ── Tool call relay ──────────────────────────────────────────────────────
 
     async def _relay_tool_calls(
-        self, stream: Any, queue: "asyncio.Queue[OssiaEvent | None]"
+        self, stream: Any, queue: asyncio.Queue[OssiaEvent | None]
     ) -> None:
         """Convert ``stream.tool_calls`` to ``tool_started/progress/completed/failed``.
 
@@ -339,7 +338,7 @@ class EventNormalizer:
         return f"coordinator.{'.'.join(parts)}"
 
     async def _relay_subagents(
-        self, stream: Any, queue: "asyncio.Queue[OssiaEvent | None]"
+        self, stream: Any, queue: asyncio.Queue[OssiaEvent | None]
     ) -> None:
         """Convert ``stream.subagents`` to ``subagent_spawned/*/completed/failed``,
         annotating pipeline lifecycle events when ``self._active_pipeline`` is set.
@@ -467,7 +466,7 @@ class EventNormalizer:
     # ── Value / async task relay ─────────────────────────────────────────────
 
     async def _relay_values(
-        self, stream: Any, queue: "asyncio.Queue[OssiaEvent | None]"
+        self, stream: Any, queue: asyncio.Queue[OssiaEvent | None]
     ) -> None:
         """Extract async task events from ``stream.values``.
 
@@ -534,7 +533,7 @@ class EventNormalizer:
     # ── Artifact relay ───────────────────────────────────────────────────────
 
     async def _relay_artifacts(
-        self, artifacts: list[Any], queue: "asyncio.Queue[OssiaEvent | None]"
+        self, artifacts: list[Any], queue: asyncio.Queue[OssiaEvent | None]
     ) -> None:
         """Emit initial ``artifact_received`` events for request artifacts.
 

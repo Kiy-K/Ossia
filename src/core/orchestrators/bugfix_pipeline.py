@@ -69,8 +69,11 @@ def get_bugfix_pipeline_js(issue_description: str) -> str:
         description interpolated and schema constants prepended.
     """
     from core.orchestrators.schemas import (
-        BugReport, PatchProposal, TestResult,
-        pydantic_to_js_response_schema, serialize_schema_js,
+        BugReport,
+        PatchProposal,
+        TestResult,
+        pydantic_to_js_response_schema,
+        serialize_schema_js,
     )
     escaped = issue_description.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
     js = BUGFIX_PIPELINE_JS.replace("ISSUE_DESCRIPTION", escaped)

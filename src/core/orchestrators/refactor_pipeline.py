@@ -84,8 +84,12 @@ def get_refactor_pipeline_js(target: str, goal: str) -> str:
         interpolated and schema constants prepended.
     """
     from core.orchestrators.schemas import (
-        RefactorPlan, RefactorResearchResult, PatchSet, ValidationResult,
-        pydantic_to_js_response_schema, serialize_schema_js,
+        PatchSet,
+        RefactorPlan,
+        RefactorResearchResult,
+        ValidationResult,
+        pydantic_to_js_response_schema,
+        serialize_schema_js,
     )
     escaped_target = target.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
     escaped_goal = goal.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")

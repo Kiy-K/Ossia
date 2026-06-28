@@ -16,13 +16,16 @@ from psycopg.rows import dict_row
 
 from core.config import Settings, get_settings
 
-AGENT_NAMESPACE: tuple[str, ...] = ("ossia",)
+AGENT_NAMESPACE: tuple[str, ...] = ("ossia", "default")
 """Default agent-scoped memory namespace.
 
-Single-tenant agent identity: every conversation shares the same memory
-files. Per the docs' ``agent-scoped memory`` pattern. We do NOT use
-``(user_id,)`` scoping here (no per-user isolation); add a separate
-``(user_id,)`` StoreBackend route if per-user memory is needed.
+Single-tenant fallback used when no caller context is available (e.g.,
+tests, one-off scripts). In production the ``_make_backend`` namespace
+factory prepends the ``user_id`` (caller hash) to create a per-user
+namespace like ``("ossia", "abc123def456")`` so memory files never bleed
+between authenticated callers.
+
+See :func:`agent._make_memory_namespace` for the production path.
 """
 
 AGENTS_MEMORY_KEY: str = "/memories/AGENTS.md"

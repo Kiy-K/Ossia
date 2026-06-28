@@ -97,9 +97,139 @@ class Settings(BaseSettings):
         le=10,
         description="Hard cap on response revision loops before forcing finalization.",
     )
+    tool_call_limit: int = Field(
+        default=25,
+        ge=1,
+        le=200,
+        description=(
+            "Maximum total tool calls per agent run before forcing "
+            "finalization. Prevents runaway agents that spin on external I/O."
+        ),
+    )
     enable_human_review: bool = Field(
         default=True,
         description="Pause for human approval before sending responses.",
+    )
+
+    # Retry tool middleware
+    retry_max_attempts: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description=(
+            "Maximum number of retry attempts for external tool calls. "
+            "Tools in _EXTERNAL_TOOLS are retried this many times with "
+            "exponential backoff before giving up."
+        ),
+    )
+    retry_initial_interval: float = Field(
+        default=1.0,
+        ge=0.1,
+        le=60.0,
+        description=(
+            "Base delay in seconds between retry attempts. Multiplied by "
+            "backoff_factor after each failure."
+        ),
+    )
+    retry_backoff_factor: float = Field(
+        default=2.0,
+        ge=1.0,
+        le=10.0,
+        description=(
+            "Multiplier applied to the retry delay after each consecutive "
+            "failure. 2.0 = double the wait each time."
+        ),
+    )
+
+    # Code interpreter (QuickJS sandbox)
+    code_interpreter_timeout: float = Field(
+        default=5.0,
+        ge=0.5,
+        le=60.0,
+        description=(
+            "Maximum seconds allowed for a single Code Interpreter (QuickJS) "
+            "execution. Longer scripts are terminated."
+        ),
+    )
+    code_interpreter_max_ptc_calls: int = Field(
+        default=32,
+        ge=1,
+        le=200,
+        description=(
+            "Maximum number of PTC (permit-to-call) tool invocations a Code "
+            "Interpreter script may make. Prevents runaway script loops."
+        ),
+    )
+
+    # Model retry middleware
+    model_retry_max_attempts: int = Field(
+        default=2,
+        ge=1,
+        le=10,
+        description=(
+            "Maximum number of retry attempts for transient LLM provider "
+            "failures (rate limits, timeouts, server errors). "
+            "ModelRetryMiddleware retries this many times before giving up."
+        ),
+    )
+    model_retry_initial_interval: float = Field(
+        default=0.5,
+        ge=0.1,
+        le=30.0,
+        description=(
+            "Base delay in seconds between model retry attempts. "
+            "Multiplied by backoff_factor after each failure."
+        ),
+    )
+    model_retry_backoff_factor: float = Field(
+        default=2.0,
+        ge=1.0,
+        le=10.0,
+        description=(
+            "Multiplier applied to the model retry delay after each "
+            "consecutive failure. 2.0 = double the wait each time."
+        ),
+    )
+
+    # Model fallback middleware
+    fallback_provider: Provider | None = Field(
+        default=None,
+        description=(
+            "Provider for the fallback model when the primary model call "
+            "fails with a transient error. Set alongside fallback_model "
+            "to enable ModelFallbackMiddleware. If unset the fallback is "
+            "not wired."
+        ),
+    )
+    fallback_model: str | None = Field(
+        default=None,
+        description=(
+            "Model identifier for the fallback LLM. When set (alongside "
+            "fallback_provider), ModelFallbackMiddleware is wired to "
+            "switch to this model on transient provider failures."
+        ),
+    )
+
+    # Circuit breaker
+    circuit_breaker_failure_threshold: int = Field(
+        default=3,
+        ge=1,
+        le=20,
+        description=(
+            "Consecutive failures before the circuit breaker opens. "
+            "After this many failures on an external tool, subsequent "
+            "calls fail fast instead of attempting the call."
+        ),
+    )
+    circuit_breaker_recovery_timeout: float = Field(
+        default=30.0,
+        ge=1.0,
+        le=300.0,
+        description=(
+            "Seconds to wait before the circuit breaker attempts a probe. "
+            "After a circuit opens, the first call after this timeout is "
+            "allowed as a probe to test whether the service has recovered."
+        ),
     )
 
     # MCP servers

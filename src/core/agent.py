@@ -29,8 +29,13 @@ from core.memory import (
     seed_memory,
 )
 from core.middleware import (
+    CircuitBreakerMiddleware,
+    ModelFallbackMiddleware,
+    ModelRetryMiddleware,
+    PIIRedactionMiddleware,
     RetryToolMiddleware,
     RevisionLoopCapMiddleware,
+    ToolCallLimitMiddleware,
     make_caller_context_middleware,
 )
 from core.orchestrators.tools import (
@@ -38,6 +43,7 @@ from core.orchestrators.tools import (
     run_bugfix_pipeline,
     run_refactor_pipeline,
 )
+from core.request_context import caller_var
 from core.tools import (
     create_pr,
     fetch_issue,
@@ -378,19 +384,59 @@ def _build_async_subagents(settings: Settings) -> list[AsyncSubAgent]:
 
 def _build_middlewares(settings: Settings) -> list[Any]:
     middlewares: list[Any] = [
-        RetryToolMiddleware(max_attempts=3, initial_interval=1.0, backoff_factor=2.0, jitter=True),
+        # PII redaction runs first so sensitive data is stripped before
+        # any tool executes and before retries, circuit breakers, or
+        # revision caps evaluate.
+        PIIRedactionMiddleware(),
+        # Model retry handles transient LLM provider failures (rate limits,
+        # timeouts) before the call reaches any tool. Placed early so
+        # retries don't exhaust tool-call budgets.
+        ModelRetryMiddleware(
+            max_attempts=settings.model_retry_max_attempts,
+            initial_interval=settings.model_retry_initial_interval,
+            backoff_factor=settings.model_retry_backoff_factor,
+        ),
+        # Model fallback switches to a secondary model when the primary
+        # provider is degraded. Only wired when a fallback model is configured.
+        ModelFallbackMiddleware(
+            fallback_model=create_chat_model(Settings(
+                provider=settings.fallback_provider,
+                model=settings.fallback_model,
+                openrouter_api_key=settings.openrouter_api_key,
+                openai_api_key=settings.openai_api_key,
+                anthropic_api_key=settings.anthropic_api_key,
+                google_api_key=settings.google_api_key,
+            ))
+        ) if settings.fallback_model else None,
+        # Circuit breaker opens when an external service repeatedly fails,
+        # preventing retries from hammering a downed service. Placed before
+        # RetryToolMiddleware so the breaker fails fast instead of exhausting
+        # retries on a definitely-down backend.
+        CircuitBreakerMiddleware(
+            failure_threshold=settings.circuit_breaker_failure_threshold,
+            recovery_timeout=settings.circuit_breaker_recovery_timeout,
+        ),
+        RetryToolMiddleware(
+            max_attempts=settings.retry_max_attempts,
+            initial_interval=settings.retry_initial_interval,
+            backoff_factor=settings.retry_backoff_factor,
+            jitter=True,
+        ),
         RevisionLoopCapMiddleware(max_loops=settings.max_revision_loops),
+        ToolCallLimitMiddleware(max_calls=settings.tool_call_limit),
         CodeInterpreterMiddleware(
             ptc=[
                 "search_codebase",
                 "read_file",
                 "recall_thread_turns",
             ],
-            timeout=5.0,
-            max_ptc_calls=32,
+            timeout=settings.code_interpreter_timeout,
+            max_ptc_calls=settings.code_interpreter_max_ptc_calls,
             mode="thread",
         ),
     ]
+    # Filter out None entries so an unconfigured fallback doesn't break the list.
+    middlewares = [mw for mw in middlewares if mw is not None]
     if settings.enable_async_subagents:
         try:
             async_subagents = _build_async_subagents(settings)
@@ -413,28 +459,68 @@ def _interrupt_config(settings: Settings, checkpointer: Any | None) -> dict[str,
     return {"send_response": True}
 
 
+# Tool groups for subagent permission scoping.
+# Read-only tools that inspect but never mutate state.
+_READ_ONLY_TOOLS: list[BaseTool] = [search_codebase, search_knowledge_base]
+# Tools that test-runner subagents may also use.
+_TEST_TOOLS: list[BaseTool] = [*_READ_ONLY_TOOLS, run_tests]
+
+# Subagent permission tiers: maps subagent name -> allowed tools.
+_SUBAGENT_TOOL_MAP: dict[str, list[BaseTool]] = {
+    "code-researcher": _READ_ONLY_TOOLS,
+    "bug-diagnostician": _READ_ONLY_TOOLS,
+    "fix-proposer": _READ_ONLY_TOOLS,
+    "test-runner": _TEST_TOOLS,
+    "ui-debugger": _READ_ONLY_TOOLS,
+    "diagram-analyzer": _READ_ONLY_TOOLS,
+    "visual-regression-reviewer": _READ_ONLY_TOOLS,
+}
+
+
 def _build_subagents(model: BaseChatModel) -> list[dict[str, Any]]:
     return [
         {
             "name": name,
             "description": description,
             "system_prompt": prompt,
-            "tools": [search_codebase, search_knowledge_base],
+            "tools": _SUBAGENT_TOOL_MAP.get(name, _READ_ONLY_TOOLS),
             "model": model,
         }
         for name, description, prompt in _DEV_CONCIERGE_SUBAGENTS
     ]
 
 
+def _make_memory_namespace(base: tuple[str, ...] = AGENT_NAMESPACE) -> tuple[str, ...]:
+    """Build a per-user memory namespace from the current caller context.
+
+    Reads the authenticated ``caller`` hash from the context var (set by
+    ``verify_api_key`` in ``api.py``) and prepends it to the base namespace.
+    This ensures memory files are scoped per authenticated caller and never
+    bleed between users.
+
+    When the caller hash is unavailable (tests, one-off scripts), falls back
+    to the base namespace (``("ossia", "default")``).
+
+    Returns:
+        A namespace tuple like ``("ossia", "abc123def456")`` or
+        ``("ossia", "default")`` when no caller is available.
+    """
+    caller = caller_var.get()
+    if caller:
+        return (base[0], caller)
+    return base
+
+
 def _make_backend(
     store: BaseStore,
     namespace: tuple[str, ...] = AGENT_NAMESPACE,
 ) -> CompositeBackend:
-    """Build the filesystem backend with agent-scoped memory wired in.
+    """Build the filesystem backend with per-user memory isolation.
 
     Filesystem under ``/memories/`` is backed by the LangGraph store
-    namespaced to ``namespace`` (default: agent-scoped identity
-    ``("ossia",)``). All other paths use the in-process StateBackend.
+    namespaced via :func:`_make_memory_namespace`, which includes the
+    authenticated caller's hash so memory never bleeds between users.
+    All other paths use the in-process StateBackend.
     The store is injected directly into ``StoreBackend`` so writes do
     not depend on runtime context resolution.
     """
@@ -443,7 +529,7 @@ def _make_backend(
         routes={
             "/memories/": StoreBackend(
                 store=store,
-                namespace=lambda rt, _ns=namespace: _ns,
+                namespace=lambda rt, _ns=namespace: _make_memory_namespace(_ns),
             ),
         },
     )

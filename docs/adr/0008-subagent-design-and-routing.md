@@ -6,6 +6,60 @@
 
 ## Context
 
+```mermaid
+flowchart TB
+    subgraph Coordinator["🎯 Coordinator Agent"]
+        direction LR
+        CO["Main Agent<br/><i>routes tasks based on intent</i>"]
+    end
+
+    subgraph Custom["🔧 Custom Subagents"]
+        direction TB
+        CR["code-researcher<br/><i>research code & docs find answers</i>"]
+        BD["bug-diagnostician<br/><i>diagnose bugs from traces & logs</i>"]
+        FP["fix-proposer<br/><i>design & propose fixes</i>"]
+        TR["test-runner<br/><i>run tests & report results</i>"]
+    end
+
+    subgraph Fallback["⬇️ Default Fallback"]
+        GP["general-purpose<br/><i>auto-added by Deep Agents<br/>inherits main-agent skills</i>"]
+    end
+
+    subgraph Permissions["🔒 Permission Tiers"]
+        direction LR
+        RO["Read-Only Tools<br/><i>search_codebase<br/>search_knowledge_base</i>"]
+        TEST["Test Tools<br/><i>search_codebase<br/>search_knowledge_base<br/>run_tests</i>"]
+        FULL["Full Tool Set<br/><i>all tools including<br/>create_pr, pipelines</i>"]
+    end
+
+    CO -->|"context quarantine"| CR
+    CO -->|"bug diagnosis"| BD
+    CO -->|"fix proposal"| FP
+    CO -->|"run tests"| TR
+    CO -->|"unmatched intent"| GP
+
+    CR -.-> RO
+    BD -.-> RO
+    FP -.-> RO
+    TR -.-> TEST
+    GP -.-> FULL
+
+    style CO fill:#1a1a2e,stroke:#e94560,stroke-width:2px,color:#fff
+    style CR fill:#1a1a2e,stroke:#0f3460,stroke-width:2px,color:#fff
+    style BD fill:#1a1a2e,stroke:#0f3460,stroke-width:2px,color:#fff
+    style FP fill:#1a1a2e,stroke:#0f3460,stroke-width:2px,color:#fff
+    style TR fill:#1a1a2e,stroke:#533483,stroke-width:2px,color:#fff
+    style GP fill:#1a1a2e,stroke:#16213e,stroke-width:2px,color:#fff
+    style RO fill:#0d0d1a,stroke:#0f3460,stroke-width:1px,color:#888
+    style TEST fill:#0d0d1a,stroke:#533483,stroke-width:1px,color:#888
+    style FULL fill:#0d0d1a,stroke:#16213e,stroke-width:1px,color:#888
+
+    style Coordinator fill:#0d0d1a,stroke:#e94560,stroke-width:1px,color:#888
+    style Custom fill:#0d0d1a,stroke:#0f3460,stroke-width:1px,color:#888
+    style Fallback fill:#0d0d1a,stroke:#16213e,stroke-width:1px,color:#888
+    style Permissions fill:#0d0d1a,stroke:#533483,stroke-width:1px,color:#888
+```
+
 The Deep Agents subagent docs distinguish between "context
 quarantine" (delegate to a subagent to keep the coordinator's
 context clean) and "specialized behavior" (give a subagent custom

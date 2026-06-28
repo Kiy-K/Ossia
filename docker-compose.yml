@@ -22,8 +22,6 @@
 #   docker compose --profile monitoring up -d
 #   # Then open http://localhost:3000 (admin/ossia) for Grafana
 
-version: "3.9"
-
 x-ossia-env: &ossia-env
   # Required
   OSSIA_API_KEY: ${OSSIA_API_KEY:?OSSIA_API_KEY is required}

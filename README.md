@@ -26,56 +26,80 @@ Think of Ossia as a **digital teammate**: it can research your codebase, diagnos
 
 ## Architecture
 
+```mermaid
+flowchart TB
+    Client["🌐 Client<br/><i>TUI / curl / app</i>"]
+    Proxy["🚀 Reverse Proxy<br/><i>Caddy / Nginx</i>"]
+    API["⚙️ FastAPI Server<br/><i>POST /v1/chat<br/>POST /v1/chat/stream<br/>GET /v1/tools<br/>GET /v1/threads/*<br/>POST /v1/resume<br/>GET /v1/audit<br/>GET /metrics</i>"]
+    MW["🔒 Middleware Stack<br/><i>10 layers: PII → Model Retry →<br/>Circuit Breaker → Tool Retry →<br/>Revision Cap → Tool Limit →<br/>Code Interpreter → Subagents →<br/>Caller Context</i>"]
+    LLM["🤖 LLM Provider<br/><i>OpenRouter / OpenAI /<br/>Anthropic / Google</i>"]
+    COORD["🎯 Coordinator Agent"]
+    SUB["🔧 Subagents<br/><i>code-researcher<br/>bug-diagnostician<br/>fix-proposer<br/>test-runner</i>"]
+    ASYNC["⏳ Async Subagents<br/><i>researcher / tester / auditor</i>"]
+    PIPE["🏗️ Pipelines<br/><i>bugfix / audit / refactor</i>"]
+    TOOLS["🛠️ Tools<br/><i>search_codebase<br/>internet_search<br/>run_tests<br/>grade_response<br/>send_response</i>"]
+    NORM["🔄 EventNormalizer<br/><i>4 concurrent relays →<br/>asyncio.Queue → OssiaEvent</i>"]
+    SSE["📤 SSE Stream"]
+    BUF["💾 Thread Event Buffer<br/><i>GET /threads/{id}/events</i>"]
+    POSTGRES["🗄️ Postgres<br/><i>checkpointing / memory</i>"]
+
+    Client -->|HTTPS :443| Proxy
+    Proxy -->|HTTP :8000| API
+    API --> MW
+    MW --> LLM
+    LLM -->|response| COORD
+    COORD -->|delegate| SUB
+    COORD -->|delegate| ASYNC
+    COORD -->|orchestrate| PIPE
+    COORD -->|call| TOOLS
+    TOOLS -.->|persist| POSTGRES
+    COORD -->|v3 stream| NORM
+    SUB -.->|v3 stream| NORM
+    NORM --> SSE
+    NORM --> BUF
+
+    style Client fill:#1a1a2e,stroke:#e94560,stroke-width:2px,color:#fff
+    style Proxy fill:#1a1a2e,stroke:#0f3460,stroke-width:2px,color:#fff
+    style API fill:#1a1a2e,stroke:#e94560,stroke-width:2px,color:#fff
+    style MW fill:#1a1a2e,stroke:#533483,stroke-width:2px,color:#fff
+    style LLM fill:#1a1a2e,stroke:#0f3460,stroke-width:2px,color:#fff
+    style COORD fill:#1a1a2e,stroke:#e94560,stroke-width:2px,color:#fff
+    style SUB fill:#1a1a2e,stroke:#0f3460,stroke-width:2px,color:#fff
+    style ASYNC fill:#1a1a2e,stroke:#0f3460,stroke-width:2px,color:#fff
+    style PIPE fill:#1a1a2e,stroke:#533483,stroke-width:2px,color:#fff
+    style TOOLS fill:#1a1a2e,stroke:#16213e,stroke-width:2px,color:#fff
+    style NORM fill:#1a1a2e,stroke:#e94560,stroke-width:2px,color:#fff
+    style SSE fill:#1a1a2e,stroke:#16213e,stroke-width:2px,color:#fff
+    style BUF fill:#1a1a2e,stroke:#0f3460,stroke-width:2px,color:#fff
+    style POSTGRES fill:#1a1a2e,stroke:#533483,stroke-width:2px,color:#fff
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    Client (TUI / curl / app)             │
-└─────────────┬───────────────────────────────────────────┘
-              │  SSE / JSON / REST
-              ▼
-┌─────────────────────────────────────────────────────────┐
-│               Reverse Proxy (Caddy / Nginx)              │
-│    SSL termination · security headers · access logs      │
-└─────────────┬───────────────────────────────────────────┘
-              │  Internal HTTP on port 8000
-              ▼
-┌─────────────────────────────────────────────────────────┐
-│               Unified HTTP API (FastAPI)                 │
-│  POST /v1/chat  POST /v1/chat/stream  GET /v1/tools     │
-│  GET /v1/threads/{id}/state|history|events              │
-│  DELETE /v1/threads/{id}/events                          │
-│  POST /v1/threads/{id}/resume  POST /v1/eval             │
-│  GET /v1/audit  GET /metrics                             │
-└─────────────┬───────────────────────────────────────────┘
-              │  astream_events(version="v3")
-              ▼
-┌─────────────────────────────────────────────────────────┐
-│                   Deep Agent Runtime                     │
-│                                                          │
-│  Coordinator ─┬─ code-researcher                         │
-│               ├─ bug-diagnostician                       │
-│               ├─ fix-proposer                            │
-│               ├─ test-runner                             │
-│               ├─ async subagents (researcher/tester/auditor)│
-│               └─ programmatic pipelines                  │
-│                    (bugfix / audit / refactor)            │
-│                                                          │
-│  Tools: search_codebase, internet_search, fetch_url,     │
-│         run_tests, grade_response, send_response, ...    │
-└─────────────┬───────────────────────────────────────────┘
-              │
-              ▼
-┌─────────────────────────────────────────────────────────┐
-│              Event Normalizer (real-time merge)          │
-│                                                          │
-│  messages ──┐                                            │
-│  tool_calls ─┤  asyncio.Queue                            │
-│  subagents ──┤  ───▶ OssiaEvent stream ──▶ SSE           │
-│  values ────┘                                            │
-│  artifacts ──────────────────────────────────────────┘  │
-│                                                          │
-│  Thread Event Buffer ──▶ GET /events (replay)           │
-└─────────────────────────────────────────────────────────┘
-```
+
+> 📊 **Architecture diagrams** — See [`docs/diagrams.md`](docs/diagrams.md) for detailed visualizations of every subsystem, including the middleware stack, subagent routing, request flow, event pipeline, and deployment topology.
+
+### Subsystems at a glance
+
+Ossia's architecture is composed of six interconnected subsystems, each documented in its own Architecture Decision Record (ADR) with detailed Mermaid diagrams:
+
+| Subsystem | ADR | What it does | Key diagram |
+|-----------|-----|-------------|-------------|
+| **API Gateway** | [ADR-0014](docs/adr/0014-standalone-deployment.md) | FastAPI server, auth (Argon2), rate limiting, `/v1/*` routes | [Deployment topology](docs/diagrams.md#5-deployment-topology) |
+| **Middleware Stack** | [ADR-0013](docs/adr/0013-production-readiness-middleware-stack.md) | 10-layer defense-in-depth: PII → model retry/fallback → circuit breaker → tool retry → caps → runtime | [Stack order](docs/diagrams.md#2-middleware-stack) + [Request flow](docs/diagrams.md#3-request-flow-sequence) |
+| **Agent Runtime** | [ADR-0008](docs/adr/0008-subagent-design-and-routing.md) | Coordinator delegates to subagents with scoped tool permissions | [Subagent routing](docs/diagrams.md#1-subagent-routing) |
+| **Event Streaming** | [ADR-0006](docs/adr/0006-streaming-v3-protocol.md) | v3 stream → normalizer (5 concurrent relays) → typed events → SSE | [Event pipeline](docs/diagrams.md#4-event-stream-pipeline) |
+| **Memory & Persistence** | [ADR-0007](docs/adr/0007-agent-scoped-memory-and-episodic-recall.md) | Postgres + in-memory store, per-caller namespaces, thread replay buffer | [Deployment topology](docs/diagrams.md#5-deployment-topology) |
+| **Orchestrator Pipelines** | [ADR-0008](docs/adr/0008-subagent-design-and-routing.md) | bugfix/audit/refactor pipelines via code interpreter with multi-step workflows | [Subagent routing](docs/diagrams.md#1-subagent-routing) |
+
+### Request lifecycle
+
+A typical request flows through the stack as follows:
+
+1. **Client** sends a request to `POST /v1/chat` via the reverse proxy (Caddy on port 443)
+2. **FastAPI** authenticates via `X-API-Key` (Argon2 caller-id derivation), sets rate limits, injects `request_id` and `caller` context
+3. **Middleware stack** processes the request through 10 layers — PII redaction strips secrets, model retry/fallback handles provider failures, circuit breaker blocks dead services, tool retry adds backoff, revision cap and tool-call limit prevent runaway agents
+4. **Deep Agent runtime** invokes the coordinator, which may delegate to subagents or call tools
+5. **EventNormalizer** converts the v3 stream into typed events in real-time via 5 concurrent relays
+6. **Response** flows back through the middleware stack in reverse, serialized as SSE events or a JSON response
+7. **Cleanup** clears context vars, emits Prometheus metrics, stores events in the thread buffer for replay
 
 ## Quick Start
 
@@ -275,9 +299,10 @@ scripts/             # Audit, eval, OpenAPI spec generation, coverage matrix
 specs/               # OpenAPI contract, changelog, feature specs, coverage
 monitoring/          # Prometheus, Loki, Grafana configs
 docs/
-  adr/               # Architecture Decision Records (0001..0012)
+  adr/               # Architecture Decision Records (0001..0014)
   agents/            # Agent context reference
   skills/            # Loadable skill files (web-search, code-review)
+  diagrams.md        # 📊 Index of all architecture diagrams
 ```
 
 ## Deploy
