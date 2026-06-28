@@ -7,6 +7,13 @@
   <img src="https://img.shields.io/badge/coverage-87%25-brightgreen" alt="coverage">
   <img src="https://img.shields.io/badge/python-3.12-blue" alt="python">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="license">
+  <a href="#install"><img src="https://img.shields.io/badge/install-curl%20%7C%20bash-blue" alt="install"></a>
+</p>
+
+<p align="center">
+  <strong>One-command install:</strong>
+  <br>
+  <code>curl -fsSL https://raw.githubusercontent.com/Kiy-K/Ossia/master/scripts/install.sh | bash</code>
 </p>
 
 **Ossia** is a portable, model-agnostic AI support agent built on [LangChain Deep Agents](https://docs.langchain.com/oss/python/deepagents/overview). It bridges the gap between a raw LLM and a production-ready assistant — providing structured subagent delegation, human-in-the-loop approval, multimodal understanding, programmatic pipelines, and a real-time streaming event protocol.

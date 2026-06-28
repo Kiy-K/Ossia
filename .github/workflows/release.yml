@@ -1,0 +1,186 @@
+name: CI + Release
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*.*.*"]
+    paths-ignore:
+      - "docs/**"
+      - "specs/features/**"
+      - ".github/dependabot.yml"
+      - "README.md"
+      - "LICENSE"
+      - ".gitignore"
+  pull_request:
+    branches: [master]
+    paths-ignore:
+      - "docs/**"
+      - "specs/features/**"
+      - ".github/dependabot.yml"
+      - "README.md"
+      - "LICENSE"
+      - ".gitignore"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  BUN_VERSION: "latest"
+
+jobs:
+  # ── Python: Lint + Typecheck + Test ──────────────────────────────────────
+  test-python:
+    name: Python — lint / typecheck / test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          uv venv
+          uv pip install -e ".[dev]"
+
+      - name: Lint with ruff
+        run: .venv/bin/python -m ruff check src tests scripts
+
+      - name: Typecheck with mypy
+        run: .venv/bin/python -m mypy src
+
+      - name: Typecheck with pyright
+        run: .venv/bin/python -m pyright src
+
+      - name: Run Python tests
+        run: .venv/bin/python -m pytest tests/ -v --timeout=120
+        env:
+          OSSIA_API_KEY: ci-test-key
+          ENABLE_HUMAN_REVIEW: "false"
+          POSTGRES_URL: ""
+
+      - name: Check OpenAPI drift
+        run: .venv/bin/python -m pytest tests/test_openapi_drift.py -v
+        env:
+          OSSIA_API_KEY: drift-test-key
+          ENABLE_HUMAN_REVIEW: "false"
+          POSTGRES_URL: ""
+
+  # ── TUI: Typecheck + Test ────────────────────────────────────────────────
+  test-tui:
+    name: TUI — typecheck / test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install dependencies
+        working-directory: src/tui
+        run: bun install --frozen-lockfile
+
+      - name: TypeScript typecheck
+        working-directory: src/tui
+        run: bunx tsc --noEmit
+
+      - name: Run TUI tests
+        working-directory: src/tui
+        run: bun test
+
+  # ── Release (tag push only) ──────────────────────────────────────────────
+  release:
+    name: Create GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test-python, test-tui]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history for changelog generation
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+            ghcr.io/${{ github.repository }}:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          # Extract changelog section for this version from specs/changelog.md
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          if grep -q "^## v${VERSION}" specs/changelog.md 2>/dev/null; then
+            # Extract from version header to the next level-2 heading.
+            # sed addr1,/re/ checks the end pattern AFTER addr1 match,
+            # so /^## / won't match the starting line — only subsequent
+            # level-2 headings (e.g. the next version).
+            sed -n "/^## v${VERSION}/,/^## /p" specs/changelog.md \
+              | sed '$d' \
+              | sed '1s/^## /# /' \
+              > /tmp/release_notes.md
+          else
+            # Fallback: use git log since last tag
+            PREV_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo "")
+            if [ -n "$PREV_TAG" ]; then
+              echo "## Changes since $PREV_TAG" > /tmp/release_notes.md
+              echo "" >> /tmp/release_notes.md
+              git log "$PREV_TAG..HEAD" --oneline --no-decorate \
+                | sed 's/^/* /' >> /tmp/release_notes.md
+            else
+              echo "## v$VERSION" > /tmp/release_notes.md
+              echo "" >> /tmp/release_notes.md
+              echo "See changelog at specs/changelog.md" >> /tmp/release_notes.md
+            fi
+          fi
+          echo "notes<<EOF" >> "$GITHUB_OUTPUT"
+          cat /tmp/release_notes.md >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: v${{ steps.version.outputs.VERSION }}
+          body: ${{ steps.release_notes.outputs.notes }}
+          prerelease: ${{ contains(github.ref_name, 'rc') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') }}
+          generate_release_notes: false
+          files: |
+            scripts/install.sh

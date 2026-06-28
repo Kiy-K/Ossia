@@ -238,7 +238,7 @@ openapi-drift: ## Check for OpenAPI drift against the pinned spec
 # TUI (terminal UI — separate Bun project)
 # ──────────────────────────────────────────────────────────────────────────────
 
-.PHONY: tui tui-install tui-dev tui-test tui-test-watch tui-test-coverage
+.PHONY: tui tui-install tui-dev tui-test tui-test-watch tui-test-coverage ossia ossia-setup
 
 tui-install: ## Install TUI dependencies
 	cd src/tui && bun install
@@ -256,6 +256,12 @@ tui-test-watch: ## Run TUI tests in watch mode
 
 tui-test-coverage: ## Run TUI tests with coverage report
 	cd src/tui && bun test --coverage
+
+ossia-setup: install tui-install env ## One-time setup: Python deps + TUI deps + .env
+	@echo "Setup complete. Run 'make ossia' to start."
+
+ossia: ## Start backend + TUI (unified) — use --server-only or --tui-only for single-mode
+	$(PYTHON) -m core
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Cleanup
