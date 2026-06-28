@@ -13,7 +13,7 @@
 <p align="center">
   <strong>One-command install:</strong>
   <br>
-  <code>curl -fsSL https://raw.githubusercontent.com/Kiy-K/Ossia/master/scripts/install.sh | bash</code>
+  <code>curl -fsSL https://raw.githubusercontent.com/Kiy-K/Ossia/master/install.sh | bash</code>
 </p>
 
 **Ossia** is a portable, model-agnostic AI support agent built on [LangChain Deep Agents](https://docs.langchain.com/oss/python/deepagents/overview). It bridges the gap between a raw LLM and a production-ready assistant — providing structured subagent delegation, human-in-the-loop approval, multimodal understanding, programmatic pipelines, and a real-time streaming event protocol.

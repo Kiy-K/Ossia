@@ -183,4 +183,4 @@ jobs:
           prerelease: ${{ contains(github.ref_name, 'rc') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') }}
           generate_release_notes: false
           files: |
-            scripts/install.sh
+            install.sh

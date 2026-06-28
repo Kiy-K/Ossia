@@ -3,10 +3,10 @@
 # Ossia — One-command install script
 # =============================================================================
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/Kiy-K/Ossia/master/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/Kiy-K/Ossia/master/install.sh | bash
 #
 # Or from a local checkout:
-#   bash scripts/install.sh
+#   bash install.sh
 #
 # What it does:
 #   1. Checks prerequisites (git, python3 3.11+, uv/pip, bun)
