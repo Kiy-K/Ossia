@@ -80,9 +80,9 @@ describe("parseSSEStream", () => {
     const events = await collect(parseSSEStream(response));
 
     expect(events).toHaveLength(1);
-    expect(events[0].type).toBe("message_delta");
-    expect(events[0].seq).toBe(1);
-    expect(events[0].data.text).toBe("hello");
+    expect(events[0]!.type).toBe("message_delta");
+    expect(events[0]!.seq).toBe(1);
+    expect(events[0]!.data.text).toBe("hello");
   });
 
   it("parses multiple events in a single chunk", async () => {
@@ -93,9 +93,9 @@ describe("parseSSEStream", () => {
     const events = await collect(parseSSEStream(response));
 
     expect(events).toHaveLength(2);
-    expect(events[0].type).toBe("message_delta");
-    expect(events[1].type).toBe("message_completed");
-    expect(events[1].seq).toBe(2);
+    expect(events[0]!.type).toBe("message_delta");
+    expect(events[1]!.type).toBe("message_completed");
+    expect(events[1]!.seq).toBe(2);
   });
 
   it("handles a single SSE block split across two chunks", async () => {
@@ -105,7 +105,7 @@ describe("parseSSEStream", () => {
 
     const events = await collect(parseSSEStream(response));
     expect(events).toHaveLength(1);
-    expect(events[0].type).toBe("message_delta");
+    expect(events[0]!.type).toBe("message_delta");
   });
 
   it("handles multiple events split across chunks", async () => {
@@ -118,8 +118,8 @@ describe("parseSSEStream", () => {
 
     const events = await collect(parseSSEStream(response));
     expect(events).toHaveLength(2);
-    expect(events[0].type).toBe("message_delta");
-    expect(events[1].type).toBe("message_completed");
+    expect(events[0]!.type).toBe("message_delta");
+    expect(events[1]!.type).toBe("message_completed");
   });
 
   it("only parses lines starting with 'data:'", async () => {
@@ -135,7 +135,7 @@ describe("parseSSEStream", () => {
 
     const events = await collect(parseSSEStream(response));
     expect(events).toHaveLength(1);
-    expect(events[0].seq).toBe(1);
+    expect(events[0]!.seq).toBe(1);
   });
 
   it("returns nothing when the data line is missing", async () => {
@@ -171,7 +171,7 @@ describe("parseSSEStream", () => {
 
     const events = await collect(parseSSEStream(response));
     expect(events).toHaveLength(1);
-    expect(events[0].seq).toBe(1);
+    expect(events[0]!.seq).toBe(1);
   });
 
   it("uses the last data: line when multiple exist in one block", async () => {
@@ -182,7 +182,7 @@ describe("parseSSEStream", () => {
 
     const events = await collect(parseSSEStream(response));
     expect(events).toHaveLength(1);
-    expect(events[0].seq).toBe(2); // last wins
+    expect(events[0]!.seq).toBe(2); // last wins
   });
 
   it("preserves full OssiaEvent envelope through parse round-trip", async () => {
@@ -200,7 +200,7 @@ describe("parseSSEStream", () => {
     const events = await collect(parseSSEStream(response));
     expect(events).toHaveLength(1);
 
-    const e = events[0];
+    const e = events[0]!;
     expect(e.id).toBe("uuid-abc");
     expect(e.seq).toBe(42);
     expect(e.timestamp).toBe("2026-06-27T12:34:56Z");
@@ -223,9 +223,9 @@ describe("parseSSEStream", () => {
     const events = await collect(parseSSEStream(response));
     expect(events).toHaveLength(1);
 
-    const d = events[0].data as { interrupts: Array<Record<string, unknown>> };
+    const d = events[0]!.data as { interrupts: Array<Record<string, unknown>> };
     expect(d.interrupts).toHaveLength(2);
-    expect(d.interrupts[0].action).toBe("ask_approval");
+    expect(d.interrupts[0]!.action).toBe("ask_approval");
   });
 });
 
@@ -253,11 +253,11 @@ describe("sendMessage", () => {
         status: 200,
         headers: { "Content-Type": "text/event-stream" },
       }),
-    );
+    ) as unknown as typeof globalThis.fetch;
 
     const events = await collect(sendMessage("hello", { apiUrl: API_URL, apiKey: API_KEY }));
     expect(events).toHaveLength(1);
-    expect(events[0].type).toBe("message_delta");
+    expect(events[0]!.type).toBe("message_delta");
   });
 
   it("throws on HTTP 401 (unauthorized)", async () => {
@@ -266,7 +266,7 @@ describe("sendMessage", () => {
         status: 401,
         headers: { "Content-Type": "application/json" },
       }),
-    );
+    ) as unknown as typeof globalThis.fetch;
 
     let err: Error | undefined;
     try {
@@ -286,7 +286,7 @@ describe("sendMessage", () => {
         status: 504,
         headers: { "Content-Type": "text/plain" },
       }),
-    );
+    ) as unknown as typeof globalThis.fetch;
 
     let err: Error | undefined;
     try {
@@ -306,7 +306,7 @@ describe("sendMessage", () => {
         status: 500,
         headers: { "Content-Type": "text/plain" },
       }),
-    );
+    ) as unknown as typeof globalThis.fetch;
 
     let err: Error | undefined;
     try {
@@ -325,7 +325,7 @@ describe("sendMessage", () => {
     globalThis.fetch = mock(async (_url, opts) => {
       capturedBody = (opts as RequestInit).body as string;
       return new Response("", { status: 200 });
-    });
+    }) as unknown as typeof globalThis.fetch;
 
     await collect(
       sendMessage("hi", { apiUrl: API_URL, apiKey: API_KEY, threadId: "custom-thread" }),
@@ -342,7 +342,7 @@ describe("sendMessage", () => {
     globalThis.fetch = mock(async (_url, opts) => {
       capturedHeaders = (opts as RequestInit).headers as Record<string, string>;
       return new Response("", { status: 200 });
-    });
+    }) as unknown as typeof globalThis.fetch;
 
     await collect(sendMessage("test", { apiUrl: API_URL, apiKey: "secret-42" }));
 
@@ -356,7 +356,7 @@ describe("sendMessage", () => {
     globalThis.fetch = mock(async (_url, opts) => {
       expect((opts as RequestInit).signal).toBe(ac.signal);
       return new Response("", { status: 200 });
-    });
+    }) as unknown as typeof globalThis.fetch;
 
     await collect(sendMessage("test", { apiUrl: API_URL, apiKey: API_KEY }, ac.signal));
   });

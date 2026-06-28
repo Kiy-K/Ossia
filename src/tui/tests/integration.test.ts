@@ -110,7 +110,7 @@ if (SERVER_REACHABLE) {
 
       // At least one event + a complete event
       expect(events.length).toBeGreaterThanOrEqual(2);
-      expect(events[events.length - 1].type).toBe("complete");
+      expect(events[events.length - 1]!.type).toBe("complete");
 
       // Thread id is propagated into state
       expect(state.thread_id).toBeTruthy();
@@ -125,7 +125,7 @@ if (SERVER_REACHABLE) {
 
       // Timeline ends with a terminal event
       expect(state.timeline.length).toBeGreaterThanOrEqual(2);
-      const lastTimelineEvent = state.timeline[state.timeline.length - 1].event;
+      const lastTimelineEvent = state.timeline[state.timeline.length - 1]!.event;
       expect(["done", "paused"]).toContain(lastTimelineEvent);
 
       // When the run completed successfully, check for assistant content.
@@ -133,7 +133,7 @@ if (SERVER_REACHABLE) {
       if (state.run_state === "completed") {
         const assistantMessages = state.messages.filter((m) => m.role === "assistant");
         expect(assistantMessages.length).toBeGreaterThanOrEqual(1);
-        expect(assistantMessages[0].content.length).toBeGreaterThan(0);
+        expect(assistantMessages[0]!.content.length).toBeGreaterThan(0);
       }
     }, 30_000);
 
@@ -148,15 +148,15 @@ if (SERVER_REACHABLE) {
       expect(messageTypes).toContain("message_completed");
 
       // Final event is complete
-      expect(events[events.length - 1].type).toBe("complete");
+      expect(events[events.length - 1]!.type).toBe("complete");
 
       // When the run completed, check for assistant message content.
       // The filter should replace Python repr strings with "[content available]".
       if (state.run_state === "completed") {
         expect(state.messages.length).toBeGreaterThanOrEqual(1);
-        const lastMsg = state.messages[state.messages.length - 1];
-        expect(lastMsg.role).toBe("assistant");
-        expect(lastMsg.content.length).toBeGreaterThan(0);
+        const lastMsg = state.messages[state.messages.length - 1]!;
+        expect(lastMsg!.role).toBe("assistant");
+        expect(lastMsg!.content.length).toBeGreaterThan(0);
       }
     }, 30_000);
 
@@ -178,7 +178,7 @@ if (SERVER_REACHABLE) {
       if (state.run_state === "completed") {
         const assistantMsgs = state.messages.filter((m) => m.role === "assistant");
         expect(assistantMsgs.length).toBeGreaterThanOrEqual(1);
-        const final = assistantMsgs[assistantMsgs.length - 1].content.toLowerCase();
+        const final = assistantMsgs[assistantMsgs.length - 1]!.content.toLowerCase();
         expect(final).toContain("paris");
       }
       // If interrupted, skip the content check — the agent didn't respond
@@ -222,9 +222,9 @@ if (SERVER_REACHABLE) {
       if (state.run_state === "completed") {
         // SSE stream only emits AI/tool events, not the user message
         expect(state.messages.length).toBeGreaterThanOrEqual(1);
-        const lastMsg = state.messages[state.messages.length - 1];
-        expect(lastMsg.role).toBe("assistant");
-        expect(lastMsg.content.length).toBeGreaterThan(0);
+        const lastMsg = state.messages[state.messages.length - 1]!;
+        expect(lastMsg!.role).toBe("assistant");
+        expect(lastMsg!.content.length).toBeGreaterThan(0);
       }
     }, 30_000);
 

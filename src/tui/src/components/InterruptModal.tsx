@@ -46,22 +46,22 @@ export function InterruptModal({ state }: InterruptModalProps) {
         padding={1}
         width={60}
       >
-        <text bold>⏸ Interrupted</text>
+        <text attributes={1}>⏸ Interrupted</text>
         <box height={1} />
-        <text dim>The run requires intervention:</text>
+        <text attributes={2}>The run requires intervention:</text>
         <box height={1} />
         {interruptList.length > 0
           ? interruptList.map((ir: Record<string, unknown>, i: number) => (
               <box key={i} flexDirection="column" paddingLeft={1}>
-                <text dim>
+                <text attributes={2}>
                   {i + 1}. {JSON.stringify(ir).slice(0, 120)}
                 </text>
               </box>
             ))
           : null}
         <box height={1} />
-        <text dim>──────────────────────────────</text>
-        <text dim>Use the API to resume or cancel</text>
+        <text attributes={2}>──────────────────────────────</text>
+        <text attributes={2}>Use the API to resume or cancel</text>
       </box>
     </box>
   );

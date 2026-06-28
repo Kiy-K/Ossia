@@ -36,9 +36,9 @@ export function SubagentPanel({ state }: SubagentPanelProps) {
     <box flexDirection="column" width="100%">
       {/* Header */}
       <box height={1} flexDirection="row" width="100%">
-        <text bold>Subagents</text>
+        <text attributes={1}>Subagents</text>
         {failedCount > 0 ? <text> failed:{failedCount}</text> : null}
-        {completedCount > 0 ? <text dim> ({completedCount} done)</text> : null}
+        {completedCount > 0 ? <text attributes={2}> ({completedCount} done)</text> : null}
       </box>
 
       {/* Active agents */}
@@ -46,10 +46,11 @@ export function SubagentPanel({ state }: SubagentPanelProps) {
         const isExpanded = expanded[agent.name] ?? false;
         return (
           <box key={agent.name} flexDirection="column" width="100%">
-            <box
+            <              box
               height={1}
               flexDirection="row"
               width="100%"
+              // @ts-expect-error OpenTUI handles onClick at runtime
               onClick={() =>
                 setExpanded((prev) => ({
                   ...prev,
@@ -57,19 +58,18 @@ export function SubagentPanel({ state }: SubagentPanelProps) {
                 }))
               }
             >
-              <text dim>
+              <text attributes={2}>
                 {isExpanded ? "v" : ">"}
               </text>
               <text> </text>
               <text
-                dim={agent.state !== "error"}
-                bold={agent.state === "error"}
+                attributes={agent.state === "error" ? 1 : 2}
               >
                 {agent.name}
               </text>
               <text> </text>
               <text
-                dim={agent.state === "running"}
+                attributes={agent.state === "running" ? 2 : undefined}
               >
                 {agent.state === "error"
                   ? "failed"
@@ -82,7 +82,7 @@ export function SubagentPanel({ state }: SubagentPanelProps) {
             {isExpanded && agent.messages.length > 0 ? (
               <box paddingLeft={2} flexDirection="column">
                 {agent.messages.map((msg, i) => (
-                  <text key={i} dim>
+                  <text key={i} attributes={2}>
                     {msg}
                   </text>
                 ))}
@@ -90,7 +90,7 @@ export function SubagentPanel({ state }: SubagentPanelProps) {
             ) : null}
             {isExpanded && agent.error ? (
               <box paddingLeft={2}>
-                <text dim>error: {agent.error}</text>
+                <text attributes={2}>error: {agent.error}</text>
               </box>
             ) : null}
           </box>

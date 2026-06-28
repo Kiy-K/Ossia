@@ -29,7 +29,7 @@ export function InputBar({ onSubmit, disabled }: InputBarProps) {
       <text>{">"}</text>
       <text> </text>
       {disabled ? (
-        <text dim>Thinking...</text>
+        <text attributes={2}>Thinking...</text>
       ) : (
         <input
           width={200}

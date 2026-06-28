@@ -39,22 +39,22 @@ export function ToolPanel({ state }: ToolPanelProps) {
     <box flexDirection="column" width="100%">
       {/* Header */}
       <box height={1} flexDirection="row" width="100%">
-        <text bold>Tools</text>
+        <text attributes={1}>Tools</text>
         {completedCount > 0 ? (
-          <text dim> {completedCount} completed</text>
+          <text attributes={2}> {completedCount} completed</text>
         ) : null}
       </box>
 
       {/* Active / failed tools */}
       {activeTools.map((tool: ToolState) => (
         <box key={tool.name} height={1} flexDirection="row" width="100%">
-          <text dim>  </text>
+          <text attributes={2}>  </text>
           {tool.state === "running" ? (
-            <text dim>... {tool.name}</text>
+            <text attributes={2}>... {tool.name}</text>
           ) : (
             <>
-              <text bold>failed {tool.name}</text>
-              <text dim>{tool.error ? ` (${tool.error})` : ""}</text>
+              <text attributes={1}>failed {tool.name}</text>
+              <text attributes={2}>{tool.error ? ` (${tool.error})` : ""}</text>
             </>
           )}
         </box>

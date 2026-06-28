@@ -38,17 +38,17 @@ export function BackgroundTasksPanel({ state }: BackgroundTasksPanelProps) {
   return (
     <box flexDirection="column" width="100%">
       <box height={1} flexDirection="row" width="100%">
-        <text bold>Background</text>
+        <text attributes={1}>Background</text>
         {runningTasks.length > 0 ? (
-          <text dim> {runningTasks.length} active</text>
+          <text attributes={2}> {runningTasks.length} active</text>
         ) : null}
       </box>
 
       {visible.map((task: AsyncTaskState, i: number) => (
         <box key={task.task_id} height={1} flexDirection="row" width="100%">
-          <text dim>{i + 1}.</text>
+          <text attributes={2}>{i + 1}.</text>
           <text> {task.agent_name}</text>
-          <text dim>
+          <text attributes={2}>
             {task.status === "failed"
               ? ` failed${task.error ? `: ${task.error}` : ""}`
               : task.status === "completed"

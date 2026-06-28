@@ -62,12 +62,13 @@ export function StatusBar({ state }: StatusBarProps) {
       flexDirection="row"
       justifyContent="space-between"
     >
-      <text bold>
+      <text attributes={1}>
         {parts.join(" | ")}
       </text>
       <text
-        dim={state.run_state !== "error" && state.run_state !== "running"}
-        bold={state.run_state === "running"}
+        attributes={
+          state.run_state === "running" ? 1 : (state.run_state !== "error" ? 2 : undefined)
+        }
       >
         {stateTag}
       </text>

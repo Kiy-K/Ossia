@@ -23,19 +23,19 @@ export function TimelinePanel({ entries, height }: TimelinePanelProps) {
       width="100%"
     >
       {entries.length === 0 ? (
-        <text dim>Waiting for input...</text>
+        <text attributes={2}>Waiting for input...</text>
       ) : (
         entries.map((entry, i) => (
           <box key={i} height={1} flexDirection="row" width="100%">
-            <text dim>{entry.time}</text>
+            <text attributes={2}>{entry.time}</text>
             <text> </text>
-            <text bold={entry.event.startsWith("tool")}>
+            <text attributes={entry.event.startsWith("tool") ? 1 : undefined}>
               {entry.event}
             </text>
             {entry.detail ? (
               <>
-                <text dim> </text>
-                <text dim>{entry.detail}</text>
+                <text attributes={2}> </text>
+                <text attributes={2}>{entry.detail}</text>
               </>
             ) : null}
           </box>

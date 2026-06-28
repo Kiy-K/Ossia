@@ -114,7 +114,7 @@ export async function* sendMessage(
   if (!response.ok) {
     let detail = `HTTP ${response.status}`;
     try {
-      const body = await response.json();
+      const body = (await response.json()) as { error?: { message?: string } };
       detail = body?.error?.message ?? detail;
     } catch {
       // Use default detail
