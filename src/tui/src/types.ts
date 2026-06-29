@@ -5,21 +5,18 @@
  * components. State is produced exclusively by the reducer in
  * events/reducer.ts — components must never mutate state directly.
  */
-
 /** A single chat message in the conversation. */
 export interface ChatMessage {
   role: "user" | "assistant" | "tool" | "system";
   content: string;
   tool_calls?: Array<{ id: string; name: string; args: Record<string, unknown> }>;
 }
-
 /** One entry in the chronological timeline. */
 export interface TimelineEntry {
   time: string;
   event: string;
   detail: string;
 }
-
 /** Lifecycle state of a subagent. */
 export interface SubagentState {
   name: string;
@@ -27,7 +24,6 @@ export interface SubagentState {
   error?: string;
   messages: string[];
 }
-
 /** Lifecycle state of a tool call. */
 export interface ToolState {
   name: string;
@@ -36,7 +32,6 @@ export interface ToolState {
   output?: unknown;
   error?: string;
 }
-
 /** Lifecycle state of an async background task. */
 export interface AsyncTaskState {
   task_id: string;
@@ -44,11 +39,40 @@ export interface AsyncTaskState {
   status: string;
   error?: string | null;
 }
-
 /** HITL interrupt payload. */
 export interface InterruptState {
   interrupts: Array<Record<string, unknown>>;
 }
+
+// ── ReAct loop step types ──────────────────────────────────────────────────
+
+/** The agent reasoned / produced a message before acting. */
+export interface ReActThought {
+  kind: "thought";
+  content: string;
+  time: string;
+}
+
+/** The agent invoked a tool (Action). */
+export interface ReActAction {
+  kind: "action";
+  tool: string;
+  input: Record<string, unknown>;
+  time: string;
+}
+
+/** The agent received the result of a tool call (Observation). */
+export interface ReActObservation {
+  kind: "observation";
+  tool: string;
+  output: unknown;
+  success: boolean;
+  error?: string;
+  time: string;
+}
+
+/** A single step in the agent's Think → Act → Observe reasoning loop. */
+export type ReActStep = ReActThought | ReActAction | ReActObservation;
 
 /**
  * Top-level application state.
@@ -79,4 +103,10 @@ export interface AppState {
   interrupts: InterruptState | null;
   /** Current input bar draft text. */
   user_input: string;
+  /**
+   * Ordered sequence of ReAct steps produced during the current run.
+   * Optional so existing code that constructs AppState without this field
+   * continues to compile unchanged.
+   */
+  react_steps?: ReActStep[];
 }

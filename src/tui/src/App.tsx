@@ -7,6 +7,7 @@
  *   ├── TimelinePanel (flex grow, scrollable)
  *   ├── SubagentPanel (collapsible, shown when active)
  *   ├── ToolPanel (shown when active)
+ *   ├── ReActPanel (shown when agent has started reasoning)
  *   ├── BackgroundTasksPanel (shown when active)
  *   ├── InterruptModal (overlay, shown on interrupt)
  *   └── InputBar (fixed at bottom)
@@ -17,48 +18,39 @@
  * Components are pure render-only. State mutations happen exclusively
  * in the reducer. Event parsing lives in events/ modules.
  */
-
 import { useCallback, useRef, useState } from "react";
-
 import { useOnResize } from "@opentui/react";
-
 import { reduceEvent, initialAppState } from "./events/reducer";
 import { sendMessage } from "./events/stream";
 import type { AppState } from "./types";
-
 import { BackgroundTasksPanel } from "./components/BackgroundTasksPanel";
 import { InputBar } from "./components/InputBar";
 import { InterruptModal } from "./components/InterruptModal";
+import { ReActPanel } from "./components/ReActPanel";
 import { StatusBar } from "./components/StatusBar";
 import { SubagentPanel } from "./components/SubagentPanel";
 import { TimelinePanel } from "./components/TimelinePanel";
 import { ToolPanel } from "./components/ToolPanel";
-
 /** Default connection parameters (overridable via env). */
 const API_URL = process.env.OSSIA_API_URL ?? "http://localhost:8000";
 const API_KEY = process.env.OSSIA_API_KEY ?? "dev";
-
 /**
- * Fixed-height panels: StatusBar (1) + 3 optional panels (~5 max).
+ * Fixed-height panels: StatusBar (1) + 3 optional panels (~5 max)
+ * + ReActPanel header + MAX_STEPS rows (up to 4 lines).
  * This buffer ensures the timeline doesn't overlap with bottom panels.
  */
-const BOTTOM_PANEL_HEIGHT = 6;
-
+const BOTTOM_PANEL_HEIGHT = 10;
 export function App() {
   const [state, setState] = useState<AppState>(initialAppState);
   const [termHeight, setTermHeight] = useState(24);
-
   // Ref for thread_id to avoid stale-closure bugs in the async loop
   const threadIdRef = useRef<string>("");
-
   // Abort controller for the current stream
   const abortRef = useRef<AbortController | null>(null);
-
   // Track terminal resize events via OpenTUI's built-in hook
   useOnResize((_width: number, height: number) => {
     setTermHeight(Math.max(height, 12));
   });
-
   const handleSubmit = useCallback(
     async (message: string) => {
       // Cancel any previous run
@@ -67,7 +59,6 @@ export function App() {
       }
       const abortController = new AbortController();
       abortRef.current = abortController;
-
       // Reset state for new run, preserving thread_id
       const existingThreadId = threadIdRef.current;
       setState((prev) => ({
@@ -76,7 +67,6 @@ export function App() {
         run_state: "running",
         user_input: message,
       }));
-
       try {
         const stream = sendMessage(
           message,
@@ -87,15 +77,12 @@ export function App() {
           },
           abortController.signal,
         );
-
         for await (const event of stream) {
           if (abortController.signal.aborted) break;
-
           // Store thread_id from the first event that carries it
           if (event.thread_id && !threadIdRef.current) {
             threadIdRef.current = event.thread_id;
           }
-
           setState((prev) => {
             try {
               return reduceEvent(prev, event);
@@ -120,10 +107,8 @@ export function App() {
     },
     [], // No dependencies — threadIdRef handles closure issues
   );
-
   // Height available for the timeline
   const timelineHeight = termHeight - BOTTOM_PANEL_HEIGHT;
-
   return (
     <box
       flexDirection="column"
@@ -133,7 +118,6 @@ export function App() {
     >
       {/* StatusBar — always visible */}
       <StatusBar state={state} />
-
       {/* TimelinePanel — takes remaining vertical space */}
       <box flexGrow={1} width="100%">
         <TimelinePanel
@@ -141,19 +125,16 @@ export function App() {
           height={timelineHeight}
         />
       </box>
-
       {/* SubagentPanel — shown when subagents are active */}
       <SubagentPanel state={state} />
-
       {/* ToolPanel — shown when tools are active */}
       <ToolPanel state={state} />
-
+      {/* ReActPanel — shown when the agent has started reasoning */}
+      <ReActPanel state={state} />
       {/* BackgroundTasksPanel — shown when async tasks exist */}
       <BackgroundTasksPanel state={state} />
-
       {/* InterruptModal — overlays everything when active */}
       <InterruptModal state={state} />
-
       {/* InputBar — always visible at bottom */}
       <InputBar
         onSubmit={handleSubmit}
