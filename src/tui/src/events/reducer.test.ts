@@ -38,8 +38,10 @@ describe("ReAct step accumulation", () => {
       makeEvent("message_completed", { role: "assistant", text: "I should search for tests." }),
     );
     expect(next.react_steps).toHaveLength(1);
-    expect(next.react_steps![0].kind).toBe("thought");
-    expect((next.react_steps![0] as { kind: "thought"; content: string }).content).toBe(
+    const thoughtStep = next.react_steps?.[0];
+    if (!thoughtStep) throw new Error("Expected a thought step");
+    expect(thoughtStep.kind).toBe("thought");
+    expect((thoughtStep as { kind: "thought"; content: string }).content).toBe(
       "I should search for tests.",
     );
   });
@@ -60,7 +62,8 @@ describe("ReAct step accumulation", () => {
       makeEvent("tool_started", { name: "search_codebase", input: { query: "auth" } }),
     );
     expect(next.react_steps).toHaveLength(1);
-    const step = next.react_steps![0];
+    const step = next.react_steps?.[0];
+    if (!step) throw new Error("Expected an action step");
     expect(step.kind).toBe("action");
     expect((step as { kind: "action"; tool: string }).tool).toBe("search_codebase");
     expect((step as { kind: "action"; input: Record<string, unknown> }).input).toEqual({ query: "auth" });
@@ -73,7 +76,8 @@ describe("ReAct step accumulation", () => {
       makeEvent("tool_completed", { name: "search_codebase", output: "3 files found" }),
     );
     expect(next.react_steps).toHaveLength(1);
-    const step = next.react_steps![0];
+    const step = next.react_steps?.[0];
+    if (!step) throw new Error("Expected an observation step");
     expect(step.kind).toBe("observation");
     expect((step as { success: boolean }).success).toBe(true);
     expect((step as { output: unknown }).output).toBe("3 files found");
@@ -86,7 +90,8 @@ describe("ReAct step accumulation", () => {
       makeEvent("tool_failed", { name: "run_tests", error: "timeout after 30s" }),
     );
     expect(next.react_steps).toHaveLength(1);
-    const step = next.react_steps![0];
+    const step = next.react_steps?.[0];
+    if (!step) throw new Error("Expected a failed observation step");
     expect(step.kind).toBe("observation");
     expect((step as { success: boolean }).success).toBe(false);
     expect((step as { error?: string }).error).toBe("timeout after 30s");
@@ -98,10 +103,15 @@ describe("ReAct step accumulation", () => {
     state = reduceEvent(state, makeEvent("tool_started", { name: "run_tests", input: {} }));
     state = reduceEvent(state, makeEvent("tool_completed", { name: "run_tests", output: "passed" }));
 
-    expect(state.react_steps).toHaveLength(3);
-    expect(state.react_steps![0].kind).toBe("thought");
-    expect(state.react_steps![1].kind).toBe("action");
-    expect(state.react_steps![2].kind).toBe("observation");
+    const steps = state.react_steps ?? [];
+    expect(steps).toHaveLength(3);
+    const s0 = steps[0];
+    const s1 = steps[1];
+    const s2 = steps[2];
+    if (!s0 || !s1 || !s2) throw new Error("Expected 3 steps");
+    expect(s0.kind).toBe("thought");
+    expect(s1.kind).toBe("action");
+    expect(s2.kind).toBe("observation");
   });
 
   test("unrelated events do not affect react_steps", () => {
