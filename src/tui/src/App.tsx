@@ -34,12 +34,11 @@ import { ToolPanel } from "./components/ToolPanel";
 /** Default connection parameters (overridable via env). */
 const API_URL = process.env.OSSIA_API_URL ?? "http://localhost:8000";
 const API_KEY = process.env.OSSIA_API_KEY ?? "dev";
-/**
- * Fixed-height panels: StatusBar (1) + 3 optional panels (~5 max)
- * + ReActPanel header + MAX_STEPS rows (up to 4 lines).
- * This buffer ensures the timeline doesn't overlap with bottom panels.
- */
-const BOTTOM_PANEL_HEIGHT = 10;
+/** Base height reserved for always-visible panels (StatusBar + InputBar + margins). */
+const BASE_PANEL_HEIGHT = 6;
+/** Extra rows added when ReActPanel is visible (header + up to 3 step rows). */
+const REACT_PANEL_HEIGHT = 4;
+
 export function App() {
   const [state, setState] = useState<AppState>(initialAppState);
   const [termHeight, setTermHeight] = useState(24);
@@ -107,8 +106,10 @@ export function App() {
     },
     [], // No dependencies — threadIdRef handles closure issues
   );
-  // Height available for the timeline
-  const timelineHeight = termHeight - BOTTOM_PANEL_HEIGHT;
+  // Height available for the timeline — expand only when ReActPanel is visible
+  const reactPanelVisible = (state.react_steps?.length ?? 0) > 0;
+  const bottomPanelHeight = BASE_PANEL_HEIGHT + (reactPanelVisible ? REACT_PANEL_HEIGHT : 0);
+  const timelineHeight = termHeight - bottomPanelHeight;
   return (
     <box
       flexDirection="column"

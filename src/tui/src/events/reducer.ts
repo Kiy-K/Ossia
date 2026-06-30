@@ -29,6 +29,9 @@ function formatTime(): string {
 function truncate(s: string, max = 60): string {
   return s.length > max ? s.slice(0, max) + "..." : s;
 }
+/** Maximum number of ReAct steps retained in state to prevent unbounded growth. */
+const MAX_REACT_STEPS = 100;
+
 /** Return the initial (empty) application state. */
 export function initialAppState(): AppState {
   return {
@@ -99,6 +102,7 @@ export function reduceEvent(state: AppState, event: OssiaEvent): AppState {
       const reactSteps: ReActStep[] = [...(state.react_steps ?? [])];
       if (safeRole === "assistant" && cleanText) {
         reactSteps.push({ kind: "thought", content: cleanText, time });
+        if (reactSteps.length > MAX_REACT_STEPS) reactSteps.shift();
       }
 
       return {
@@ -151,9 +155,14 @@ export function reduceEvent(state: AppState, event: OssiaEvent): AppState {
       };
     }
     case "subagent_interrupted": {
+      const name = String(event.data.name ?? "unknown");
+      const existing = state.subagents[name];
       return {
         ...state,
-        timeline: [...state.timeline, { time, event: "interrupted", detail: "" }],
+        subagents: existing
+          ? { ...state.subagents, [name]: { ...existing, state: "interrupted" } }
+          : state.subagents,
+        timeline: [...state.timeline, { time, event: "interrupted", detail: name }],
       };
     }
     // ── Tool calls ────────────────────────────────────────────────────
@@ -171,7 +180,7 @@ export function reduceEvent(state: AppState, event: OssiaEvent): AppState {
           ...state.timeline,
           { time, event: `tool ${toolName}`, detail: truncate(JSON.stringify(toolInput), 50) },
         ],
-        react_steps: [...(state.react_steps ?? []), actionStep],
+        react_steps: [...(state.react_steps ?? []), actionStep].slice(-MAX_REACT_STEPS),
       };
     }
     case "tool_completed": {
@@ -192,7 +201,7 @@ export function reduceEvent(state: AppState, event: OssiaEvent): AppState {
             : t,
         ),
         timeline: [...state.timeline, { time, event: `done ${toolName}`, detail: "" }],
-        react_steps: [...(state.react_steps ?? []), obsStep],
+        react_steps: [...(state.react_steps ?? []), obsStep].slice(-MAX_REACT_STEPS),
       };
     }
     case "tool_failed": {
@@ -215,7 +224,7 @@ export function reduceEvent(state: AppState, event: OssiaEvent): AppState {
             : t,
         ),
         timeline: [...state.timeline, { time, event: `failed ${toolName}`, detail: err }],
-        react_steps: [...(state.react_steps ?? []), obsStep],
+        react_steps: [...(state.react_steps ?? []), obsStep].slice(-MAX_REACT_STEPS),
       };
     }
     // ── Pipelines ─────────────────────────────────────────────────────
