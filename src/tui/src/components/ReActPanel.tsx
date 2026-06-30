@@ -57,7 +57,7 @@ function StepRow({ step }: { step: ReActStep }) {
               ? truncate(
                   typeof step.output === "string"
                     ? step.output
-                    : JSON.stringify(step.output) ?? ""
+                    : (() => { try { return JSON.stringify(step.output) ?? ""; } catch { return String(step.output); } })()
                 )
               : truncate(step.error ?? "error")}
           </text>
