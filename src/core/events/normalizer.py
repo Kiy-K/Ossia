@@ -183,6 +183,34 @@ class EventNormalizer:
 
     # ── Message relay ────────────────────────────────────────────────────────
 
+    async def _resolve_text(self, raw_text: Any) -> str:
+        """Resolve a ``.text`` field that may be a projection into a plain string.
+
+        The v3 ``stream.messages`` projection yields ``AsyncChatModelStream``
+        (or ``ChatModelStream``) objects per LLM call. These have a ``.text``
+        property that returns an ``AsyncProjection`` (awaitable) or
+        ``SyncTextProjection`` (iterable + ``__str__``), **not** a plain string.
+        Normalizing via ``str()`` produces a Python object repr like
+        ``'<...AsyncProjection object at 0x...>'`` rather than the actual
+        generated text.
+
+        This helper detects the projection types via duck-typing and resolves
+        them to plain strings:
+
+        - ``AsyncProjection`` (has ``__await__``) → ``await raw_text``
+        - ``SyncTextProjection`` (has ``__iter__``) → ``str(raw_text)``
+        - Plain string → passthrough
+        - Anything else → ``str(raw_text)`` (fallback, may produce repr)
+        """
+        if isinstance(raw_text, str):
+            return raw_text
+        if hasattr(raw_text, '__await__'):
+            resolved = await raw_text
+            return str(resolved) if not isinstance(resolved, str) else resolved
+        if hasattr(raw_text, '__iter__'):
+            return str(raw_text)
+        return str(raw_text)
+
     async def _relay_messages(
         self, stream: Any, queue: asyncio.Queue[OssiaEvent | None]
     ) -> None:
@@ -198,18 +226,39 @@ class EventNormalizer:
         Note: Subagent text generation is not directly accessible from the v3
         ``stream.messages`` projection. ``subagent_message_delta`` events will
         be added once the v3 stream exposes subagent provenance on message items.
+
+        The v3 stream yields ``AsyncChatModelStream`` / ``ChatModelStream``
+        objects (one per LLM call) rather than per-token items. Their ``.text``
+        is a projection that ``_resolve_text`` handles by awaiting or
+        stringifying it into the actual generated text.
         """
         try:
             last_msg_id: str | None = None
             last_role: str = "ai"
             accumulated: str = ""
             async for m in stream.messages:
-                text = getattr(m, "text", None)
-                if text is None:
+                raw_text = getattr(m, "text", None)
+                if raw_text is None:
                     continue
-                role = getattr(m, "role", "ai")
-                msg_id = getattr(m, "id", None)
-                msg_text = str(text)
+
+                # Resolve the text field — it may be an AsyncProjection
+                # (from AsyncChatModelStream) or SyncTextProjection
+                # (from ChatModelStream), both of which require
+                # special handling beyond simple str() conversion.
+                is_projection = hasattr(raw_text, '__await__') or (
+                    hasattr(raw_text, '__iter__') and not isinstance(raw_text, str)
+                )
+
+                if is_projection:
+                    msg_text = await self._resolve_text(raw_text)
+                    # ChatModelStream / AsyncChatModelStream do not carry
+                    # .role or .id; all LLM responses are assistant messages.
+                    role = "ai"
+                    msg_id = getattr(m, "message_id", None)
+                else:
+                    msg_text = str(raw_text)
+                    role = getattr(m, "role", "ai")
+                    msg_id = getattr(m, "id", None)
 
                 # Detect message completion: new msg_id != previous
                 if msg_id is not None and msg_id != last_msg_id and last_msg_id is not None:

@@ -39,6 +39,19 @@ const BASE_PANEL_HEIGHT = 6;
 /** Extra rows added when ReActPanel is visible (header + up to 3 step rows). */
 const REACT_PANEL_HEIGHT = 4;
 
+/**
+ * Calculate the height available for the TimelinePanel given the terminal
+ * height and the number of ReAct steps accumulated so far.
+ *
+ * When the ReAct panel is visible (1+ steps), an extra REACT_PANEL_HEIGHT
+ * rows are reserved. Otherwise only the fixed BASE_PANEL_HEIGHT is reserved.
+ */
+export function computeTimelineHeight(termHeight: number, reactStepCount: number): number {
+  const reactPanelVisible = reactStepCount > 0;
+  const bottomPanelHeight = BASE_PANEL_HEIGHT + (reactPanelVisible ? REACT_PANEL_HEIGHT : 0);
+  return termHeight - bottomPanelHeight;
+}
+
 export function App() {
   const [state, setState] = useState<AppState>(initialAppState);
   const [termHeight, setTermHeight] = useState(24);
@@ -107,9 +120,7 @@ export function App() {
     [], // No dependencies — threadIdRef handles closure issues
   );
   // Height available for the timeline — expand only when ReActPanel is visible
-  const reactPanelVisible = (state.react_steps?.length ?? 0) > 0;
-  const bottomPanelHeight = BASE_PANEL_HEIGHT + (reactPanelVisible ? REACT_PANEL_HEIGHT : 0);
-  const timelineHeight = termHeight - bottomPanelHeight;
+  const timelineHeight = computeTimelineHeight(termHeight, state.react_steps?.length ?? 0);
   return (
     <box
       flexDirection="column"

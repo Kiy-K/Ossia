@@ -824,7 +824,7 @@
   "paths": {
     "/health": {
       "get": {
-        "description": "Liveness check.",
+        "description": "Liveness check (standard endpoint).",
         "operationId": "health_health_get",
         "responses": {
           "200": {

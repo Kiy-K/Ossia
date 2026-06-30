@@ -11,6 +11,7 @@
 import { describe, it, expect } from "bun:test";
 import type { AppState } from "../src/types";
 
+import { computeTimelineHeight } from "../src/App";
 import { StatusBar, activeAgentCount, activeToolCount, activeAsyncTaskCount } from "../src/components/StatusBar";
 import { TimelinePanel } from "../src/components/TimelinePanel";
 import { ToolPanel } from "../src/components/ToolPanel";
@@ -426,6 +427,40 @@ describe("InterruptModal rendering", () => {
       }),
     });
     expect(text).toContain("Interrupted");
+  });
+});
+
+// ── computeTimelineHeight ──────────────────────────────────────────────────
+
+describe("computeTimelineHeight", () => {
+  it("returns termHeight - BASE_PANEL_HEIGHT when no ReAct steps", () => {
+    // BASE_PANEL_HEIGHT = 6
+    expect(computeTimelineHeight(24, 0)).toBe(18);
+    expect(computeTimelineHeight(40, 0)).toBe(34);
+    expect(computeTimelineHeight(12, 0)).toBe(6);
+  });
+
+  it("returns termHeight - (BASE + REACT) when ReAct steps exist", () => {
+    // BASE_PANEL_HEIGHT = 6, REACT_PANEL_HEIGHT = 4 → total = 10
+    expect(computeTimelineHeight(24, 1)).toBe(14);
+    expect(computeTimelineHeight(24, 5)).toBe(14);
+    expect(computeTimelineHeight(40, 100)).toBe(30);
+  });
+
+  it("clamps to zero or negative when termHeight is small", () => {
+    // With ReAct visible: 6 + 4 = 10 reserved; tiny termHeight → negative result
+    expect(computeTimelineHeight(10, 1)).toBe(0);
+    expect(computeTimelineHeight(5, 1)).toBe(-5);
+  });
+
+  it("treats negative stepCount as zero (no ReAct panel)", () => {
+    // BASE = 6 reserved
+    expect(computeTimelineHeight(24, -1)).toBe(18);
+  });
+
+  it("handles large termHeight without overflow", () => {
+    // With ReAct visible: 6 + 4 = 10 reserved
+    expect(computeTimelineHeight(9999, 10)).toBe(9989);
   });
 });
 

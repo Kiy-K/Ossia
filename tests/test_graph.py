@@ -9,9 +9,9 @@ from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 
-from core.agent import build_agent, _build_middlewares
+from core.agent import _build_middlewares, build_agent
 from core.config import Provider, Settings
-from core.tools import create_kb, search_codebase
+from core.tools import create_kb
 
 
 def _test_settings() -> Settings:
@@ -362,7 +362,7 @@ def test_async_subagent_middleware_wired_when_enabled() -> None:
 
     ``AsyncSubAgent`` is a ``TypedDict``, so items use dict-style access.
     """
-    from deepagents.middleware.async_subagents import AsyncSubAgent, AsyncSubAgentMiddleware
+    from deepagents.middleware.async_subagents import AsyncSubAgentMiddleware
 
     settings = _test_settings()
     settings.enable_async_subagents = True
@@ -418,7 +418,6 @@ def test_async_subagent_specs_have_required_fields() -> None:
 
 def test_build_agent_includes_async_middleware() -> None:
     """The full agent builder includes async subagent middleware by default."""
-    from deepagents.middleware.async_subagents import AsyncSubAgentMiddleware
 
     settings = _test_settings()
     settings.enable_async_subagents = True
@@ -430,7 +429,6 @@ def test_build_agent_includes_async_middleware() -> None:
 
 def test_build_agent_excludes_async_middleware_when_disabled() -> None:
     """The full agent builder excludes async subagent middleware when disabled."""
-    from deepagents.middleware.async_subagents import AsyncSubAgentMiddleware
 
     settings = _test_settings()
     settings.enable_async_subagents = False
@@ -542,7 +540,6 @@ def test_orchestrator_tools_are_loaded() -> None:
 
 def test_orchestrator_schemas_validate() -> None:
     """Orchestrator structured output schemas accept valid data."""
-    from pydantic import ValidationError
 
     from core.orchestrators.schemas import (
         AuditFinding,
@@ -841,7 +838,11 @@ def test_pipeline_event_kind_in_stream_event() -> None:
 
 def test_orchestrator_tool_returns_js_code() -> None:
     """Orchestrator tools return JS code with the correct API fields."""
-    from core.orchestrators.tools import run_audit_pipeline, run_bugfix_pipeline, run_refactor_pipeline
+    from core.orchestrators.tools import (
+        run_audit_pipeline,
+        run_bugfix_pipeline,
+        run_refactor_pipeline,
+    )
 
     # Bugfix
     result = run_bugfix_pipeline.invoke(

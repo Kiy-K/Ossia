@@ -40,7 +40,6 @@ from core.events import (
 )
 from core.schemas import StreamEvent
 
-
 # ── OssiaEvent envelope tests ────────────────────────────────────────────────
 
 
@@ -332,6 +331,73 @@ def test_apply_events_batch() -> None:
 
 
 # ── EventNormalizer tests ────────────────────────────────────────────────────
+
+
+# ── Mock projection classes for _resolve_text tests ────────────────────────
+# These mimic AsyncProjection and SyncTextProjection from
+# langchain_core.language_models.chat_model_stream, which the v3
+# stream's .messages projection uses instead of plain strings.
+
+
+class _FakeAsyncProjection:
+    """Mocks AsyncProjection: an awaitable that resolves to the full text.
+
+    The real ``AsyncProjection`` is both async-iterable (for per-token
+    deltas) and awaitable (for the final accumulated text). This mock
+    implements only ``__await__`` so ``_resolve_text`` can await it.
+    """
+
+    def __init__(self, text: str) -> None:
+        self._text = text
+
+    def __await__(self):
+        async def _resolve() -> str:
+            return self._text
+        return _resolve().__await__()
+
+
+class _FakeSyncProjection:
+    """Mocks SyncTextProjection: a sync iterable that supports ``str()``.
+
+    The real ``SyncTextProjection`` is iterable (for per-token deltas)
+    and ``str()`` returns the full accumulated text. This mock implements
+    ``__str__`` and ``__iter__`` so ``_resolve_text`` can resolve it.
+    """
+
+    def __init__(self, text: str) -> None:
+        self._text = text
+
+    def __str__(self) -> str:
+        return self._text
+
+    def __iter__(self):
+        yield self._text
+
+
+class _FakeAsyncChatModelStream:
+    """Mocks an AsyncChatModelStream from the v3 stream.
+
+    The real v3 ``stream.messages`` projection yields
+    ``AsyncChatModelStream`` objects per LLM call. Their ``.text`` is
+    an ``AsyncProjection`` (awaitable), not a plain string. They carry
+    ``.message_id`` instead of ``.id``, and ``.role`` is always ``"ai"``.
+    """
+
+    def __init__(self, text: str, message_id: str | None = None) -> None:
+        self.text = _FakeAsyncProjection(text)
+        self.message_id = message_id if message_id else f"msg-{hash(text)}"
+
+
+class _FakeSyncChatModelStream:
+    """Mocks a ChatModelStream (sync variant) from the v3 stream.
+
+    Same structure as ``_FakeAsyncChatModelStream`` but ``.text`` is a
+    ``SyncTextProjection``, which ``str()`` resolves to the full text.
+    """
+
+    def __init__(self, text: str, message_id: str | None = None) -> None:
+        self.text = _FakeSyncProjection(text)
+        self.message_id = message_id if message_id else f"msg-{hash(text)}"
 
 
 class _FakeV3Stream:
@@ -1188,6 +1254,220 @@ async def test_normalizer_sequence_monotonic() -> None:
     seqs = [e.seq for e in events]
     assert seqs == sorted(seqs)  # monotonic
     assert len(set(seqs)) == len(seqs)  # unique
+
+
+# ── _resolve_text projection tests ────────────────────────────────────────────
+# These tests verify that `_resolve_text` correctly handles AsyncProjection
+# (awaitable) and SyncTextProjection (str-able) objects emitted by the v3
+# stream's .messages projection, instead of producing Python object reprs.
+
+
+@pytest.mark.asyncio
+async def test_resolve_text_async_projection() -> None:
+    """_resolve_text awaits an AsyncProjection and returns the resolved text."""
+    normalizer = EventNormalizer()
+    proj = _FakeAsyncProjection("Hello from async projection")
+    result = await normalizer._resolve_text(proj)
+    assert result == "Hello from async projection"
+    assert isinstance(result, str)
+
+
+@pytest.mark.asyncio
+async def test_resolve_text_async_projection_empty() -> None:
+    """_resolve_text handles an empty AsyncProjection gracefully."""
+    normalizer = EventNormalizer()
+    proj = _FakeAsyncProjection("")
+    result = await normalizer._resolve_text(proj)
+    assert result == ""
+
+
+@pytest.mark.asyncio
+async def test_resolve_text_async_projection_with_unicode() -> None:
+    """_resolve_text preserves Unicode in AsyncProjection resolved text."""
+    normalizer = EventNormalizer()
+    proj = _FakeAsyncProjection("Hello 世界 🌍")
+    result = await normalizer._resolve_text(proj)
+    assert result == "Hello 世界 🌍"
+
+
+@pytest.mark.asyncio
+async def test_resolve_text_sync_projection() -> None:
+    """_resolve_text str()s a SyncTextProjection and returns the full text."""
+    normalizer = EventNormalizer()
+    proj = _FakeSyncProjection("Hello from sync projection")
+    result = await normalizer._resolve_text(proj)
+    assert result == "Hello from sync projection"
+    assert isinstance(result, str)
+
+
+@pytest.mark.asyncio
+async def test_resolve_text_plain_string() -> None:
+    """_resolve_text passes through a plain string unchanged."""
+    normalizer = EventNormalizer()
+    result = await normalizer._resolve_text("plain string")
+    assert result == "plain string"
+
+
+@pytest.mark.asyncio
+async def test_resolve_text_plain_string_empty() -> None:
+    """_resolve_text passes through an empty plain string unchanged."""
+    normalizer = EventNormalizer()
+    result = await normalizer._resolve_text("")
+    assert result == ""
+
+
+@pytest.mark.asyncio
+async def test_resolve_text_non_string_fallback() -> None:
+    """_resolve_text falls back to str() for non-string, non-projection types."""
+    normalizer = EventNormalizer()
+    result = await normalizer._resolve_text(42)
+    assert result == "42"
+
+
+@pytest.mark.asyncio
+async def test_resolve_text_async_projection_detects_non_string() -> None:
+    """_resolve_text correctly identifies AsyncProjection as non-string via __await__."""
+    normalizer = EventNormalizer()
+    proj = _FakeAsyncProjection("resolved")
+    # Verify it's not a string (would go through awaitable path)
+    assert not isinstance(proj, str)
+    assert hasattr(proj, '__await__')
+    result = await normalizer._resolve_text(proj)
+    assert result == "resolved"
+
+
+# ── Full normalizer flow with projection-style messages ──────────────────────
+
+
+@pytest.mark.asyncio
+async def test_normalizer_async_chat_model_stream_message() -> None:
+    """Normalizer handles AsyncChatModelStream objects from stream.messages.
+
+    Regression test for the bug where ``str(AsyncProjection)`` produced
+    a Python object repr like ``'<...AsyncProjection object at 0x...>'``
+    instead of the actual generated text. The normalizer must resolve
+    the projection via ``_resolve_text`` before emitting events.
+    """
+    stream = _FakeV3Stream()
+    stream._messages = [
+        _FakeAsyncChatModelStream("Hello from async projection", message_id="proj-msg-1"),
+    ]
+    stream._output = {}
+    stream._interrupted = False
+
+    normalizer = EventNormalizer(thread_id="test")
+    events = [e async for e in normalizer.normalize(stream)]
+
+    # 1 message_started + 1 message_completed + 1 complete = 3
+    assert len(events) == 3
+
+    # message_started should contain the resolved text
+    assert events[0].type == "message_started"
+    assert events[0].data["text"] == "Hello from async projection"
+    assert isinstance(events[0].data["text"], str)
+    assert events[0].data["role"] == "ai"
+
+    # message_completed should contain the accumulated text
+    assert events[1].type == "message_completed"
+    assert events[1].data["text"] == "Hello from async projection"
+    assert isinstance(events[1].data["text"], str)
+    assert events[1].data["role"] == "ai"
+
+    # Verify the text is NOT a Python object repr (the original bug)
+    assert not events[0].data["text"].startswith("<")
+    assert not events[1].data["text"].startswith("<")
+
+
+@pytest.mark.asyncio
+async def test_normalizer_sync_chat_model_stream_message() -> None:
+    """Normalizer handles ChatModelStream (sync variant) from stream.messages."""
+    stream = _FakeV3Stream()
+    stream._messages = [
+        _FakeSyncChatModelStream("Hello from sync projection", message_id="sync-msg-1"),
+    ]
+    stream._output = {}
+    stream._interrupted = False
+
+    normalizer = EventNormalizer(thread_id="test")
+    events = [e async for e in normalizer.normalize(stream)]
+
+    # 1 message_started + 1 message_completed + 1 complete = 3
+    assert len(events) == 3
+
+    assert events[0].type == "message_started"
+    assert events[0].data["text"] == "Hello from sync projection"
+    assert events[1].type == "message_completed"
+    assert events[1].data["text"] == "Hello from sync projection"
+
+    # Verify NOT a Python object repr
+    assert not events[1].data["text"].startswith("<")
+
+
+@pytest.mark.asyncio
+async def test_normalizer_mixed_message_types() -> None:
+    """Normalizer handles a mix of plain _FakeMsg and projection-style messages."""
+    stream = _FakeV3Stream()
+    stream._messages = [
+        _FakeMsg("Plain message", role="ai", id_="msg-1"),
+        _FakeAsyncChatModelStream("Async projection message", message_id="msg-2"),
+    ]
+    stream._output = {}
+    stream._interrupted = False
+
+    normalizer = EventNormalizer(thread_id="test")
+    events = [e async for e in normalizer.normalize(stream)]
+
+    # 2 message_started + 2 message_completed + 1 complete = 5
+    assert len(events) == 5
+
+    # First message: plain _FakeMsg
+    assert events[0].type == "message_started"
+    assert events[0].data["text"] == "Plain message"
+    assert events[1].type == "message_completed"
+    assert events[1].data["text"] == "Plain message"
+
+    # Second message: AsyncChatModelStream (should have resolved text)
+    assert events[2].type == "message_started"
+    assert events[2].data["text"] == "Async projection message"
+    assert not events[2].data["text"].startswith("<")
+    assert events[3].type == "message_completed"
+    assert events[3].data["text"] == "Async projection message"
+    assert not events[3].data["text"].startswith("<")
+
+
+@pytest.mark.asyncio
+async def test_normalizer_async_projection_text_not_leaked_as_repr() -> None:
+    """The normalizer never emits Python object reprs for projection text.
+
+    This is the core regression test for the AsyncProjection bug: the
+    message_completed event's text field must be the actual generated
+    text, not a repr like ``'<...AsyncProjection object at 0x...>'``.
+    """
+    stream = _FakeV3Stream()
+    stream._messages = [
+        _FakeAsyncChatModelStream("Actual generated response", message_id="msg-1"),
+    ]
+    stream._output = {}
+    stream._interrupted = False
+
+    normalizer = EventNormalizer(thread_id="test")
+    events = [e async for e in normalizer.normalize(stream)]
+
+    # Collect all message events
+    msg_events = [e for e in events if e.type in ("message_started", "message_delta", "message_completed")]
+
+    for ev in msg_events:
+        text = ev.data.get("text", "")
+        # The text should NOT be a Python object repr
+        assert not text.startswith("<"), (
+            f"{ev.type} text is a Python object repr: {text!r}"
+        )
+        # The text should NOT be the word "None"
+        assert text != "None", f"{ev.type} text is 'None'"
+        # The text should NOT be the str() of a non-string object
+        assert text == "Actual generated response", (
+            f"{ev.type} expected 'Actual generated response', got {text!r}"
+        )
 
 
 # ── Backward compatibility via StreamEvent ───────────────────────────────────

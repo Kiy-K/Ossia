@@ -11,7 +11,7 @@
  * Prerequisites:
  *   - Backend server running on OSSIA_API_URL (default: http://localhost:8000)
  *   - ENABLE_HUMAN_REVIEW=false (to avoid interrupts on simple queries)
- *   - OSSIA_API_KEY must be set (default: 12345678)
+ *   - OSSIA_API_KEY must be set (default: dev)
  *
  * Run with:
  *   bun test src/tui/tests/integration.test.ts
@@ -24,7 +24,19 @@ import type { OssiaEvent } from "../src/events/types";
 import type { AppState } from "../src/types";
 
 const API_URL = process.env.OSSIA_API_URL ?? "http://localhost:8000";
-const API_KEY = process.env.OSSIA_API_KEY ?? "12345678";
+const API_KEY = process.env.OSSIA_API_KEY ?? "dev";
+
+// Warn when the environment overrides the API key to something other than
+// the project default ("dev"). This helps diagnose mismatches when the
+// backend server was started with a different key.
+if (process.env.OSSIA_API_KEY && process.env.OSSIA_API_KEY !== "dev") {
+  console.warn(
+    `\n  ⚠ OSSIA_API_KEY is set to "${process.env.OSSIA_API_KEY}" (via env),\n` +
+    `     but the project default is "dev". Make sure your backend server\n` +
+    `     expects the same key, or unset the env var to use the default.\n`,
+  );
+}
+
 const HEALTH_URL = `${API_URL}/health`;
 
 async function collectEvents(stream: AsyncGenerator<OssiaEvent>): Promise<OssiaEvent[]> {

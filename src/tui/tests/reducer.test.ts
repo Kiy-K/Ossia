@@ -167,10 +167,116 @@ describe("subagent_failed", () => {
 });
 
 describe("subagent_interrupted", () => {
-  it("adds a timeline entry", () => {
-    const s = reduceAll(event("subagent_interrupted", { name: "reviewer", path: ["reviewer"] }));
+  it("marks an existing subagent as interrupted and adds timeline entry", () => {
+    const s = reduceAll(
+      event("subagent_spawned", { name: "reviewer", path: ["reviewer"] }),
+      event("subagent_interrupted", { name: "reviewer", path: ["reviewer"] }),
+    );
+    expect(s.subagents["reviewer"]!.state).toBe("interrupted");
+    expect(s.timeline.length).toBe(2);
+    expect(s.timeline[1]!.event).toBe("interrupted");
+    expect(s.timeline[1]!.detail).toBe("reviewer");
+  });
+
+  it("defaults name to 'unknown' when missing", () => {
+    const s = reduceAll(event("subagent_interrupted", { path: [] }));
     expect(s.timeline.length).toBe(1);
-    expect(s.timeline[0]!.event).toBe("interrupted");
+    expect(s.timeline[0]!.detail).toBe("unknown");
+  });
+
+  it("no-ops when the subagent was never spawned (no subagents entry created)", () => {
+    const s = reduceAll(event("subagent_interrupted", { name: "ghost" }));
+    expect(s.subagents).toEqual({});
+    // Timeline entry is still added
+    expect(s.timeline.length).toBe(1);
+  });
+});
+
+// ── ReAct step cap ──────────────────────────────────────────────────────────
+
+describe("react_steps cap at MAX_REACT_STEPS (100)", () => {
+  it("caps thoughts via shift when exceeding MAX_REACT_STEPS", () => {
+    // Generate MAX_REACT_STEPS + 1 thought steps
+    const events: OssiaEvent[] = [];
+    for (let i = 0; i < 101; i++) {
+      events.push(msgComplete("assistant", `thought ${i}`));
+    }
+    const s = reduceAll(...events);
+    expect((s.react_steps ?? []).length).toBe(100);
+    // The oldest thought (index 0) was dropped
+    const firstContent = ((s.react_steps ?? [])[0] as unknown as { content: string }).content;
+    expect(firstContent).toBe("thought 1");
+    // The newest thought (index 99) is present
+    const lastContent = ((s.react_steps ?? [])[99] as unknown as { content: string }).content;
+    expect(lastContent).toBe("thought 100");
+  });
+
+  it("caps actions via slice(-MAX_REACT_STEPS) when exceeding limit", () => {
+    // Generate MAX_REACT_STEPS + 1 action steps
+    const events: OssiaEvent[] = [];
+    for (let i = 0; i < 101; i++) {
+      events.push(event("tool_started", { name: `tool-${i}`, input: {}, source: "coordinator" }));
+    }
+    const s = reduceAll(...events);
+    expect((s.react_steps ?? []).length).toBe(100);
+    // The oldest action (tool-0) was dropped
+    const firstTool = ((s.react_steps ?? [])[0] as unknown as { tool: string }).tool;
+    expect(firstTool).toBe("tool-1");
+  });
+
+  it("caps observations via slice(-MAX_REACT_STEPS) on completion", () => {
+    const events: OssiaEvent[] = [];
+    for (let i = 0; i < 101; i++) {
+      events.push(
+        event("tool_started", { name: `tool-${i}`, input: {}, source: "coordinator" }),
+        event("tool_completed", { name: `tool-${i}`, output: `result-${i}`, source: "coordinator" }),
+      );
+    }
+    const s = reduceAll(...events);
+    // Cap applies to the ENTIRE react_steps array, keeping newest 100
+    expect((s.react_steps ?? []).length).toBe(100);
+    // Observations are present, actions from oldest iterations dropped
+    const lastStep = (s.react_steps ?? [])[99];
+    expect(lastStep!.kind).toBe("observation");
+    expect((lastStep as unknown as { tool: string }).tool).toBe("tool-100");
+  });
+
+  it("caps failed observations as well", () => {
+    const events: OssiaEvent[] = [];
+    for (let i = 0; i < 101; i++) {
+      events.push(
+        event("tool_started", { name: `tool-${i}`, input: {}, source: "coordinator" }),
+        event("tool_failed", { name: `tool-${i}`, error: "err", source: "coordinator" }),
+      );
+    }
+    const s = reduceAll(...events);
+    expect((s.react_steps ?? []).length).toBe(100);
+    const lastStep = (s.react_steps ?? [])[99];
+    expect(lastStep!.kind).toBe("observation");
+    expect((lastStep as unknown as { tool: string }).tool).toBe("tool-100");
+  });
+
+  it("preserves steps below the limit (no truncation)", () => {
+    const s = reduceAll(
+      msgComplete("assistant", "thought 1"),
+      msgComplete("assistant", "thought 2"),
+      msgComplete("assistant", "thought 3"),
+    );
+    expect((s.react_steps ?? []).length).toBe(3);
+    expect(((s.react_steps ?? [])[0] as unknown as { content: string }).content).toBe("thought 1");
+    expect(((s.react_steps ?? [])[2] as unknown as { content: string }).content).toBe("thought 3");
+  });
+
+  it("handles mixed step types under the limit", () => {
+    const s = reduceAll(
+      msgComplete("assistant", "think"),
+      event("tool_started", { name: "tool-1", input: {}, source: "coordinator" }),
+      event("tool_completed", { name: "tool-1", output: "ok", source: "coordinator" }),
+    );
+    expect((s.react_steps ?? []).length).toBe(3);
+    expect((s.react_steps ?? [])[0]!.kind).toBe("thought");
+    expect((s.react_steps ?? [])[1]!.kind).toBe("action");
+    expect((s.react_steps ?? [])[2]!.kind).toBe("observation");
   });
 });
 

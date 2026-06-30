@@ -91,9 +91,9 @@ export function reduceEvent(state: AppState, event: OssiaEvent): AppState {
       const role = String(event.data.role ?? "assistant");
       const text = String(event.data.text ?? "");
       const safeRole = role === "ai" ? "assistant" : (role as "user" | "assistant" | "tool" | "system");
-      // Filter out Python object repr strings like
-      // "<classname object at 0x...>" (backend serialization issue)
-      // Match dotted module paths like "langchain_core...asyncprojection"
+      // Filter out Python object repr strings that leak from the backend
+      // when the v3 stream's message text is an AsyncProjection that didn't
+      // get properly resolved (e.g. "<module.ClassName object at 0x...>").
       const isPythonRepr = /^<[\w.]+ object at 0x[0-9a-f]+>$/.test(text);
       const cleanText = isPythonRepr ? "[content available]" : text;
 

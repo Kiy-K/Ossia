@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 from collections.abc import Generator
 from contextlib import suppress
+from typing import Any
 
 import pytest
 from dotenv import find_dotenv, load_dotenv
@@ -735,14 +736,13 @@ async def test_thread_events_returns_events_after_stream(client: TestClient) -> 
     actual caller hash so stored events match the scoped thread_id the endpoint
     will compute from the API key.
     """
-    import hashlib
-
-    from core.events import EventNormalizer, get_thread_event_buffer, serialize_sse
 
     # Compute the actual caller hash the same way verify_api_key does.
     # This ensures the scoped thread_id we store matches what the
     # endpoint computes from the API key header.
     from argon2 import low_level as argon2_low_level
+
+    from core.events import EventNormalizer, get_thread_event_buffer, serialize_sse
     caller_hash = argon2_low_level.hash_secret_raw(
         secret=b"test-api-key",
         salt=b"ossia-caller-id",  # must be exactly 16 bytes
@@ -830,14 +830,13 @@ async def test_thread_events_returns_events_after_stream(client: TestClient) -> 
 
 def test_thread_events_delete_does_not_affect_other_threads(client: TestClient) -> None:
     """DELETE events for one thread does not affect other threads."""
-    import hashlib
+
+    from argon2 import low_level as argon2_low_level
 
     from core.events import (
         OssiaEvent,
         get_thread_event_buffer,
     )
-
-    from argon2 import low_level as argon2_low_level
     caller_hash = argon2_low_level.hash_secret_raw(
         secret=b"test-api-key",
         salt=b"ossia-caller-id",  # must be exactly 16 bytes
