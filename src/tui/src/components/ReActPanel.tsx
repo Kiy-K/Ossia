@@ -23,7 +23,8 @@ interface ReActPanelProps {
 }
 
 function truncate(s: string, max = 50): string {
-  return s.length > max ? s.slice(0, max) + "…" : s;
+  const clean = s.replace(/[\n\r\t]/g, " ").replace(/\s+/g, " ").trim();
+  return clean.length > max ? clean.slice(0, max) + "…" : clean;
 }
 
 /** Renders a single labeled step row. */
@@ -53,7 +54,11 @@ function StepRow({ step }: { step: ReActStep }) {
           <text attributes={1}>[Obs {step.success ? "✓" : "✗"}] </text>
           <text attributes={2}>
             {step.success
-              ? truncate(String(step.output ?? ""))
+              ? truncate(
+                  typeof step.output === "string"
+                    ? step.output
+                    : JSON.stringify(step.output) ?? ""
+                )
               : truncate(step.error ?? "error")}
           </text>
         </box>
