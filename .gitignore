@@ -75,6 +75,9 @@ Thumbs.db
 ehthumbs.db
 Desktop.ini
 
+# AI tool state directories
+.kilocode/
+
 # Logs
 *.log
 logs/

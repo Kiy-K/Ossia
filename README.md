@@ -4,10 +4,10 @@
   <a href="https://github.com/Kiy-K/Ossia/actions/workflows/tui-test.yml">
     <img src="https://img.shields.io/github/actions/workflow/status/Kiy-K/Ossia/tui-test.yml?label=TUI%20tests&logo=github" alt="TUI tests">
   </a>
-  <img src="https://img.shields.io/badge/coverage-87%25-brightgreen" alt="coverage">
+  <img src="https://img.shields.io/badge/coverage-84%25-green" alt="coverage">
   <img src="https://img.shields.io/badge/python-3.12-blue" alt="python">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="license">
-  <a href="#install"><img src="https://img.shields.io/badge/install-curl%20%7C%20bash-blue" alt="install"></a>
+  <a href="https://codebuff.com"><img src="https://img.shields.io/badge/built%20with-Codebuff-8B5CF6" alt="built with Codebuff"></a>
 </p>
 
 <p align="center">
@@ -24,12 +24,13 @@ Think of Ossia as a **digital teammate**: it can research your codebase, diagnos
 
 | Problem | Ossia's approach |
 |---|---|
-| Agent frameworks are tied to one provider | **Model-agnostic** — OpenRouter, OpenAI, Anthropic, Google, Nebius, or any OpenAI-compatible endpoint |
+| Agent frameworks tied to one provider | **Model-agnostic** — OpenRouter, OpenAI, Anthropic, Google, Nebius, or any OpenAI-compatible endpoint |
 | Streaming feels like a black box | **Normalized event protocol** — every message, tool call, subagent spawn, and pipeline step is a typed, ordered, replayable event |
 | Subagents are hard to observe | **Concurrent real-time normalization** — coordinator and subagent events stream together in a single ordered feed |
 | Hard to debug agent runs | **Thread replay buffer** — `GET /v1/threads/{id}/events` replays the full event stream for any thread |
 | Hand-written integration glue | **Spec-driven OpenAPI contract** — `specs/openapi.checked.json` is the pinned source of truth; `test_openapi_drift.py` catches drift |
-| One-off scripts instead of API | **Unified `/v1/*` HTTP API** — scripts, notebooks, and TUI all talk to the same FastAPI server |
+| One-off scripts instead of API | **Unified `/v1/*` HTTP API** — scripts, notebooks, TUIs all talk to the same FastAPI server |
+| Scattered top-level AI skill dirs | **Clean repo root** — all AI tool state and runtime artifacts are gitignored under `.kilocode/` |
 
 ## Architecture
 
@@ -95,6 +96,7 @@ Ossia's architecture is composed of six interconnected subsystems, each document
 | **Event Streaming** | [ADR-0006](docs/adr/0006-streaming-v3-protocol.md) | v3 stream → normalizer (5 concurrent relays) → typed events → SSE | [Event pipeline](docs/diagrams.md#4-event-stream-pipeline) |
 | **Memory & Persistence** | [ADR-0007](docs/adr/0007-agent-scoped-memory-and-episodic-recall.md) | Postgres + in-memory store, per-caller namespaces, thread replay buffer | [Deployment topology](docs/diagrams.md#5-deployment-topology) |
 | **Orchestrator Pipelines** | [ADR-0008](docs/adr/0008-subagent-design-and-routing.md) | bugfix/audit/refactor pipelines via code interpreter with multi-step workflows | [Subagent routing](docs/diagrams.md#1-subagent-routing) |
+| **Terminal UI** | `src/tui/` | OpenTUI/React 19 terminal client consuming `/v1/chat/stream` over SSE | [TUI README](src/tui/README.md) |
 
 ### Request lifecycle
 
@@ -271,6 +273,34 @@ All code scanning alerts are resolved (0 open). Caller authentication uses
 **Argon2id** for key hashing (memory-hard, GPU-resistant). The eval endpoint
 uses a hardcoded dataset path to prevent path traversal. Web search fallback
 uses the modern `ddgs` package. See `specs/changelog.md` for details.
+
+### Clean Repo Root
+All AI tool state, runtime artifacts, and skill directories are scoped to a
+single `.kilocode/` directory at the repo root — no more scattered `.claude/`,
+`.windsurf/`, `.openhands/`, or `.firecrawl/` directories littering the tree.
+The `.gitignore` keeps everything but `kilocode.json` out of version control.
+
+## Finishing Touches
+
+### Terminal UI
+
+Ossia ships with a full-featured **Terminal UI** built with OpenTUI and React 19.
+It connects to the backend via SSE and provides multi-pane visualizations:
+
+| Panel | What it shows |
+|-------|--------------|
+| **Timeline** | Chronological log of all events (messages, tool calls, subagents, pipeline steps) |
+| **ReAct** | Agent reasoning loops — thoughts, actions, and observations in real time |
+| **Subagents** | Lifecycle of each active subagent (spawned → running → completed/error) |
+| **Tools** | Active and completed tool calls with inputs and outputs |
+| **Background Tasks** | Long-running async subagent tasks (researcher, tester, auditor) |
+| **Status Bar** | Thread ID, agent/tool counts, async task count, and run state |
+
+```bash
+cd src/tui && bun install && bun dev
+```
+
+See the [TUI README](src/tui/README.md) for full documentation.
 
 ## Configuration
 

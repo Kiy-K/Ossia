@@ -31,6 +31,7 @@ env:
 
 jobs:
   # ── Python: Lint + Typecheck + Test ──────────────────────────────────────
+  # ── Python: Lint + Typecheck + Test ──────────────────────────────────────
   test-python:
     name: Python — lint / typecheck / test
     runs-on: ubuntu-latest
@@ -65,7 +66,6 @@ jobs:
       - name: Run Python tests with coverage
         run: |
           .venv/bin/python -m pytest tests/ -v --timeout=120 --cov=src/core --cov-report=term-missing 2>&1 | tee /tmp/test_output.txt
-          # Parse coverage from the TOTAL line: "TOTAL                    1234     56    95%"
           COV_LINE=$(grep "^TOTAL" /tmp/test_output.txt 2>/dev/null | tail -1 || true)
           PCT=$(echo "$COV_LINE" | awk '{print $NF}' | tr -d '%')
           if [ -n "$PCT" ]; then
@@ -178,7 +178,6 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.version=${{ github.ref_name }}
             org.opencontainers.image.revision=${{ github.sha }}
-
       - name: Generate release notes
         id: release_notes
         run: |
