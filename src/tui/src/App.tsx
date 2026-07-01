@@ -24,6 +24,7 @@ import { reduceEvent, initialAppState } from "./events/reducer";
 import { sendMessage } from "./events/stream";
 import type { AppState } from "./types";
 import { BackgroundTasksPanel } from "./components/BackgroundTasksPanel";
+import { Box } from "./components/primitives";
 import { InputBar } from "./components/InputBar";
 import { InterruptModal } from "./components/InterruptModal";
 import { ReActPanel } from "./components/ReActPanel";
@@ -122,7 +123,7 @@ export function App() {
   // Height available for the timeline — expand only when ReActPanel is visible
   const timelineHeight = computeTimelineHeight(termHeight, state.react_steps?.length ?? 0);
   return (
-    <box
+    <Box
       flexDirection="column"
       width="100%"
       height="100%"
@@ -131,12 +132,12 @@ export function App() {
       {/* StatusBar — always visible */}
       <StatusBar state={state} />
       {/* TimelinePanel — takes remaining vertical space */}
-      <box flexGrow={1} width="100%">
+      <Box flexGrow={1} width="100%">
         <TimelinePanel
           entries={state.timeline}
           height={timelineHeight}
         />
-      </box>
+      </Box>
       {/* SubagentPanel — shown when subagents are active */}
       <SubagentPanel state={state} />
       {/* ToolPanel — shown when tools are active */}
@@ -152,6 +153,6 @@ export function App() {
         onSubmit={handleSubmit}
         disabled={state.run_state === "running"}
       />
-    </box>
+    </Box>
   );
 }

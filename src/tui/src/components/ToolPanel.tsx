@@ -17,6 +17,7 @@
  */
 
 import type { AppState, ToolState } from "../types";
+import { Box, Text } from "./primitives";
 
 interface ToolPanelProps {
   state: AppState;
@@ -36,29 +37,29 @@ export function ToolPanel({ state }: ToolPanelProps) {
   }
 
   return (
-    <box flexDirection="column" width="100%">
+    <Box flexDirection="column" width="100%">
       {/* Header */}
-      <box height={1} flexDirection="row" width="100%">
-        <text attributes={1}>Tools</text>
+      <Box height={1} flexDirection="row" width="100%">
+        <Text attributes={1}>Tools</Text>
         {completedCount > 0 ? (
-          <text attributes={2}> {completedCount} completed</text>
+          <Text attributes={2}> {completedCount} completed</Text>
         ) : null}
-      </box>
+      </Box>
 
       {/* Active / failed tools */}
       {activeTools.map((tool: ToolState) => (
-        <box key={tool.name} height={1} flexDirection="row" width="100%">
-          <text attributes={2}>  </text>
+        <Box key={tool.name} height={1} flexDirection="row" width="100%">
+          <Text attributes={2}>  </Text>
           {tool.state === "running" ? (
-            <text attributes={2}>... {tool.name}</text>
+            <Text attributes={2}>... {tool.name}</Text>
           ) : (
             <>
-              <text attributes={1}>failed {tool.name}</text>
-              <text attributes={2}>{tool.error ? ` (${tool.error})` : ""}</text>
+              <Text attributes={1}>failed {tool.name}</Text>
+              <Text attributes={2}>{tool.error ? ` (${tool.error})` : ""}</Text>
             </>
           )}
-        </box>
+        </Box>
       ))}
-    </box>
+    </Box>
   );
 }

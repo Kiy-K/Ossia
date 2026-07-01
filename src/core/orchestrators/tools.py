@@ -8,6 +8,8 @@ interpreter context, not in Python.
 """
 from __future__ import annotations
 
+from typing import Any
+
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
@@ -34,7 +36,7 @@ class RefactorPipelineInput(BaseModel):
     goal: str = Field(description="Description of the desired refactoring.")
 
 
-def _pipeline_result(name: str, js: str) -> dict:
+def _pipeline_result(name: str, js: str) -> dict[str, Any]:
     """Build the standard pipeline tool return dict.
 
     Args:
@@ -60,7 +62,7 @@ def run_bugfix_pipeline(
     issue_description: str,
     repo: str = "",
     issue_number: int | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Run the end-to-end automated bug-fix pipeline: diagnose → propose → test.
 
     Use this when a bug has been reported and you want a fully automated
@@ -89,7 +91,7 @@ def run_bugfix_pipeline(
 def run_audit_pipeline(
     target: str = ".",
     focus: str = "general",
-) -> dict:
+) -> dict[str, Any]:
     """Run a comprehensive code audit: research → findings → structured report.
 
     Use this for automated code quality reviews across a directory or
@@ -116,7 +118,7 @@ def run_audit_pipeline(
 def run_refactor_pipeline(
     target: str,
     goal: str,
-) -> dict:
+) -> dict[str, Any]:
     """Run an automated code refactoring: research → plan → rewrite → validate.
 
     Use this when the code works but needs restructuring for clarity,

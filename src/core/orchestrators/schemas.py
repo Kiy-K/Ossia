@@ -175,7 +175,7 @@ class PatchSet(BaseModel):
 # ── Schema serialization helpers ─────────────────────────────────────────────
 
 
-def pydantic_to_js_response_schema(model: type[BaseModel]) -> dict:
+def pydantic_to_js_response_schema(model: type[BaseModel]) -> dict[str, Any]:
     """Convert a Pydantic model class to a JSON Schema dict suitable for
     ``task()`` ``responseSchema`` in the JavaScript interpreter.
 
@@ -246,7 +246,7 @@ def _resolve_refs_in_place(node: Any, definitions: dict[str, Any]) -> None:
             _resolve_refs_in_place(item, definitions)
 
 
-def serialize_schema_js(schema: dict) -> str:
+def serialize_schema_js(schema: dict[str, Any]) -> str:
     """Serialize a JSON Schema dict to a compact JavaScript object literal.
 
     The result can be inlined into generated JavaScript code as a const

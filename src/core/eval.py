@@ -35,8 +35,9 @@ def _load_dataset() -> list[dict[str, Any]]:
     # CodeQL path-injection false positives.
     project_root = Path(__file__).resolve().parent.parent.parent
     default_path = project_root / "tests" / "golden_dataset.json"
-    data = json.loads(default_path.read_text(encoding="utf-8"))
-    return data["queries"]
+    data: dict[str, Any] = json.loads(default_path.read_text(encoding="utf-8"))
+    queries: list[dict[str, Any]] = data["queries"]
+    return queries
 
 
 def _grade(query: dict[str, Any], final_text: str, routed_intents: list[str]) -> EvalQueryResult:

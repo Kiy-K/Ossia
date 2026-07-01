@@ -28,7 +28,7 @@ The initial state is produced by ``initial_state()``.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from core.events.types import OssiaEvent
 
@@ -98,7 +98,7 @@ def _navigate_to_target(state: AgentState, source: str) -> AgentState:
     """
     parts = _parse_source(source)
     if not parts:
-        return state["coordinator"]
+        return cast(dict[str, Any], state["coordinator"])
 
     # Walk the subagent tree, creating nodes as needed
     current: AgentState = state
@@ -108,10 +108,10 @@ def _navigate_to_target(state: AgentState, source: str) -> AgentState:
             subagents[part] = _empty_agent_node()
             subagents[part]["name"] = part
         if i == len(parts) - 1:
-            return subagents[part]
+            return cast(dict[str, Any], subagents[part])
         current = subagents[part]
 
-    return state["coordinator"]  # fallback (should not reach here)
+    return cast(dict[str, Any], state["coordinator"])  # fallback (should not reach here)
 
 
 # ── Main reducer ─────────────────────────────────────────────────────────────

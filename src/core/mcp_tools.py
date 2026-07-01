@@ -337,9 +337,9 @@ class MCPToolkit:
                     )
                     await _await_worker_teardown(worker, force=False)
                 else:
-                    self._tools.extend(result)
+                    self._tools.extend(result)  # type: ignore[arg-type]
                     self._workers.append(worker)
-                    for tool in result:
+                    for tool in result:  # type: ignore[union-attr]
                         self.mcp_tool_servers[tool.name] = worker.name
         except BaseException:
             # External cancellation (or unexpected error) during connect: tear
@@ -384,7 +384,7 @@ def _wrap_mcp_tool(
     class _MCPTool(BaseTool):
         name: str = tool_info.name
         description: str = tool_info.description or ""
-        args_schema: type[BaseModel] = _build_args_schema(tool_info.name, tool_info.inputSchema)
+        args_schema: type[BaseModel] = _build_args_schema(tool_info.name, tool_info.inputSchema)  # pyright: ignore[reportIncompatibleVariableOverride]
 
         async def _arun(self, **kwargs: Any) -> Any:
             result = await session.call_tool(self.name, kwargs)
@@ -400,7 +400,7 @@ def _wrap_mcp_tool(
     # ``MCPToolkit`` keeps a parallel ``mcp_tool_servers`` registry as
     # the source of truth and the attribute is only a hint for callers
     # that have a direct reference.
-    instance._mcp_server = server_name  # type: ignore[attr-defined]
+    instance._mcp_server = server_name
     return instance
 
 
@@ -431,13 +431,13 @@ def _build_args_schema(name: str, schema: dict[str, Any]) -> type[BaseModel]:
     """
     properties = schema.get("properties", {})
     required = set(schema.get("required", []))
-    fields: dict[str, tuple[type[Any], Any]] = {}
+    fields: dict[str, tuple[Any, Any]] = {}
     for prop_name, prop_schema in properties.items():
         prop_type = _json_schema_type_to_python(prop_schema)
         default = ... if prop_name in required else None
         fields[prop_name] = (prop_type | None if default is None else prop_type, default)
 
-    return create_model(f"{_sanitize_class_name(name)}Input", **fields)
+    return create_model(f"{_sanitize_class_name(name)}Input", **fields)  # type: ignore[call-overload, no-any-return]
 
 
 def _json_schema_type_to_python(prop_schema: dict[str, Any]) -> type[Any]:

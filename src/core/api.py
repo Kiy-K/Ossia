@@ -220,7 +220,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         tools_node = agent.nodes.get("tools")
         if tools_node is not None:
             for tname, tool in (
-                tools_node.bound._tools_by_name.items()
+                tools_node.bound._tools_by_name.items()  # pyright: ignore[reportAttributeAccessIssue]
                 if hasattr(tools_node.bound, "_tools_by_name")
                 else []
             ):
@@ -251,7 +251,7 @@ app = FastAPI(
 # adds its own middleware, and Starlette does not allow adding middleware
 # after the application has started.
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
 
 
 # Expose Prometheus metrics at /metrics.
@@ -401,7 +401,7 @@ def _msg_to_chat_message(msg: BaseMessage) -> ChatMessage:
                     )
                     artifact_refs.append(ArtifactInfo(
                         id=f"file-{i}",
-                        type=ftype,
+                        type=ftype,  # type: ignore[arg-type]
                         filename=p.get("filename", f"file-{i}"),
                         mime_type=mime,
                         analysis_state="pending",
@@ -423,9 +423,9 @@ def _msg_to_chat_message(msg: BaseMessage) -> ChatMessage:
         for tc in (getattr(msg, "tool_calls", None) or [])
     ]
     return ChatMessage(
-        role=role,
+        role=role,  # type: ignore[arg-type]
         content=content,
-        tool_calls=tool_calls,
+        tool_calls=tool_calls,  # type: ignore[arg-type]
         tool_call_id=getattr(msg, "tool_call_id", None),
         name=getattr(msg, "name", None),
         artifacts=artifact_refs,
@@ -494,7 +494,7 @@ def _build_invocation(
         block = _normalize_artifact(art)
         if block is not None:
             content.append(block)
-    input_dict = {"messages": [HumanMessage(content=content)]}
+    input_dict = {"messages": [HumanMessage(content=content)]}  # type: ignore[arg-type]
     return agent, input_dict, config
 
 
@@ -506,7 +506,7 @@ async def health(request: Request) -> HealthResponse:
 
 
 @app.get("/ok", include_in_schema=False)
-@limiter.exempt
+@limiter.exempt  # type: ignore[untyped-decorator]
 async def ok(request: Request) -> dict[str, bool]:
     """Minimal health check compatible with LangGraph Platform's /ok contract.
 

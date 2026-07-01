@@ -310,11 +310,11 @@ def create_chat_model(settings: Settings | None = None) -> BaseChatModel:
         from langchain_anthropic import ChatAnthropic
         if not settings.anthropic_api_key:
             raise ValueError("ANTHROPIC_API_KEY is required for the anthropic provider.")
-        return ChatAnthropic(
-            model=settings.model,
+        return ChatAnthropic(  # type: ignore[call-arg]
+            model=settings.model,  # pyright: ignore[reportCallIssue]
             temperature=settings.temperature,
-            max_tokens=settings.max_tokens,
-            api_key=settings.anthropic_api_key,
+            max_tokens=settings.max_tokens,  # pyright: ignore[reportCallIssue]
+            api_key=settings.anthropic_api_key,  # type: ignore[arg-type]
             streaming=True,
         )
     if provider == Provider.GOOGLE:
@@ -329,7 +329,7 @@ def create_chat_model(settings: Settings | None = None) -> BaseChatModel:
         )
     if provider == Provider.OLLAMA:
         from langchain_ollama import ChatOllama
-        return ChatOllama(
+        return ChatOllama(  # type: ignore[no-any-return]
             model=settings.model,
             temperature=settings.temperature,
             base_url=settings.ollama_base_url,
@@ -400,7 +400,7 @@ def _build_middlewares(settings: Settings) -> list[Any]:
         # provider is degraded. Only wired when a fallback model is configured.
         ModelFallbackMiddleware(
             fallback_model=create_chat_model(Settings(
-                provider=settings.fallback_provider,
+                provider=settings.fallback_provider,  # type: ignore[arg-type]
                 model=settings.fallback_model,
                 openrouter_api_key=settings.openrouter_api_key,
                 openai_api_key=settings.openai_api_key,
@@ -529,7 +529,7 @@ def _make_backend(
         routes={
             "/memories/": StoreBackend(
                 store=store,
-                namespace=lambda rt, _ns=namespace: _make_memory_namespace(_ns),
+                namespace=lambda rt, _ns=namespace: _make_memory_namespace(_ns),  # type: ignore[misc]
             ),
         },
     )
@@ -546,7 +546,7 @@ def _compile_agent(
     subagents: list[dict[str, Any]] | None = None,
     episodic_tool: BaseTool | None = None,
     context_schema: type | None = None,
-) -> CompiledStateGraph:
+) -> CompiledStateGraph[Any, Any, Any, Any]:
     backend = _make_backend(store) if store is not None else None
     all_tools: list[BaseTool] = list(tools)
     if episodic_tool is not None:
@@ -564,8 +564,8 @@ def _compile_agent(
         skills=[str(Path(__file__).resolve().parent.parent.parent / "docs" / "skills")],
         middleware=middlewares,
         checkpointer=checkpointer,
-        interrupt_on=_interrupt_config(settings, checkpointer),
-        subagents=subagents,
+        interrupt_on=_interrupt_config(settings, checkpointer),  # type: ignore[arg-type]
+        subagents=subagents,  # type: ignore[arg-type]
         store=store,
         backend=backend,
         memory=[AGENTS_MEMORY_KEY] if store is not None else None,
@@ -576,7 +576,7 @@ def _compile_agent(
 def build_agent(
     settings: Settings | None = None,
     checkpointer: Any | None = None,
-) -> CompiledStateGraph:
+) -> CompiledStateGraph[Any, Any, Any, Any]:
     settings = settings or get_settings()
     model = create_chat_model(settings)
     tools = create_core_tools()
@@ -601,7 +601,7 @@ async def build_agent_async(
     settings: Settings | None = None,
     checkpointer: Any | None = None,
     include_mcp_tools: bool = True,
-) -> AsyncGenerator[CompiledStateGraph, None]:
+) -> AsyncGenerator[CompiledStateGraph[Any, Any, Any, Any], None]:
     settings = settings or get_settings()
     model = create_chat_model(settings)
     tools = create_core_tools()
@@ -653,13 +653,13 @@ async def build_agent_async(
 
 
 def stream_agent_events(
-    graph: CompiledStateGraph,
+    graph: CompiledStateGraph[Any, Any, Any, Any],
     thread_id: str,
     input_message: dict[str, Any],
 ) -> Any:
     config = {"configurable": {"thread_id": thread_id}}
-    return graph.astream_events(
+    return graph.astream_events(  # type: ignore[call-overload]
         {"messages": [input_message]},
-        config,
+        config,  # pyright: ignore[reportArgumentType]
         version="v2",
     )

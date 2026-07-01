@@ -64,10 +64,10 @@ class JSONFormatter(logging.Formatter):
         }
 
         # Include optional fields when present on the record
-        if hasattr(record, "request_id") and record.request_id:
-            payload["request_id"] = record.request_id
-        if hasattr(record, "caller") and record.caller:
-            payload["caller"] = record.caller
+        if hasattr(record, "request_id") and getattr(record, "request_id", None):
+            payload["request_id"] = record.request_id  # pyright: ignore[reportAttributeAccessIssue]
+        if hasattr(record, "caller") and getattr(record, "caller", None):
+            payload["caller"] = record.caller  # pyright: ignore[reportAttributeAccessIssue]
 
         # Include exception info when present (from logger.exception)
         if record.exc_info and record.exc_info[0] is not None:

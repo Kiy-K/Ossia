@@ -10,3 +10,14 @@
  * doesn't work. Instead, component files use the SGR `attributes`
  * prop (1=bold, 2=dim) and @ts-expect-error for onClick.
  */
+
+// ponytail: react-test-renderer is deprecated but still the only way to
+// render hook-based OpenTUI components in unit tests (no @testing-library
+// equivalent for terminal UIs). Minimal stub — migrate when a terminal
+// testing-library exists.
+declare module "react-test-renderer" {
+  const TestRenderer: {
+    create: (node: unknown) => { toJSON: () => unknown };
+  };
+  export default TestRenderer;
+}

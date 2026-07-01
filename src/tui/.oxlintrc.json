@@ -10,7 +10,14 @@
           "attributes",
           "focused",
           "onSubmit",
-          "paddingLeft"
+          "paddingLeft",
+          "width",
+          "height",
+          "position",
+          "left",
+          "top",
+          "justifyContent",
+          "padding"
         ]
       }
     ]

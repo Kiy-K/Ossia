@@ -9,6 +9,7 @@
  */
 
 import type { TimelineEntry } from "../types";
+import { Box, ScrollBox, Text } from "./primitives";
 
 interface TimelinePanelProps {
   entries: TimelineEntry[];
@@ -17,30 +18,30 @@ interface TimelinePanelProps {
 
 export function TimelinePanel({ entries, height }: TimelinePanelProps) {
   return (
-    <scrollbox
+    <ScrollBox
       flexDirection="column"
       flexGrow={1}
       width="100%"
     >
       {entries.length === 0 ? (
-        <text attributes={2}>Waiting for input...</text>
+        <Text attributes={2}>Waiting for input...</Text>
       ) : (
-        entries.map((entry, i) => (
-          <box key={i} height={1} flexDirection="row" width="100%">
-            <text attributes={2}>{entry.time}</text>
-            <text> </text>
-            <text attributes={entry.event.startsWith("tool") ? 1 : undefined}>
+        entries.map((entry) => (
+          <Box key={`${entry.time}-${entry.event}-${entry.detail}`} height={1} flexDirection="row" width="100%">
+            <Text attributes={2}>{entry.time}</Text>
+            <Text> </Text>
+            <Text attributes={entry.event.startsWith("tool") ? 1 : undefined}>
               {entry.event}
-            </text>
+            </Text>
             {entry.detail ? (
               <>
-                <text attributes={2}> </text>
-                <text attributes={2}>{entry.detail}</text>
+                <Text attributes={2}> </Text>
+                <Text attributes={2}>{entry.detail}</Text>
               </>
             ) : null}
-          </box>
+          </Box>
         ))
       )}
-    </scrollbox>
+    </ScrollBox>
   );
 }

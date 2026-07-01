@@ -540,7 +540,7 @@ class EventNormalizer:
                     elif hasattr(t, "model_dump"):
                         tasks.append(t.model_dump())
                     elif hasattr(t, "__dict__"):
-                        tasks.append(vars(t))
+                        tasks.append(dict(vars(t)))
                     else:
                         tasks.append({"raw": str(t)})
                 if not tasks:

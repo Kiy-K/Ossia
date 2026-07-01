@@ -71,7 +71,7 @@ def wait_for_health(
 
 def run_server_subprocess(
     host: str, port: int, env: dict[str, str]
-) -> subprocess.Popen:
+) -> subprocess.Popen[bytes]:
     """Start a uvicorn subprocess for ossia.api:app and return the Popen handle.
 
     The caller is responsible for terminating the process (use
@@ -88,7 +88,7 @@ def run_server_subprocess(
     return subprocess.Popen(cmd, env=env, stdout=sys.stdout, stderr=sys.stderr)
 
 
-def terminate(proc: subprocess.Popen, grace_s: float = 10.0) -> None:
+def terminate(proc: subprocess.Popen[bytes], grace_s: float = 10.0) -> None:
     """Send SIGINT to a subprocess and wait, escalating to SIGKILL on timeout."""
     if proc.poll() is not None:
         return

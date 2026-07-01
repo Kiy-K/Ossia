@@ -531,13 +531,13 @@ async def audit_model_middleware() -> AuditSection:
             raise openai.RateLimitError(
                 message="Rate limited",
                 body={"error": {"message": "Rate limited"}},
-                response=_MockResponse(),
+                response=_MockResponse(),  # type: ignore[arg-type]
             )
         return AIMessage(content="recovered")
 
     class _FakeRequest:
         model = None
-        messages = []
+        messages: list[Any] = []
         runtime = None
         model_settings: dict[str, Any] = {}
         state = None
@@ -547,7 +547,7 @@ async def audit_model_middleware() -> AuditSection:
         response_format = None
 
     try:
-        result = await retry_mw.awrap_model_call(_FakeRequest(), flaky_handler)
+        result = await retry_mw.awrap_model_call(_FakeRequest(), flaky_handler)  # type: ignore[arg-type]
         checks.append(_check(
             "ModelRetryMiddleware retries on RateLimitError",
             len(calls) == 2 and hasattr(result, "content") and "recovered" in str(result.content),
@@ -566,13 +566,13 @@ async def audit_model_middleware() -> AuditSection:
         raise openai.RateLimitError(
             message="Always rate limited",
             body={"error": {"message": "Always rate limited"}},
-            response=_MockResponse(),
+            response=_MockResponse(),  # type: ignore[arg-type]
         )
 
     retry_mw2 = ModelRetryMiddleware(max_attempts=3, initial_interval=0.01, backoff_factor=1.0)
     raised = False
     try:
-        await retry_mw2.awrap_model_call(_FakeRequest(), always_fail_handler)
+        await retry_mw2.awrap_model_call(_FakeRequest(), always_fail_handler)  # type: ignore[arg-type]
     except openai.RateLimitError:
         raised = True
     checks.append(_check(
@@ -598,13 +598,13 @@ async def audit_model_middleware() -> AuditSection:
         raise openai.AuthenticationError(
             message="Bad key",
             body={"error": {"message": "Bad key"}},
-            response=_AuthMockResponse(),
+            response=_AuthMockResponse(),  # type: ignore[arg-type]
         )
 
     retry_mw3 = ModelRetryMiddleware(max_attempts=3, initial_interval=0.01, backoff_factor=1.0)
     raised3 = False
     try:
-        await retry_mw3.awrap_model_call(_FakeRequest(), auth_fail_handler)
+        await retry_mw3.awrap_model_call(_FakeRequest(), auth_fail_handler)  # type: ignore[arg-type]
     except openai.AuthenticationError:
         raised3 = True
     checks.append(_check(
@@ -624,7 +624,7 @@ async def audit_model_middleware() -> AuditSection:
             provider=Provider.OPENROUTER,
             model="openai/gpt-4o-mini",
             openrouter_api_key=api_key,
-        )) if api_key else _FakeRequest()
+        )) if api_key else _FakeRequest()  # type: ignore[arg-type]
     )
 
     async def primary_fail_then_fallback_succeed(request: Any) -> AIMessage:
@@ -633,7 +633,7 @@ async def audit_model_middleware() -> AuditSection:
             raise openai.RateLimitError(
                 message="Rate limited",
                 body={"error": {"message": "Rate limited"}},
-                response=_MockResponse(),
+                response=_MockResponse(),  # type: ignore[arg-type]
             )
         fallback_calls.append(1)
         return AIMessage(content="fallback worked")
@@ -648,7 +648,7 @@ async def audit_model_middleware() -> AuditSection:
             req = _FakeRequest()
             req.model = model_or_fb
             result2 = await fallback_mw.awrap_model_call(
-                req,
+                req,  # type: ignore[arg-type]
                 primary_fail_then_fallback_succeed,
             )
             checks.append(_check(

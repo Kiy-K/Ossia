@@ -196,7 +196,7 @@ def _fetch_url_text(url: str, *, timeout: float = 10.0, max_chars: int = 4000) -
         for tag in soup(["script", "style", "noscript"]):
             tag.decompose()
         text = soup.get_text(separator="\n", strip=True)
-        return text[:max_chars]
+        return str(text)[:max_chars]
     except Exception as exc:  # noqa: BLE001
         return f"Error fetching {url}: {exc!s}"
 
@@ -570,7 +570,7 @@ def create_pr(
 # and fail loudly for URL fetches that need a real backend).
 
 
-def _get_tavily_client():
+def _get_tavily_client() -> Any:
     """Return a ``TavilyClient`` for the current TAVILY_API_KEY, or ``None``."""
     from tavily import TavilyClient
 

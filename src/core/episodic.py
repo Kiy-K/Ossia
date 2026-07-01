@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool, tool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
@@ -65,7 +66,7 @@ def _summarize_turns(turns: list[Any]) -> list[dict[str, Any]]:
 
 
 def make_episodic_recall_tool(
-    checkpointer: BaseCheckpointSaver | None,
+    checkpointer: BaseCheckpointSaver[Any] | None,
 ) -> BaseTool | None:
     """Build a ``recall_thread_turns`` tool, or ``None`` if no
     checkpointer is configured.
@@ -105,7 +106,7 @@ def make_episodic_recall_tool(
             Empty ``turns`` when the thread has no recorded
             checkpoints.
         """
-        config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
+        config: RunnableConfig = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
         try:
             raw = list(checkpointer.list(config, limit=limit))
         except Exception as exc:  # noqa: BLE001

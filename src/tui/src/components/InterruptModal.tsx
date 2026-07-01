@@ -11,6 +11,7 @@
  */
 
 import type { AppState } from "../types";
+import { Box, Text } from "./primitives";
 
 interface InterruptModalProps {
   state: AppState;
@@ -22,7 +23,7 @@ export function InterruptModal({ state }: InterruptModalProps) {
   const interruptList = state.interrupts.interrupts ?? [];
 
   return (
-    <box
+    <Box
       position="absolute"
       left={0}
       top={0}
@@ -33,7 +34,7 @@ export function InterruptModal({ state }: InterruptModalProps) {
       alignItems="center"
     >
       {/* Scrim background */}
-      <box
+      <Box
         position="absolute"
         left={0}
         top={0}
@@ -41,28 +42,28 @@ export function InterruptModal({ state }: InterruptModalProps) {
         height="100%"
       />
       {/* Modal box */}
-      <box
+      <Box
         flexDirection="column"
         padding={1}
         width={60}
       >
-        <text attributes={1}>⏸ Interrupted</text>
-        <box height={1} />
-        <text attributes={2}>The run requires intervention:</text>
-        <box height={1} />
+        <Text attributes={1}>⏸ Interrupted</Text>
+        <Box height={1} />
+        <Text attributes={2}>The run requires intervention:</Text>
+        <Box height={1} />
         {interruptList.length > 0
           ? interruptList.map((ir: Record<string, unknown>, i: number) => (
-              <box key={i} flexDirection="column" paddingLeft={1}>
-                <text attributes={2}>
+              <Box key={JSON.stringify(ir)} flexDirection="column" paddingLeft={1}>
+                <Text attributes={2}>
                   {i + 1}. {JSON.stringify(ir).slice(0, 120)}
-                </text>
-              </box>
+                </Text>
+              </Box>
             ))
           : null}
-        <box height={1} />
-        <text attributes={2}>──────────────────────────────</text>
-        <text attributes={2}>Use the API to resume or cancel</text>
-      </box>
-    </box>
+        <Box height={1} />
+        <Text attributes={2}>──────────────────────────────</Text>
+        <Text attributes={2}>Use the API to resume or cancel</Text>
+      </Box>
+    </Box>
   );
 }

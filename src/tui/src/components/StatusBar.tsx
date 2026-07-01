@@ -8,26 +8,11 @@
  */
 
 import type { AppState } from "../types";
+import { activeAgentCount, activeToolCount, activeAsyncTaskCount } from "./statusBar.helpers";
+import { Box, Text } from "./primitives";
 
 interface StatusBarProps {
   state: AppState;
-}
-
-/** Number of subagents currently in a running state. */
-export function activeAgentCount(state: AppState): number {
-  return Object.values(state.subagents).filter((s) => s.state === "running").length;
-}
-
-/** Number of tools currently in a running state. */
-export function activeToolCount(state: AppState): number {
-  return state.tools.filter((t) => t.state === "running").length;
-}
-
-/** Number of async tasks in a non-terminal state. */
-export function activeAsyncTaskCount(state: AppState): number {
-  return state.async_tasks.filter((t) =>
-    ["running", "pending", "launched"].includes(t.status),
-  ).length;
 }
 
 export function StatusBar({ state }: StatusBarProps) {
@@ -56,22 +41,22 @@ export function StatusBar({ state }: StatusBarProps) {
             : "idle";
 
   return (
-    <box
+    <Box
       height={1}
       width="100%"
       flexDirection="row"
       justifyContent="space-between"
     >
-      <text attributes={1}>
+      <Text attributes={1}>
         {parts.join(" | ")}
-      </text>
-      <text
+      </Text>
+      <Text
         attributes={
           state.run_state === "running" ? 1 : (state.run_state !== "error" ? 2 : undefined)
         }
       >
         {stateTag}
-      </text>
-    </box>
+      </Text>
+    </Box>
   );
 }

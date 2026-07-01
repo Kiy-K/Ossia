@@ -94,7 +94,7 @@ async def _connect(settings: Settings) -> AsyncConnection:
         raise ValueError("POSTGRES_URL must be set to use Postgres persistence.")
     return await AsyncConnection.connect(
         settings.postgres_url,
-        row_factory=dict_row,
+        row_factory=dict_row,  # type: ignore[arg-type]
         autocommit=True,
     )
 
@@ -115,7 +115,7 @@ async def get_checkpointer(
     conn = await _connect(settings)
     try:
         async with conn:
-            saver = AsyncPostgresSaver(conn)
+            saver = AsyncPostgresSaver(conn)  # type: ignore[arg-type]
             await saver.setup()
             yield saver
     finally:
@@ -138,7 +138,7 @@ async def get_store(
     conn = await _connect(settings)
     try:
         async with conn:
-            store = AsyncPostgresStore(conn)
+            store = AsyncPostgresStore(conn)  # type: ignore[arg-type]
             await store.setup()
             yield store
     finally:
@@ -173,7 +173,7 @@ async def seed_memory(
     if existing is not None:
         return False
     file_data = create_file_data(content or initial_agents_memory())
-    await store.aput(namespace, key, file_data)
+    await store.aput(namespace, key, file_data)  # type: ignore[arg-type]
     return True
 
 

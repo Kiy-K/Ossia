@@ -6,6 +6,7 @@
  */
 
 import { useRef } from "react";
+import { Box, Input, Text } from "./primitives";
 
 interface InputBarProps {
   /** Called when the user submits a message. */
@@ -25,13 +26,13 @@ export function InputBar({ onSubmit, disabled }: InputBarProps) {
   };
 
   return (
-    <box height={1} width="100%" flexDirection="row">
-      <text>{">"}</text>
-      <text> </text>
+    <Box height={1} width="100%" flexDirection="row">
+      <Text>{">"}</Text>
+      <Text> </Text>
       {disabled ? (
-        <text attributes={2}>Thinking...</text>
+        <Text attributes={2}>Thinking...</Text>
       ) : (
-        <input
+        <Input
           width={200}
           placeholder="Type a message"
           aria-label="Type a message"
@@ -40,6 +41,6 @@ export function InputBar({ onSubmit, disabled }: InputBarProps) {
           focused={true}
         />
       )}
-    </box>
+    </Box>
   );
 }

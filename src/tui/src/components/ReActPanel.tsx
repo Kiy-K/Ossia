@@ -14,6 +14,7 @@
  * ToolPanel — no permanent screen space is reserved when idle.
  */
 import type { AppState, ReActStep } from "../types";
+import { Box, Text } from "./primitives";
 
 /** Maximum number of steps to show at once. Keeps the panel compact. */
 const MAX_STEPS = 3;
@@ -32,27 +33,27 @@ function StepRow({ step }: { step: ReActStep }) {
   switch (step.kind) {
     case "thought":
       return (
-        <box height={1} flexDirection="row" width="100%">
-          <text attributes={2}>{step.time} </text>
-          <text attributes={1}>[Think] </text>
-          <text>{truncate(step.content)}</text>
-        </box>
+        <Box height={1} flexDirection="row" width="100%">
+          <Text attributes={2}>{step.time} </Text>
+          <Text attributes={1}>[Think] </Text>
+          <Text>{truncate(step.content)}</Text>
+        </Box>
       );
     case "action":
       return (
-        <box height={1} flexDirection="row" width="100%">
-          <text attributes={2}>{step.time} </text>
-          <text attributes={1}>[Act]   </text>
-          <text>{step.tool}  </text>
-          <text attributes={2}>{truncate(JSON.stringify(step.input), 40)}</text>
-        </box>
+        <Box height={1} flexDirection="row" width="100%">
+          <Text attributes={2}>{step.time} </Text>
+          <Text attributes={1}>[Act]   </Text>
+          <Text>{step.tool}  </Text>
+          <Text attributes={2}>{truncate(JSON.stringify(step.input), 40)}</Text>
+        </Box>
       );
     case "observation":
       return (
-        <box height={1} flexDirection="row" width="100%">
-          <text attributes={2}>{step.time} </text>
-          <text attributes={1}>[Obs {step.success ? "✓" : "✗"}] </text>
-          <text attributes={2}>
+        <Box height={1} flexDirection="row" width="100%">
+          <Text attributes={2}>{step.time} </Text>
+          <Text attributes={1}>[Obs {step.success ? "✓" : "✗"}] </Text>
+          <Text attributes={2}>
             {step.success
               ? truncate(
                   typeof step.output === "string"
@@ -60,8 +61,8 @@ function StepRow({ step }: { step: ReActStep }) {
                     : (() => { try { return JSON.stringify(step.output) ?? ""; } catch { return String(step.output); } })()
                 )
               : truncate(step.error ?? "error")}
-          </text>
-        </box>
+          </Text>
+        </Box>
       );
   }
 }
@@ -80,19 +81,19 @@ export function ReActPanel({ state }: ReActPanelProps) {
   const total = steps.length;
 
   return (
-    <box flexDirection="column" width="100%">
+    <Box flexDirection="column" width="100%">
       {/* Header row */}
-      <box height={1} flexDirection="row" width="100%">
-        <text attributes={2}>── ReAct </text>
-        <text attributes={2}>
+      <Box height={1} flexDirection="row" width="100%">
+        <Text attributes={2}>── ReAct </Text>
+        <Text attributes={2}>
           ({total} step{total !== 1 ? "s" : ""}
           {total > MAX_STEPS ? `, showing last ${MAX_STEPS}` : ""})
-        </text>
-      </box>
+        </Text>
+      </Box>
       {/* Step rows */}
-      {visible.map((step, i) => (
-        <StepRow key={i} step={step} />
+      {visible.map((step) => (
+        <StepRow key={`${step.time}-${step.kind}`} step={step} />
       ))}
-    </box>
+    </Box>
   );
 }

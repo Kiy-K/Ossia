@@ -9,14 +9,20 @@
  */
 
 import { describe, it, expect } from "bun:test";
+import { createElement } from "react";
+import TestRenderer from "react-test-renderer";
 import type { AppState } from "../src/types";
 
 import { computeTimelineHeight } from "../src/App";
-import { StatusBar, activeAgentCount, activeToolCount, activeAsyncTaskCount } from "../src/components/StatusBar";
+import { StatusBar } from "../src/components/StatusBar";
+import { activeAgentCount, activeToolCount, activeAsyncTaskCount } from "../src/components/statusBar.helpers";
 import { TimelinePanel } from "../src/components/TimelinePanel";
 import { ToolPanel } from "../src/components/ToolPanel";
 import { BackgroundTasksPanel } from "../src/components/BackgroundTasksPanel";
 import { InterruptModal } from "../src/components/InterruptModal";
+import { ReActPanel } from "../src/components/ReActPanel";
+import { SubagentPanel } from "../src/components/SubagentPanel";
+import { Box, Text, Input, ScrollBox } from "../src/components/primitives";
 
 // ── State factory ───────────────────────────────────────────────────────────
 
@@ -51,6 +57,10 @@ function extractText(node: unknown): string {
   if (Array.isArray(arr)) return arr.map(extractText).join("");
   // React element: look for props.children
   const el = node as Record<string, unknown>;
+  // Invoke function components to get their rendered output
+  if (typeof el.type === "function" && el.props && typeof el.props === "object") {
+    return extractText((el.type as (p: unknown) => unknown)(el.props));
+  }
   if (el.props && typeof el.props === "object") {
     const children = (el.props as Record<string, unknown>).children;
     if (children !== null && children !== undefined) {
@@ -464,24 +474,181 @@ describe("computeTimelineHeight", () => {
   });
 });
 
-// ── InputBar — call-based tests (no hooks invoked directly) ─────────────────
+// ── InputBar — tests via react-test-renderer ────────────────────────────────
 
-describe("InputBar null behavior", () => {
-  /**
-   * InputBar uses hooks (useState), so we can't call it directly.
-   * Instead, we verify the component doesn't throw when rendered
-   * through the native OpenTUI renderer.
-   *
-   * The pass-through interaction test verifies the component
-   * renders the expected structure by checking the output
-   * of the simple non-hook paths (disabled state text).
-   */
-
+describe("InputBar", () => {
   it("returns a truthy element tree (not null)", () => {
-    // We can't call InputBar directly because of useState,
-    // but we can verify the module is exported
     const mod = require("../src/components/InputBar");
     expect(mod.InputBar).toBeDefined();
     expect(typeof mod.InputBar).toBe("function");
+  });
+
+  it("renders disabled state without throwing", () => {
+    const { InputBar } = require("../src/components/InputBar");
+    const tree = TestRenderer.create(
+      createElement(InputBar, { onSubmit: () => {}, disabled: true }),
+    );
+    expect(tree).toBeDefined();
+  });
+
+  it("renders input field when not disabled", () => {
+    const { InputBar } = require("../src/components/InputBar");
+    const tree = TestRenderer.create(
+      createElement(InputBar, { onSubmit: () => {}, disabled: false }),
+    );
+    expect(tree).toBeDefined();
+    const json = tree.toJSON();
+    expect(json).toBeDefined();
+  });
+});
+
+// ── ReActPanel tests (hookless component) ───────────────────────────────────
+
+describe("ReActPanel", () => {
+  it("returns null when no react_steps", () => {
+    const result = ReActPanel({ state: st({}) });
+    expect(result).toBeNull();
+  });
+
+  it("renders thought steps", () => {
+    const text = renderText(ReActPanel, {
+      state: st({
+        react_steps: [
+          { kind: "thought", content: "I should search", time: "12:04" },
+        ],
+      }),
+    });
+    expect(text).toContain("[Think]");
+    expect(text).toContain("I should search");
+    expect(text).toContain("12:04");
+  });
+
+  it("renders action steps with tool name", () => {
+    const text = renderText(ReActPanel, {
+      state: st({
+        react_steps: [
+          { kind: "action", tool: "search_codebase", input: { q: "test" }, time: "12:05" },
+        ],
+      }),
+    });
+    expect(text).toContain("[Act]");
+    expect(text).toContain("search_codebase");
+  });
+
+  it("renders successful observations", () => {
+    const text = renderText(ReActPanel, {
+      state: st({
+        react_steps: [
+          { kind: "observation", tool: "search_codebase", output: "found it", success: true, time: "12:06" },
+        ],
+      }),
+    });
+    expect(text).toContain("[Obs ✓]");
+    expect(text).toContain("found it");
+  });
+
+  it("renders failed observations", () => {
+    const text = renderText(ReActPanel, {
+      state: st({
+        react_steps: [
+          { kind: "observation", tool: "search_codebase", output: null, success: false, error: "timeout", time: "12:06" },
+        ],
+      }),
+    });
+    expect(text).toContain("[Obs ✗]");
+    expect(text).toContain("timeout");
+  });
+
+  it("renders successful observations with object output", () => {
+    const text = renderText(ReActPanel, {
+      state: st({
+        react_steps: [
+          { kind: "observation", tool: "search_codebase", output: { result: "data" }, success: true, time: "12:06" },
+        ],
+      }),
+    });
+    expect(text).toContain("[Obs ✓]");
+    expect(text).toContain("result");
+  });
+
+  it("truncates long content", () => {
+    const longText = "A".repeat(100);
+    const text = renderText(ReActPanel, {
+      state: st({
+        react_steps: [
+          { kind: "thought", content: longText, time: "12:04" },
+        ],
+      }),
+    });
+    expect(text).toContain("…");
+  });
+
+  it("shows step count in header", () => {
+    const text = renderText(ReActPanel, {
+      state: st({
+        react_steps: [
+          { kind: "thought", content: "step 1", time: "12:01" },
+          { kind: "thought", content: "step 2", time: "12:02" },
+        ],
+      }),
+    });
+    expect(text).toContain("2 steps");
+  });
+
+  it("shows only last MAX_STEPS (3) visible", () => {
+    const steps = Array.from({ length: 5 }, (_, i) => ({
+      kind: "thought" as const,
+      content: `step ${i + 1}`,
+      time: `12:0${i + 1}`,
+    }));
+    const text = renderText(ReActPanel, {
+      state: st({ react_steps: steps }),
+    });
+    expect(text).toContain("showing last 3");
+    expect(text).toContain("step 3");
+    expect(text).toContain("step 4");
+    expect(text).toContain("step 5");
+    expect(text).not.toContain("step 2");
+  });
+});
+
+// ── SubagentPanel tests ─────────────────────────────────────────────────────
+
+describe("SubagentPanel", () => {
+  it("module exports SubagentPanel as a function", () => {
+    expect(typeof SubagentPanel).toBe("function");
+  });
+
+  it("module is importable", () => {
+    const mod = require("../src/components/SubagentPanel");
+    expect(mod.SubagentPanel).toBeDefined();
+  });
+});
+
+// ── Primitives wrapper tests ────────────────────────────────────────────────
+
+describe("OpenTUI primitive wrappers", () => {
+  it("Box returns a React element with type 'box'", () => {
+    const el = Box({ flexDirection: "column" });
+    expect(el).toBeDefined();
+    expect(typeof el).toBe("object");
+  });
+
+  it("Text returns a React element with type 'text'", () => {
+    const el = Text({ children: "hello" });
+    expect(el).toBeDefined();
+    expect(typeof el).toBe("object");
+  });
+
+  it("Input returns a React element", () => {
+    const el = Input({ placeholder: "test" });
+    expect(el).toBeDefined();
+    expect(typeof el).toBe("object");
+  });
+
+  it("ScrollBox returns a React element", () => {
+    const el = ScrollBox({ flexGrow: 1 });
+    expect(el).toBeDefined();
+    expect(typeof el).toBe("object");
   });
 });

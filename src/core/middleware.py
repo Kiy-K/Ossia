@@ -426,7 +426,7 @@ class ModelRetryMiddleware(AgentMiddleware):
         for attempt in range(1, self.max_attempts + 1):
             try:
                 return await handler(request)
-            except _TRANSIENT_MODEL_EXCEPTIONS as exc:  # type: ignore[misc]
+            except _TRANSIENT_MODEL_EXCEPTIONS as exc:
                 last_exc = exc
                 if attempt >= self.max_attempts:
                     break
@@ -472,20 +472,20 @@ class ModelFallbackMiddleware(AgentMiddleware):
     async def awrap_model_call(self, request: ModelRequest, handler: Any) -> Any:
         try:
             return await handler(request)
-        except _TRANSIENT_MODEL_EXCEPTIONS:  # type: ignore[misc]
+        except _TRANSIENT_MODEL_EXCEPTIONS:
             original_model = request.model
             request.model = self.fallback_model
             logger.info(
                 "Primary model %s failed; falling back to %s",
-                original_model.model,
-                self.fallback_model.model,
+                getattr(original_model, "model", "unknown"),
+                getattr(self.fallback_model, "model", "unknown"),
             )
             try:
                 return await handler(request)
-            except _TRANSIENT_MODEL_EXCEPTIONS:  # type: ignore[misc]
+            except _TRANSIENT_MODEL_EXCEPTIONS:
                 logger.warning(
                     "Fallback model %s also failed; collapsing to original model",
-                    self.fallback_model.model,
+                    getattr(self.fallback_model, "model", "unknown"),
                 )
                 request.model = original_model
                 raise
@@ -584,7 +584,7 @@ class RevisionLoopCapMiddleware(AgentMiddleware):
         return await handler(request)
 
 
-def make_caller_context_middleware(base_prompt: str) -> AgentMiddleware:
+def make_caller_context_middleware(base_prompt: str) -> AgentMiddleware[Any, Any, Any]:
     """Create a dynamic-prompt middleware that injects runtime caller context.
 
     Uses the ``@dynamic_prompt`` pattern from Deep Agents context engineering:

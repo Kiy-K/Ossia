@@ -14,6 +14,7 @@
  */
 
 import type { AppState, AsyncTaskState } from "../types";
+import { Box, Text } from "./primitives";
 
 interface BackgroundTasksPanelProps {
   state: AppState;
@@ -36,27 +37,27 @@ export function BackgroundTasksPanel({ state }: BackgroundTasksPanelProps) {
   if (visible.length === 0) return null;
 
   return (
-    <box flexDirection="column" width="100%">
-      <box height={1} flexDirection="row" width="100%">
-        <text attributes={1}>Background</text>
+    <Box flexDirection="column" width="100%">
+      <Box height={1} flexDirection="row" width="100%">
+        <Text attributes={1}>Background</Text>
         {runningTasks.length > 0 ? (
-          <text attributes={2}> {runningTasks.length} active</text>
+          <Text attributes={2}> {runningTasks.length} active</Text>
         ) : null}
-      </box>
+      </Box>
 
       {visible.map((task: AsyncTaskState, i: number) => (
-        <box key={task.task_id} height={1} flexDirection="row" width="100%">
-          <text attributes={2}>{i + 1}.</text>
-          <text> {task.agent_name}</text>
-          <text attributes={2}>
+        <Box key={task.task_id} height={1} flexDirection="row" width="100%">
+          <Text attributes={2}>{i + 1}.</Text>
+          <Text> {task.agent_name}</Text>
+          <Text attributes={2}>
             {task.status === "failed"
               ? ` failed${task.error ? `: ${task.error}` : ""}`
               : task.status === "completed"
                 ? " complete"
                 : " running"}
-          </text>
-        </box>
+          </Text>
+        </Box>
       ))}
-    </box>
+    </Box>
   );
 }

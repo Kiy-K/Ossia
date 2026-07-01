@@ -9,6 +9,7 @@
 
 import { useState } from "react";
 import type { AppState, SubagentState } from "../types";
+import { Box, Text } from "./primitives";
 
 interface SubagentPanelProps {
   state: AppState;
@@ -33,20 +34,20 @@ export function SubagentPanel({ state }: SubagentPanelProps) {
   }
 
   return (
-    <box flexDirection="column" width="100%">
+    <Box flexDirection="column" width="100%">
       {/* Header */}
-      <box height={1} flexDirection="row" width="100%">
-        <text attributes={1}>Subagents</text>
-        {failedCount > 0 ? <text> failed:{failedCount}</text> : null}
-        {completedCount > 0 ? <text attributes={2}> ({completedCount} done)</text> : null}
-      </box>
+      <Box height={1} flexDirection="row" width="100%">
+        <Text attributes={1}>Subagents</Text>
+        {failedCount > 0 ? <Text> failed:{failedCount}</Text> : null}
+        {completedCount > 0 ? <Text attributes={2}> ({completedCount} done)</Text> : null}
+      </Box>
 
       {/* Active agents */}
       {activeAgents.map((agent: SubagentState) => {
         const isExpanded = expanded[agent.name] ?? false;
         return (
-          <box key={agent.name} flexDirection="column" width="100%">
-            <              box
+          <Box key={agent.name} flexDirection="column" width="100%">
+            <Box
               height={1}
               flexDirection="row"
               width="100%"
@@ -58,17 +59,17 @@ export function SubagentPanel({ state }: SubagentPanelProps) {
                 }))
               }
             >
-              <text attributes={2}>
+              <Text attributes={2}>
                 {isExpanded ? "v" : ">"}
-              </text>
-              <text> </text>
-              <text
+              </Text>
+              <Text> </Text>
+              <Text
                 attributes={agent.state === "error" ? 1 : 2}
               >
                 {agent.name}
-              </text>
-              <text> </text>
-              <text
+              </Text>
+              <Text> </Text>
+              <Text
                 attributes={agent.state === "running" ? 2 : undefined}
               >
                 {agent.state === "error"
@@ -76,26 +77,26 @@ export function SubagentPanel({ state }: SubagentPanelProps) {
                   : agent.state === "interrupted"
                     ? "interrupted"
                     : "running"}
-              </text>
-            </box>
+              </Text>
+            </Box>
             {/* Expanded: show scoped messages */}
             {isExpanded && agent.messages.length > 0 ? (
-              <box paddingLeft={2} flexDirection="column">
+              <Box paddingLeft={2} flexDirection="column">
                 {agent.messages.map((msg, i) => (
-                  <text key={i} attributes={2}>
+                  <Text key={i} attributes={2}>
                     {msg}
-                  </text>
+                  </Text>
                 ))}
-              </box>
+              </Box>
             ) : null}
             {isExpanded && agent.error ? (
-              <box paddingLeft={2}>
-                <text attributes={2}>error: {agent.error}</text>
-              </box>
+              <Box paddingLeft={2}>
+                <Text attributes={2}>error: {agent.error}</Text>
+              </Box>
             ) : null}
-          </box>
+          </Box>
         );
       })}
-    </box>
+    </Box>
   );
 }
