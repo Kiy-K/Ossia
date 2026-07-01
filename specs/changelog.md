@@ -31,6 +31,50 @@ adds release automation via the Makefile.
 - **Release automation** — Version bump, tag, and changelog entry now
   follow a documented workflow via `make bump-version VERSION=x.y.z`
 
+## v0.4.0 — 2026-07-01 — CI stability: warning cleanup, workflow consolidation, paths-ignore fix
+
+**Non-breaking** for the HTTP contract. No routes changed. This release
+cleans up Python test warnings, removes the redundant TUI workflow, fixes
+the release job skipping on tag pushes, and runs a clean static analysis
+pass.
+
+### Warning cleanup (Python tests)
+
+8 deprecation warnings from third-party dependencies were eliminated:
+
+- **LangChainBetaWarning** (3 occurrences) — CodeInterpreterMiddleware and
+  v3 streaming protocol are experimental APIs we use intentionally.
+  Suppressed via `pytest_configure` hook in `tests/conftest.py`.
+- **DeprecationWarning** (2 occurrences) — `slowapi` uses
+  `asyncio.iscoroutinefunction` deprecated in Python 3.14+. Suppressed
+  via module-level filter.
+- **StarletteDeprecationWarning** (3 occurrences) — `fastapi.testclient`
+  uses httpx with starlette.testclient, deprecated in favor of httpx2.
+  Suppressed via message-based filter to avoid importing the class
+  (which would trigger the warning during import).
+
+All 287 tests now pass with **0 warnings**.
+
+### Workflow consolidation
+
+- **Redundant `tui-test.yml` removed** — standalone workflow was duplicating
+  the `test-tui` job already in `release.yml`. README badge updated to point
+  to the release workflow.
+- **`paths-ignore` removed from push trigger** — The `paths-ignore` list
+  included `README.md`, `.gitignore`, `LICENSE`, and `docs/**` — all files
+  that changed in the v0.3.0 release commits. When the tag push event was
+  evaluated, GitHub saw these files in the diff and skipped the entire
+  workflow run — including the release job. Fixed by removing `paths-ignore`
+  from `push` while keeping it on `pull_request` (which don't trigger
+  releases).
+- **Duplicate comment line** fixed in release.yml.
+
+### Static analysis pass
+
+- **ruff**: 0 errors on `src`, `tests`, `scripts`
+- **mypy**: 37 source files clean — 0 errors
+- **pyright**: 0 errors, 0 warnings, 0 informational
+
 ## v0.2.0 — 2026-07-01 — CI green: mypy/pyright/pytest/tsc/coverage all pass
 
 **Non-breaking** for the HTTP contract. No routes changed. This release

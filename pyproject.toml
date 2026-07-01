@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ossia"
-version = "0.3.0"
+version = "0.4.0"
 description = "Production-ready support agent for the Nebius Serverless Challenge"
 readme = "README.md"
 requires-python = ">=3.11,<4.0"
@@ -84,6 +84,12 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 pythonpath = ["src"]
+filterwarnings = [
+    # slowapi uses asyncio.iscoroutinefunction (deprecated in Python 3.14+)
+    "ignore::DeprecationWarning:slowapi",
+    # LangChain beta APIs we use intentionally
+    "ignore::langchain_core._api.LangChainBetaWarning",
+]
 
 [tool.ruff]
 line-length = 100
