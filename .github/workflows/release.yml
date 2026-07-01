@@ -19,7 +19,11 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PYTHON_VERSION: "3.12"
+  # numpy 2.2+ ships type stubs that use the PEP 695 ``type`` statement
+  # (Python 3.13+). CI on 3.12 fails mypy with "Type statement is only
+  # supported in Python 3.12 and greater". Pin to 3.13 — the lowest
+  # classifier that parses numpy's stubs.
+  PYTHON_VERSION: "3.13"
   BUN_VERSION: "latest"
 
 jobs:
