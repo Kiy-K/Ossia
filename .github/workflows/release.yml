@@ -53,10 +53,10 @@ jobs:
       - name: Lint with ruff
         run: .venv/bin/python -m ruff check src tests scripts
 
-      - name: Typecheck with mypy
-        run: .venv/bin/python -m mypy src
-
       - name: Typecheck with pyright
+        # ponytail: mypy 2.1 cannot parse numpy 2.2+ PEP 695 stubs;
+        # pyright handles them correctly. Re-add mypy when the floor
+        # bumps to 1.18+ / 2.2+.
         run: .venv/bin/python -m pyright src
 
       - name: Run Python tests with coverage

@@ -78,7 +78,6 @@ dev = [
     "pytest-asyncio>=0.25.0",
     "pytest-cov>=6.0.0",
     "pytest-timeout>=2.3.0",
-    "mypy>=1.14.0",
     "pyright>=1.1.400",
     "ruff>=0.9.0",
 ]
@@ -123,14 +122,6 @@ warn_unused_configs = true
 [[tool.mypy.overrides]]
 module = ["bs4", "tavily", "langchain_ollama"]
 ignore_missing_imports = true
-
-# numpy 2.2+ ships type stubs that use PEP 695 ``type`` statement syntax
-# (Python 3.13+). mypy on 3.13 chokes on these even though 3.14 parses
-# them fine. Skip the stubs entirely; we don't need numpy-typed code
-# paths and the runtime library is fine without type info.
-[[tool.mypy.overrides]]
-module = ["numpy", "numpy.*"]
-ignore_errors = true
 
 [tool.pyright]
 venvPath = "."

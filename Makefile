@@ -20,7 +20,6 @@ DOCKER    := docker
 COMPOSE   := docker compose
 PYTEST    := $(PYTHON) -m pytest
 RUFF      := $(PYTHON) -m ruff
-MYPY      := $(PYTHON) -m mypy
 PYRIGHT   := $(PYTHON) -m pyright
 MONITORING_PROFILE := --profile monitoring
 
@@ -72,8 +71,10 @@ format: ## Format code with ruff
 lint: ## Lint with ruff
 	$(RUFF) check src tests scripts
 
-typecheck: ## Typecheck with mypy and pyright
-	$(MYPY) src
+typecheck: ## Typecheck with pyright
+	# ponytail: mypy 2.1 cannot parse numpy 2.2+ PEP 695 stubs;
+	# pyright handles them correctly. Re-add mypy when it supports
+	# PEP 695 stub parsing.
 	$(PYRIGHT) src
 
 check: lint typecheck ## Run all static checks (lint + typecheck)
