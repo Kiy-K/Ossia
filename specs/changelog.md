@@ -4,6 +4,33 @@ Human-readable record of breaking and notable non-breaking changes to the
 Ossia HTTP contract. The machine-readable record is the git history of
 `openapi.checked.json`.
 
+## v0.3.0 — 2026-07-01 — docs overhaul, workflow cleanup, release automation
+
+**Non-breaking** for the HTTP contract. No routes changed. This release
+overhauls project documentation, fixes release workflow formatting, and
+adds release automation via the Makefile.
+
+### Documentation overhaul
+
+- **README.md** — Updated coverage badge (87%→84%), added "clean repo
+  root" problem/approach row, added TUI subsystem to architecture table,
+  added new "Finishing Touches" section documenting TUI panels
+- **src/tui/README.md** — Complete rewrite from one-liner placeholder to
+  full TUI documentation: architecture overview, event type reference,
+  project structure tree, testing guide, coverage badge tracking
+- **HANDOFF.md** — Full refresh to match current repo layout: updated
+  `src/ossia/`→`src/core/` references, 5→14 ADRs, updated quick start
+  to use Makefile, added TUI and monitoring stack sections
+- **.gitignore** — Added `.kilocode/` to keep AI tool state directories
+  out of version control
+
+### Workflow & release
+
+- **Release workflow** — Fixed missing blank line in YAML between Docker
+  labels and release notes step
+- **Release automation** — Version bump, tag, and changelog entry now
+  follow a documented workflow via `make bump-version VERSION=x.y.z`
+
 ## v0.2.0 — 2026-07-01 — CI green: mypy/pyright/pytest/tsc/coverage all pass
 
 **Non-breaking** for the HTTP contract. No routes changed. This release

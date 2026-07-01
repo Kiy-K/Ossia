@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ossia"
-version = "0.2.0"
+version = "0.3.0"
 description = "Production-ready support agent for the Nebius Serverless Challenge"
 readme = "README.md"
 requires-python = ">=3.11,<4.0"
