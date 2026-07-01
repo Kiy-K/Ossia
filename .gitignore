@@ -88,7 +88,13 @@ logs/
 
 # uv
 .venv/
-uv.lock
+# uv.lock is intentionally NOT ignored — it's a real, version-controlled
+# file per Astral's guidance for applications. See
+# https://docs.astral.sh/uv/concepts/projects/sync/#applications-vs-libraries
+# for the applications-vs-libraries distinction. Libraries (which are
+# installed into other projects' environments) should not commit
+# uv.lock; applications (which are deployed as their own environments)
+# should. Ossia is an application.
 
 # LangChain cache
 .langchain/
