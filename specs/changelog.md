@@ -31,6 +31,20 @@ adds release automation via the Makefile.
 - **Release automation** — Version bump, tag, and changelog entry now
   follow a documented workflow via `make bump-version VERSION=x.y.z`
 
+## v0.4.1 — 2026-07-01 — fix: lowercase Docker tags for GHCR compliance
+
+**Non-breaking** for the HTTP contract. No routes changed. This patch
+fixes the Docker image push that failed on the v0.4.0 tag because the
+repository name `Kiy-K/Ossia` contains uppercase letters, which are
+not allowed in Docker/GHCR tags.
+
+### Workflow fix
+
+- **Docker tags lowercased** — `ghcr.io/${{ github.repository }}` changed
+  to `ghcr.io/${{ lower(github.repository) }}` so that `Kiy-K/Ossia`
+  becomes `kiy-k/ossia` in the image tag. Labels (OCI annotations) are
+  unaffected — they have no lowercase requirement.
+
 ## v0.4.0 — 2026-07-01 — CI stability: warning cleanup, workflow consolidation, paths-ignore fix
 
 **Non-breaking** for the HTTP contract. No routes changed. This release
