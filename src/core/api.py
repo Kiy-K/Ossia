@@ -70,6 +70,7 @@ from core.context import OssiaContext  # noqa: E402
 from core.eval import run_eval  # noqa: E402
 from core.events import EventNormalizer, get_thread_event_buffer, serialize_sse  # noqa: E402
 from core.memory import get_checkpointer  # noqa: E402
+from core.redis_client import close_redis  # noqa: E402
 from core.request_context import clear_request_context, set_request_context  # noqa: E402
 from core.schemas import (  # noqa: E402
     Artifact,
@@ -192,15 +193,35 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
     _require_api_key_at_startup()
     settings = get_settings()
-    if settings.enable_human_review and not settings.postgres_url:
+    if settings.enable_human_review and not (settings.postgres_url or settings.redis_url):
         raise RuntimeError(
-            "POSTGRES_URL is required when ENABLE_HUMAN_REVIEW is true, because "
-            "human-in-the-loop interrupts need a checkpointer to persist state."
+            "ENABLE_HUMAN_REVIEW=true requires a checkpointer: set "
+            "POSTGRES_URL or REDIS_URL. Human-in-the-loop interrupts "
+            "need persistent state."
         )
     async with AsyncExitStack() as stack:
         checkpointer = None
-        if settings.postgres_url:
+        if settings.redis_url:
+            from core.memory import get_redis_checkpointer
+
+            checkpointer = await stack.enter_async_context(
+                get_redis_checkpointer(settings)
+            )
+        elif settings.postgres_url:
             checkpointer = await stack.enter_async_context(get_checkpointer(settings))
+        # Load the knowledge base from KB_SOURCE_URLS into Redis
+        # (when set). Runs before build_agent_async so the tool has
+        # docs to find on the first request. Failures are logged
+        # and the agent still boots with an empty KB.
+        from core.kb_loader import load_kb_into_redis, parse_source_urls
+        from core.redis_client import get_async_redis
+
+        urls = parse_source_urls(settings.kb_source_urls)
+        if urls:
+            try:
+                await load_kb_into_redis(get_async_redis(), urls)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("KB load failed: %s; agent will run with empty KB", exc)
         agent = await stack.enter_async_context(
             build_agent_async(
                 settings=settings,
@@ -236,6 +257,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             # connection) and MCP toolkit sessions cleanly in reverse order.
             # Active HTTP requests that entered before the signal are given a
             # chance to complete; uvicorn handles the drain timeout internally.
+            await close_redis()
             logger.info("Shutting down — draining active requests.")
 
 

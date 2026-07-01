@@ -126,6 +126,54 @@ async def test_memory_persists_across_threads() -> None:
     assert "From thread-2" in final
 
 
+async def test_memory_scope_agent_shares_namespace_across_callers() -> None:
+    """When Settings.memory_scope == 'agent', the caller hash is ignored
+    and the base namespace is returned. All callers read/write the same
+    memory file (DeepAgents agent-scoped pattern)."""
+    from core.agent import _make_memory_namespace
+    from core.config import get_settings
+    from core.request_context import caller_var
+
+    settings = get_settings()
+    original_scope = settings.memory_scope
+    caller_var.set("user-abc")
+    try:
+        settings.memory_scope = "agent"
+        ns = _make_memory_namespace(AGENT_NAMESPACE)
+        assert ns == AGENT_NAMESPACE, f"agent scope must ignore caller, got {ns}"
+
+        # Different caller, same scope → same namespace.
+        caller_var.set("user-def")
+        ns2 = _make_memory_namespace(AGENT_NAMESPACE)
+        assert ns2 == ns, "agent scope must collapse all callers to the same namespace"
+
+        # Back to user scope → caller prepended.
+        settings.memory_scope = "user"
+        ns3 = _make_memory_namespace(AGENT_NAMESPACE)
+        assert ns3 == ("ossia", "user-def"), f"user scope must include caller, got {ns3}"
+    finally:
+        settings.memory_scope = original_scope
+        caller_var.set(None)
+
+
+async def test_seed_policy_writes_to_policy_namespace() -> None:
+    """seed_policy populates the read-only /policies/ namespace;
+    subsequent calls are idempotent."""
+    from core.memory import POLICY_NAMESPACE, seed_policy
+
+    store = InMemoryStore()
+    created = await seed_policy(store, "/policies/compliance.md", "no PII logging")
+    assert created is True
+    item = await store.aget(POLICY_NAMESPACE, "/policies/compliance.md")
+    assert read_memory_item(item) == "no PII logging"
+
+    # Idempotent: re-seeding is a no-op.
+    created_again = await seed_policy(store, "/policies/compliance.md", "DIFFERENT")
+    assert created_again is False
+    item2 = await store.aget(POLICY_NAMESPACE, "/policies/compliance.md")
+    assert read_memory_item(item2) == "no PII logging"
+
+
 if __name__ == "__main__":
     # Allow ``python -m tests.test_memory`` for quick local debugging.
     asyncio.run(test_seed_memory_creates_file_on_fresh_store())

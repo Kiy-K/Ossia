@@ -3,8 +3,8 @@
 The episodic tool wraps the agent's checkpointer so the model can
 recall previous turns of a specific thread. The checkpointer is
 thread-scoped (per ``BaseCheckpointSaver`` docs); cross-thread
-enumeration requires the LangGraph SDK's ``client.threads.search``
-and is out of scope here.
+enumeration requires the LangGraph SDK's ``client.threads.search`` and
+is out of scope here.
 
 Tests cover:
 1. The factory returns ``None`` without a checkpointer.
@@ -15,6 +15,9 @@ Tests cover:
    recorded checkpoints.
 5. Recall is thread-isolated: messages on thread A are not in
    thread B's result.
+6. ``search_threads`` factory returns ``None`` without a search_fn.
+7. ``search_threads`` returns empty when no caller is set.
+8. ``search_threads`` filters out other callers' threads.
 """
 
 from __future__ import annotations
@@ -23,7 +26,8 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import START, MessagesState, StateGraph
 
-from core.episodic import make_episodic_recall_tool
+from core.episodic import make_episodic_recall_tool, make_search_threads_tool
+from core.request_context import caller_var
 
 
 def _build_echo_graph(saver: InMemorySaver):
@@ -110,4 +114,68 @@ async def test_recall_does_not_leak_across_threads() -> None:
     assert "beta only" not in a_contents
     assert "beta only" in b_contents
     assert "alpha only" not in b_contents
+
+
+# ── search_threads tests ──────────────────────────────────────────────────
+
+
+def test_search_threads_factory_returns_none_without_search_fn() -> None:
+    """No search backend => no search tool. Caller skips wiring."""
+    assert make_search_threads_tool(None) is None
+
+
+async def test_search_threads_returns_empty_without_caller() -> None:
+    """Without a caller context, search_threads returns no results."""
+
+    async def fake_search_fn(query: str, limit: int) -> list[dict]:
+        return [{"thread_id": "any:t1", "snippet": "x"}]
+
+    tool = make_search_threads_tool(fake_search_fn)
+    assert tool is not None
+    result = await tool.ainvoke({"query": "anything", "limit": 5})
+    assert result == {"threads": []}
+
+
+async def test_search_threads_filters_by_current_caller() -> None:
+    """Only threads belonging to the current caller are returned,
+    even if the search_fn returns other callers' threads."""
+
+    async def fake_search_fn(query: str, limit: int) -> list[dict]:
+        return [
+            {"thread_id": "user-a:t1", "snippet": "match for a"},
+            {"thread_id": "user-b:t1", "snippet": "match for b"},
+            {"thread_id": "user-a:t2", "snippet": "another for a"},
+        ]
+
+    tool = make_search_threads_tool(fake_search_fn)
+    assert tool is not None
+    caller_var.set("user-a")
+    try:
+        result = await tool.ainvoke({"query": "match", "limit": 5})
+        thread_ids = [t["thread_id"] for t in result["threads"]]
+        assert "user-a:t1" in thread_ids
+        assert "user-a:t2" in thread_ids
+        assert "user-b:t1" not in thread_ids
+        assert len(result["threads"]) == 2
+    finally:
+        caller_var.set(None)
+
+
+async def test_search_threads_respects_limit() -> None:
+    """The ``limit`` argument caps the number of returned threads."""
+
+    async def fake_search_fn(query: str, limit: int) -> list[dict]:
+        return [
+            {"thread_id": f"user-a:t{i}", "snippet": f"hit {i}"}
+            for i in range(limit)
+        ]
+
+    tool = make_search_threads_tool(fake_search_fn)
+    assert tool is not None
+    caller_var.set("user-a")
+    try:
+        result = await tool.ainvoke({"query": "x", "limit": 2})
+        assert len(result["threads"]) == 2
+    finally:
+        caller_var.set(None)
 

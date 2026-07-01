@@ -48,6 +48,16 @@ dependencies = [
     "ddgs>=9.0.0",
     # Password/key hashing for caller-id derivation
     "argon2-cffi>=23.1.0",
+    # Optional: Redis cache + lock. When REDIS_URL is unset, all
+    # Redis-backed features degrade gracefully (no-op) and the
+    # agent runs exactly as before. Adds a process-level connection
+    # pool; not required for any HTTP route.
+    "redis>=5.0.0,<6.0.0",
+    # Optional: langgraph-redis. When REDIS_URL is set, replaces the
+    # Postgres checkpointer + store with the Redis implementations.
+    # Requires Redis 8+ (or Redis Stack) — the library uses
+    # RedisJSON + RediSearch modules for index creation.
+    "langgraph-checkpoint-redis>=0.5.0",
     # HTTP server / utilities
     "fastapi>=0.115.0",
     "uvicorn>=0.34.0",

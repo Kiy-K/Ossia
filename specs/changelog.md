@@ -1,8 +1,105 @@
 # Spec changelog
-
 Human-readable record of breaking and notable non-breaking changes to the
 Ossia HTTP contract. The machine-readable record is the git history of
 `openapi.checked.json`.
+
+## Unreleased — Redis cache + memory write lock
+
+**Non-breaking** for the HTTP contract. No routes changed. Adds
+optional Redis support for surface #1 (tool result cache) and
+surface #4 (concurrent-write lock on `seed_memory`).
+
+### New module: `core/redis_client.py`
+
+- Lazy async + sync Redis singletons, both return ``None`` when
+  ``REDIS_URL`` is unset so the agent runs exactly as before.
+- Single process-wide connection pool; `close_redis()` runs in the
+  FastAPI lifespan teardown.
+- `reset_redis()` for tests; no global state leaks between test
+  functions.
+
+### New module: `core/cache.py`
+
+Three primitives, all graceful no-op without Redis:
+
+- `cached_fetch(prefix, *key_parts, ttl, fetch)` — async.
+- `cached_fetch_sync(prefix, *key_parts, ttl, fetch)` — sync.
+- `redis_lock(name, *key_parts, ttl)` — async context manager.
+
+Cache contract: stores and returns `bytes`; callers serialize
+(`model_dump_json().encode()`) and deserialize (`model_validate_json(b)`).
+Lock semantics: yields `True` on proceed (no contention or no
+Redis), `False` on contention; body always runs.
+
+### Wired: `seed_memory` write lock
+
+`seed_memory` now wraps its get-then-put critical section in
+`redis_lock("seed_memory", *namespace, key)`. Two concurrent first
+boots both see "absent" without the lock and both write; with the
+lock, the second writer sees the first's result and skips. When
+`REDIS_URL` is unset, the lock is a no-op (last-write-wins, the
+previous behavior).
+
+### Not wired (yet): tool result cache
+
+The `cached_fetch` / `cached_fetch_sync` helpers are ready but no
+tool has been wrapped yet. Pydantic round-trip is required for any
+sync tool returning a model (`internet_search`, `fetch_url`), which
+is a larger refactor. Follow-up PR wraps a single hot tool (likely
+`fetch_url`) and uses Redis as the cache backend. Skip-pattern:
+helper exists + tested + no usage = documented in module docstring
+for the next caller to pick up.
+
+### Deps / env
+
+- `pyproject.toml`: added `redis>=5.0.0,<6.0.0`. Async client
+  ships in the base package; no extras.
+- `.env.example`: new `REDIS_URL=redis://localhost:6379/0` (commented
+  out by default). When unset, all Redis features are no-ops.
+- No Docker compose service: the user brings their own Redis
+  (managed, sidecar, or container). Matches the existing
+  OSSIA_* env-only style.
+
+## Unreleased — memory: agent-scope, cross-thread search, read-only policies
+
+**Non-breaking** for the HTTP contract. No routes changed. Closes three
+gaps from the DeepAgents memory docs that the codebase didn't yet
+implement.
+
+### Memory scope (`Settings.memory_scope`)
+
+- New `Settings.memory_scope: Literal["user", "agent"]` (default
+  `"user"`, current behavior).
+- `"user"` (default) — per-API-key memory namespace. Matches existing
+  production behavior; no caller can see another's memory.
+- `"agent"` — all callers share one memory namespace, matching the
+  DeepAgents agent-scoped pattern (`namespace=(assistant_id,)`). The
+  agent can learn and improve across all users; preferences that
+  should remain per-user should use a separate path.
+- No migration needed; existing user-scoped stores are untouched.
+
+### Cross-thread episodic search (`search_threads` tool)
+
+- New agent tool: `search_threads(query, limit=5)`.
+- Backed by a Postgres ILIKE query on the `checkpoints` table,
+  caller-scoped via the same `_thread_id_for` prefix as the rest of
+  the API.
+- Closes the cross-thread-recall gap that the docs fill with
+  `langgraph_sdk.client.threads.search` for managed deployments;
+  we ship a Postgres-native implementation for self-hosted.
+- Tool is automatically wired when `POSTGRES_URL` is set; absent
+  when not (same gating as `recall_thread_turns`).
+
+### Read-only policy namespace (`/policies/`)
+
+- New filesystem route `/policies/` mounted on the fixed
+  `("ossia", "policies")` namespace (shared across all callers).
+- `FilesystemPermission(operations=["write"], paths=["/policies/"],
+  mode="deny")` blocks agent writes; agent can read but never
+  rewrite.
+- New helper `seed_policy(store, key, content)` for application code
+  to populate the route at startup (idempotent). Use for
+  compliance/policy docs that all users must read but never modify.
 
 ## v0.3.0 — 2026-07-01 — docs overhaul, workflow cleanup, release automation
 
@@ -329,3 +426,320 @@ from flat v2 event dicts to a discriminated-union envelope with
 New `/v1/*` surface replaces un-versioned routes. Pydantic-typed
 models, standard error envelope, new routes for tools/threads/resume/
 audit/eval.
+
+
+## Unreleased — Ollama-backed vector RAG for the Redis store
+
+**Non-breaking** for the HTTP contract. No routes changed. When
+`REDIS_URL` is set, the agent's cross-thread memory store is now
+configured with a RediSearch vector index using a local Ollama
+embedder (default: `embeddinggemma`, 768-dim). Stored items are
+embedded on write and retrievable via vector similarity — this
+is the semantic memory recall the user has been asking for.
+
+### What it does
+
+- New module `core/embeddings.py`: `make_ollama_embedder(settings)`
+  returns an async `AEmbeddingsFunc` that POSTs to Ollama's
+  `/api/embeddings` endpoint with the configured model.
+- `get_redis_store(settings)` (added in the previous turn) now
+  auto-builds the `IndexConfig` when `enable_vector_index=True`
+  (the default) and `index` is not explicitly passed. The store
+  factory wires in the Ollama embedder; `setup()` creates the
+  RediSearch index on first call.
+- No new dependency: the embedder uses `httpx` (already in the
+  dep list).
+- No API key needed: Ollama is local. Default URL
+  `http://localhost:11434` matches the existing
+  `OLLAMA_BASE_URL` setting.
+
+### Settings (with defaults that match the local Ollama)
+
+| Env var | Default | Notes |
+|---|---|---|
+| `EMBEDDING_MODEL` | `embeddinggemma` | Any pulled Ollama model with the `embedding` capability. `ollama pull <name>`. |
+| `EMBEDDING_DIM` | `768` | Must match the model's output. `embeddinggemma` is 768; `qwen3-embedding:0.6b` is 1024. |
+| `ENABLE_VECTOR_INDEX` | `true` | Set to `false` to run the Redis store as key-value only (no RAG, no embedder call). |
+
+The model and dim are auto-discoverable: run
+`curl -s http://localhost:11434/api/show -d '{"name":"<model>"}'`
+and read `model_info["embedding_length"]` to pick the dim.
+
+### Changed files
+
+- `src/core/config.py`: added `embedding_model`, `embedding_dim`,
+  `enable_vector_index` (all with sensible defaults).
+- `src/core/embeddings.py` (new): one function, ~30 lines,
+  `make_ollama_embedder`. Concurrent dispatch via
+  `asyncio.gather` for batched calls.
+- `src/core/memory.py`: `get_redis_store` auto-wires the
+  embedder when `enable_vector_index=True`.
+- `tests/test_embeddings.py` (new): 5 tests using a fake
+  `httpx.AsyncClient` to verify the URL, body, model override,
+  error propagation, and ordering.
+- `.env.example`: new section documenting the three env vars.
+
+### How to use
+
+With Ollama running and `embeddinggemma` pulled
+(`ollama pull embeddinggemma`):
+
+```bash
+# .env
+REDIS_URL=redis://localhost:6379/0
+EMBEDDING_MODEL=embeddinggemma
+EMBEDDING_DIM=768
+```
+
+The store then supports `asearch(query=..., query_vector=...)`
+for semantic recall over `AGENTS.md`-style content. The agent's
+`recall_thread_turns` tool remains a per-thread exact lookup;
+the new RAG story is a separate tool that calls `asearch` with
+the current message embedded. That's a follow-up — wiring it
+into the tool surface is a separate PR.
+
+
+## Unreleased — langgraph-redis backends (memory + checkpointer)
+
+**Non-breaking** for the HTTP contract. No routes changed. When
+`REDIS_URL` is set, the agent's checkpointer and cross-thread
+memory store now use the
+[`langgraph-checkpoint-redis`](https://github.com/redis-developer/langgraph-redis)
+backends instead of the Postgres ones. One less database to
+operate when Redis is the primary store.
+
+### Backend selection
+
+- `REDIS_URL` set → `AsyncRedisSaver` (checkpointer) +
+  `AsyncRedisStore` (memory). Requires Redis 8+ (or Redis Stack)
+  for the `RedisJSON` and `RediSearch` modules — the library's
+  `setup()` raises a clear error if the modules are missing.
+- `POSTGRES_URL` set (and `REDIS_URL` not set) → existing Postgres
+  backends. No behavior change.
+- Neither set → in-memory store, no checkpointer.
+- Both set → Redis wins. Document this in `.env.example`.
+
+### What's new vs the Postgres backends
+
+- One persistent store (Redis) instead of two (Postgres for memory
+  + checkpoints, Redis for cache/lock).
+- `AsyncRedisStore` supports an optional vector index for
+  semantic RAG over the store's contents — see the Ollama
+  entry above for the wiring.
+- Redis checkpointer supports TTL via the library's `ttl=`
+  parameter. Not wired yet (Postgres path doesn't have TTL either).
+
+### Changed files
+
+- `pyproject.toml`: added `langgraph-checkpoint-redis>=0.5.0`
+  (pulls in `redisvl>=0.5.1` transitively).
+- `src/core/memory.py`: added `get_redis_checkpointer` and
+  `get_redis_store` context managers next to the existing
+  Postgres helpers. Both fail fast with `ValueError` when
+  `REDIS_URL` is unset.
+- `src/core/agent.py`: `build_agent_async` now picks the
+  Redis store first when `REDIS_URL` is set, then Postgres,
+  then in-memory.
+- `src/core/api.py`: lifespan branches the checkpointer the
+  same way; the `ENABLE_HUMAN_REVIEW=true` validation now
+  accepts either `POSTGRES_URL` or `REDIS_URL`.
+- `tests/test_redis_backends.py`: new — three tests that
+  cover the `ValueError` paths (no live Redis required in CI).
+
+
+## Unreleased — semantic_recall tool (vector RAG over memory)
+
+**Non-breaking** for the HTTP contract. No routes changed. New
+agent tool `semantic_recall(query, top_k=5)` that performs
+vector similarity search over the caller's memory namespace in
+the Redis store. The store embeds the query using the
+configured Ollama model (`embeddinggemma` by default) and
+returns the most semantically similar items.
+
+### What it does
+
+- `make_semantic_recall_tool(store, settings)` in
+  `core/episodic.py` mirrors the existing `make_episodic_recall_tool`
+  factory: returns a tool, or `None` when the store doesn't
+  support vector search (no `AsyncRedisStore`, or
+  `Settings.enable_vector_index=False`).
+- The tool is **caller-scoped**: it searches
+  `("ossia", <caller>)` so one user's queries cannot surface
+  another user's content. Defense in depth on top of the
+  store's own namespace isolation.
+- The store embeds the query internally using the
+  `IndexConfig.embed` (Ollama). The tool passes the raw text
+  to `asearch(query=...)`; no client-side embedding call.
+
+### How the agent uses it
+
+Wired automatically by `build_agent_async`. When `REDIS_URL` is
+set and `Settings.enable_vector_index=True` (the default), the
+agent gets the `semantic_recall` tool. The model decides when
+to call it (typically when the user asks something the model
+thinks a previous conversation may have answered). The model
+also gets `recall_thread_turns` (per-thread exact) and
+`search_threads` (cross-thread keyword) — the three are
+complementary:
+
+| Tool | When to use |
+|---|---|
+| `recall_thread_turns(thread_id, limit)` | Pull recent turns of a specific thread (exact). |
+| `search_threads(query, limit)` | Cross-thread keyword match (Postgres ILIKE). |
+| `semantic_recall(query, top_k)` | Cross-thread semantic match (vector). |
+
+### Changed files
+
+- `src/core/episodic.py`: added `make_semantic_recall_tool`.
+- `src/core/agent.py`: `_compile_agent` now takes a
+  `semantic_tool` parameter; `build_agent_async` builds it
+  next to the episodic tool and passes it through.
+- `tests/test_semantic_recall.py` (new): 9 tests covering
+  factory branches (None store, non-Redis, vector-disabled,
+  Redis + vector) and tool behavior (caller namespace,
+  default-caller fallback, match shape, asearch failure,
+  empty results). Uses a real `AsyncRedisStore` subclass that
+  overrides `asearch` — no live Redis required.
+
+
+## Unreleased — KB RediSearch server-side search
+
+**Non-breaking** for the HTTP contract. No routes changed. The
+`search_knowledge_base` tool now uses RediSearch (`FT.SEARCH`)
+against an auto-built index on `kb:doc:*` when the index is
+available. Sub-ms server-side ranking with TF-IDF; falls back to
+the in-process proportion search on any failure (no RediSearch
+module, no Redis, transient errors).
+
+### What it does
+
+- `ensure_kb_index(client)` in `core/kb_loader.py`: creates
+  the `kb:idx` index with `IFNX` (idempotent across reboots)
+  the first time the lifespan loader runs. Schema:
+  `title TEXT WEIGHT 2.0`, `content TEXT`.
+- `load_kb_into_redis` now calls `ensure_kb_index` before
+  writing the docs, so writes auto-populate the index.
+- `search_redis_kb(client, query, top_k)` in
+  `core/kb_loader.py`: wraps `FT.SEARCH` and parses the
+  `[count, key, [field, value, ...], ...]` reply into
+  `{title, source, content}` dicts. Returns `None` on any
+  failure → caller falls through.
+- `search_knowledge_base` tool in `core/tools.py` tries
+  `search_redis_kb` first, then in-process. The `reasoning`
+  field reports which path served the answer.
+
+### Ordering note
+
+`FT.SEARCH` returns results in RediSearch's relevance score
+order (TF-IDF by default). Without `WITHSCORES` the per-item
+score is `0.0` in the tool output. The LangChain docs warn
+"do not rely on a specific order across implementations" for
+`store.asearch`; this tool's path is RediSearch-only and
+preserves the docs' order-as-ranking semantic.
+
+### LangChain compat check
+
+Read the latest DeepAgents / langgraph memory docs before
+shipping. Findings:
+- `create_deep_agent` 0.6.x deprecates `backend=lambda rt: ...`
+  factory pattern in favor of direct instances. We already
+  pass a constructed `CompositeBackend`, so we're on the
+  new path.
+- `IndexConfig.embed` accepts `AEmbeddingsFunc`. Our
+  `make_ollama_embedder` matches that shape.
+- `@tool` decorator and `BaseStore.asearch(query=...)` API
+  are stable; no signature changes between versions we use.
+- No breaking changes in any API the tool or store touches.
+
+### Changed files
+
+- `src/core/kb_loader.py`: added `ensure_kb_index`,
+  `_parse_ft_search_result`, `search_redis_kb`.
+  `load_kb_into_redis` now calls `ensure_kb_index`.
+- `src/core/tools.py`: `search_knowledge_base` tries Redis
+  first, falls back to in-process.
+- `tests/test_kb.py`: 9 new tests (index creation, FT.SEARCH
+  parsing, no-match empty result, error fallback, missing
+  fields, tool integration).
+
+
+## Unreleased — ToolResultCacheMiddleware (langgraph-redis)
+
+**Non-breaking** for the HTTP contract. No routes changed. When
+`REDIS_URL` is set, the agent's tool-execution middleware stack
+now includes `ToolResultCacheMiddleware` from
+[`langgraph-redis`](https://github.com/redis-developer/langgraph-redis).
+Caches exact-match tool results in Redis; the second call with
+the same arguments is served from cache without re-executing
+the tool.
+
+### What it does
+
+- New module dependency: `langgraph.middleware.redis`. Already
+  shipped as a transitive dep of `langgraph-checkpoint-redis`;
+  no new package to install.
+- Wired in `_build_middlewares` after PII redaction (so
+  cached values are post-redaction) and before the circuit
+  breaker / retry (so a cache hit short-circuits both).
+- Side-effect tools are excluded by the library's default
+  `side_effect_prefixes` list (covers `send_`, `delete_`,
+  `create_`, `update_`, `remove_`, `write_`, `post_`, `put_`,
+  `patch_`) plus `edit_` (we add this to cover `edit_file`,
+  which writes to memory).
+- Graceful degradation: if the middleware raises at
+  construction (bad URL, missing module), the error is logged
+  and the agent runs without caching. Tool caching is an
+  optimization, not a correctness dependency.
+
+### Verification (before shipping)
+
+Confirmed end-to-end before integration:
+
+1. The middleware composes with the existing middleware list
+   — `_build_middlewares` returns the cache middleware as the
+   8th entry alongside the 7 DeepAgents/LangChain
+   middlewares.
+2. A two-call unit test (cached fixture) shows the handler
+   is invoked once and the second call is served from Redis.
+3. The `side_effect_prefixes` config is honored: tools whose
+   name starts with any of the configured prefixes (including
+   `edit_`) are never cached.
+
+### Settings
+
+| Env var | Default | Notes |
+|---|---|---|
+| `ENABLE_TOOL_CACHE` | `true` | Set to `false` to force fresh tool calls. |
+| `TOOL_CACHE_TTL_SECONDS` | `3600` | Default 1h; tighten to 60s for time-sensitive tools. |
+
+Both are no-ops when `REDIS_URL` is unset.
+
+### Why this replaces our previous `cached_fetch_sync`
+
+We previously shipped a thin `cached_fetch_sync` decorator
+(`core/cache.py`) for the same purpose. It was never wired to
+a real tool because the Pydantic round-trip and sync-tool
+integration were awkward (we noted this in the cache PR's
+"skipped" section). The library's middleware sits deeper in
+the agent runtime — it intercepts before the tool is invoked
+and works on any tool regardless of sync/async or return type.
+
+`cached_fetch_sync` stays in the codebase as a building block
+but is no longer the recommended path. Future work: remove it
+once the library path is stable in production for a few weeks.
+
+### Changed files
+
+- `pyproject.toml`: no change (the middleware is part of
+  `langgraph-checkpoint-redis`, already in deps).
+- `src/core/config.py`: added `enable_tool_cache` and
+  `tool_cache_ttl_seconds`.
+- `src/core/agent.py`: import the middleware, append it to
+  the list in `_build_middlewares` when `REDIS_URL` is set
+  and `enable_tool_cache` is true. The try/except logs and
+  skips on construction failure.
+- `tests/test_tool_cache_middleware.py`: 7 tests covering
+  the wiring (presence/absence under different settings,
+  TTL propagation, side-effect prefix, URL propagation, and
+  graceful degradation on bad URL).
+- `.env.example`: new `Tool result cache` section.

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 from functools import lru_cache
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -82,6 +82,16 @@ class Settings(BaseSettings):
     postgres_url: str | None = Field(
         default=None,
         description="Postgres connection string for checkpointing. Required in production.",
+    )
+
+    # Redis (optional). All Redis-backed features degrade gracefully when unset.
+    redis_url: str | None = Field(
+        default=None,
+        description=(
+            "Redis connection URL (e.g. redis://localhost:6379/0). "
+            "When unset, tool-result caching and the seed_memory write lock "
+            "are no-ops. Set to enable surface #1 (cache) and surface #4 (lock)."
+        ),
     )
 
     # Async subagents
@@ -254,6 +264,85 @@ class Settings(BaseSettings):
     ollama_base_url: str = Field(
         default="http://localhost:11434",
         description="Base URL for the Ollama server (ollama provider only).",
+    )
+
+    # Memory scope: "user" isolates per API key (safe default),
+    # "agent" shares one memory across all callers (matches the
+    # DeepAgents "agent-scoped memory" pattern; use for shared
+    # knowledge/identity the agent should learn across all users).
+    memory_scope: Literal["user", "agent"] = Field(
+        default="user",
+        description=(
+            "Memory namespace scope. 'user' = per-caller (default, isolated). "
+            "'agent' = shared across all callers (assistant_id-scoped, like the DeepAgents docs)."
+        ),
+    )
+
+    # Knowledge base: comma-separated list of source URLs. Each URL
+    # is fetched at startup and stored in Redis (when REDIS_URL is
+    # set) as one document. Title = first H1 in body (or URL stem
+    # if none); source = URL; content = body. Empty = empty KB =
+    # tool falls back to web search. The fetcher is plain HTTP GET
+    # via httpx; bodies are treated as markdown.
+    kb_source_urls: str = Field(
+        default="",
+        description=(
+            "Comma-separated list of URLs whose markdown bodies are "
+            "fetched at startup and stored in Redis as the knowledge "
+            "base. Each URL = one document. Empty = no KB."
+        ),
+    )
+
+    # Vector index (RAG): when REDIS_URL is set, the store is
+    # configured with a RediSearch vector index that uses the local
+    # Ollama server to embed stored items. Set the model to match
+    # what you have pulled (``ollama list``). Default matches
+    # Google's embeddinggemma (768-dim, gemma3 family).
+    embedding_model: str = Field(
+        default="embeddinggemma",
+        description=(
+            "Ollama embedding model name. Must match a model pulled "
+            "locally (use ``ollama pull <name>``). Default is Google's "
+            "embeddinggemma, 768-dim."
+        ),
+    )
+    embedding_dim: int = Field(
+        default=768,
+        description=(
+            "Embedding vector dimensions. Must match the model's "
+            "output dim. Default 768 matches embeddinggemma."
+        ),
+    )
+    enable_vector_index: bool = Field(
+        default=True,
+        description=(
+            "When REDIS_URL is set, auto-create a RediSearch vector "
+            "index on the store using the configured embedding model. "
+            "Disable for key-value-only memory (no RAG)."
+        ),
+    )
+
+    # Tool result cache: langgraph-redis ``ToolResultCacheMiddleware``
+    # caches exact-match tool results in Redis. Only takes effect
+    # when ``REDIS_URL`` is set; otherwise the helper is skipped.
+    # Side-effect tools are excluded by the library's default
+    # prefix list (``send_``, ``delete_``, ``create_``, ``update_``,
+    # ``remove_``, ``write_``, ``post_``, ``put_``, ``patch_``,
+    # plus ``edit_`` which we add).
+    enable_tool_cache: bool = Field(
+        default=True,
+        description=(
+            "Cache tool results in Redis (when REDIS_URL is set). "
+            "Disable for ephemeral runs or to force fresh tool calls."
+        ),
+    )
+    tool_cache_ttl_seconds: int = Field(
+        default=3600,
+        description=(
+            "TTL for cached tool results, in seconds. Default 1h; "
+            "tighten to 60s for tools whose outputs change often "
+            "(tests, search)."
+        ),
     )
 
     @field_validator("provider", mode="before")

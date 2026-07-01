@@ -11,20 +11,33 @@ from typing import Any
 from deepagents import create_deep_agent
 from deepagents.backends import CompositeBackend, StateBackend, StoreBackend
 from deepagents.middleware.async_subagents import AsyncSubAgent, AsyncSubAgentMiddleware
+from deepagents.middleware.filesystem import FilesystemPermission
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
 from langchain_quickjs import CodeInterpreterMiddleware
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.middleware.redis import (
+    DEFAULT_SIDE_EFFECT_PREFIXES,
+    ToolCacheConfig,
+    ToolResultCacheMiddleware,
+)
 from langgraph.store.base import BaseStore
 from langgraph.store.memory import InMemoryStore
 
 from core.config import Provider, Settings, get_settings
 from core.context import OssiaContext
-from core.episodic import make_episodic_recall_tool
+from core.episodic import (
+    make_episodic_recall_tool,
+    make_postgres_search_fn,
+    make_search_threads_tool,
+    make_semantic_recall_tool,
+)
 from core.mcp_tools import MCPToolkit
 from core.memory import (
     AGENT_NAMESPACE,
     AGENTS_MEMORY_KEY,
+    POLICY_NAMESPACE,
+    get_redis_store,
     get_store,
     seed_memory,
 )
@@ -437,6 +450,39 @@ def _build_middlewares(settings: Settings) -> list[Any]:
     ]
     # Filter out None entries so an unconfigured fallback doesn't break the list.
     middlewares = [mw for mw in middlewares if mw is not None]
+    # Tool result cache: when REDIS_URL is set, the langgraph-redis
+    # library caches exact-match tool results in Redis. Placed after
+    # PII redaction (so cached values are post-redaction) and before
+    # the circuit breaker / retry (so a cache hit short-circuits
+    # both). Side-effect tools are excluded by ``side_effect_prefixes``
+    # (default plus ``edit_`` to cover the agent's memory writes).
+    if settings.redis_url and settings.enable_tool_cache:
+        try:
+            middlewares.append(
+                ToolResultCacheMiddleware(
+                    ToolCacheConfig(
+                        redis_url=settings.redis_url,
+                        ttl_seconds=settings.tool_cache_ttl_seconds,
+                        # ``edit_file`` writes to memory — must not
+                        # be cached. The library's default prefix
+                        # list covers ``create_``, ``send_``, etc.
+                        # but not ``edit_``.
+                        side_effect_prefixes=(
+                            *DEFAULT_SIDE_EFFECT_PREFIXES,
+                            "edit_",
+                        ),
+                    )
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            # Don't let a misconfigured cache break the agent build.
+            # The tool cache is an optimization, not a correctness
+            # dependency.
+            logger.warning(
+                "Tool result cache middleware failed to init: %s; "
+                "agent will run without tool caching.",
+                exc,
+            )
     if settings.enable_async_subagents:
         try:
             async_subagents = _build_async_subagents(settings)
@@ -491,36 +537,57 @@ def _build_subagents(model: BaseChatModel) -> list[dict[str, Any]]:
 
 
 def _make_memory_namespace(base: tuple[str, ...] = AGENT_NAMESPACE) -> tuple[str, ...]:
-    """Build a per-user memory namespace from the current caller context.
+    """Build a memory namespace from the current caller context.
 
     Reads the authenticated ``caller`` hash from the context var (set by
     ``verify_api_key`` in ``api.py``) and prepends it to the base namespace.
     This ensures memory files are scoped per authenticated caller and never
     bleed between users.
 
+    When ``Settings.memory_scope == "agent"``, the caller's hash is
+    ignored and the base namespace is returned unchanged — matching
+    the DeepAgents "agent-scoped memory" pattern where every user
+    contributes to and reads from the same memory.
+
     When the caller hash is unavailable (tests, one-off scripts), falls back
     to the base namespace (``("ossia", "default")``).
 
     Returns:
-        A namespace tuple like ``("ossia", "abc123def456")`` or
-        ``("ossia", "default")`` when no caller is available.
+        A namespace tuple like ``("ossia", "abc123def456")`` (user scope),
+        ``("ossia",)`` (agent scope), or ``("ossia", "default")`` when no
+        caller is available.
     """
+    if get_settings().memory_scope == "agent":
+        return base
     caller = caller_var.get()
     if caller:
         return (base[0], caller)
     return base
 
 
+# Write-deny permission for the read-only /policies/ route. The agent
+# can read compliance/policy files but cannot rewrite them — only app
+# code (via seed_policy) populates them. Ponytail: single hard-coded
+# rule; add a path list if more read-only routes appear.
+_POLICY_DENY_WRITE: list[FilesystemPermission] = [
+    FilesystemPermission(operations=["write"], paths=["/policies/"], mode="deny"),
+]
+
+
 def _make_backend(
     store: BaseStore,
     namespace: tuple[str, ...] = AGENT_NAMESPACE,
 ) -> CompositeBackend:
-    """Build the filesystem backend with per-user memory isolation.
+    """Build the filesystem backend with per-user memory isolation
+    and a shared read-only /policies/ route.
 
-    Filesystem under ``/memories/`` is backed by the LangGraph store
-    namespaced via :func:`_make_memory_namespace`, which includes the
-    authenticated caller's hash so memory never bleeds between users.
-    All other paths use the in-process StateBackend.
+    ``/memories/`` is backed by the LangGraph store namespaced via
+    :func:`_make_memory_namespace` (per-caller by default; shared when
+    ``Settings.memory_scope == "agent"``). ``/policies/`` is backed by
+    the same store on the fixed :data:`POLICY_NAMESPACE` and protected
+    by :data:`_POLICY_DENY_WRITE` at the agent level. All other paths
+    use the in-process StateBackend.
+
     The store is injected directly into ``StoreBackend`` so writes do
     not depend on runtime context resolution.
     """
@@ -530,6 +597,10 @@ def _make_backend(
             "/memories/": StoreBackend(
                 store=store,
                 namespace=lambda rt, _ns=namespace: _make_memory_namespace(_ns),  # type: ignore[misc]
+            ),
+            "/policies/": StoreBackend(
+                store=store,
+                namespace=lambda rt: POLICY_NAMESPACE,
             ),
         },
     )
@@ -545,12 +616,18 @@ def _compile_agent(
     store: BaseStore | None = None,
     subagents: list[dict[str, Any]] | None = None,
     episodic_tool: BaseTool | None = None,
+    semantic_tool: BaseTool | None = None,
     context_schema: type | None = None,
 ) -> CompiledStateGraph[Any, Any, Any, Any]:
     backend = _make_backend(store) if store is not None else None
     all_tools: list[BaseTool] = list(tools)
     if episodic_tool is not None:
         all_tools.append(episodic_tool)
+    if semantic_tool is not None:
+        all_tools.append(semantic_tool)
+    search_tool = make_search_threads_tool(make_postgres_search_fn(settings))
+    if search_tool is not None:
+        all_tools.append(search_tool)
     middlewares = _build_middlewares(settings)
     # Wire the @dynamic_prompt middleware to inject runtime caller context.
     # This is appended after all other middlewares so it runs closest to the
@@ -569,6 +646,7 @@ def _compile_agent(
         store=store,
         backend=backend,
         memory=[AGENTS_MEMORY_KEY] if store is not None else None,
+        permissions=_POLICY_DENY_WRITE,
         context_schema=context_schema,
     )
 
@@ -616,7 +694,13 @@ async def build_agent_async(
             toolkit = None
     store: BaseStore
     store_cm: Any | None = None
-    if settings.postgres_url:
+    if settings.redis_url:
+        # Redis store from langgraph-checkpoint-redis. Replaces the
+        # Postgres store when REDIS_URL is set; key-value by default
+        # — pass an IndexConfig to enable vector RAG (see Settings).
+        store_cm = get_redis_store(settings)
+        store = await store_cm.__aenter__()
+    elif settings.postgres_url:
         store_cm = get_store(settings)
         store = await store_cm.__aenter__()
     else:
@@ -631,6 +715,11 @@ async def build_agent_async(
     # configured. The factory returns None for ephemeral setups (in-process
     # ``build_agent`` path or test mode).
     episodic_tool = make_episodic_recall_tool(checkpointer)
+    # Semantic recall over the store's vector index. The factory
+    # returns None for non-Redis stores or when vector indexing is
+    # disabled (Settings.enable_vector_index=False). The agent just
+    # doesn't have this tool in that mode.
+    semantic_tool = make_semantic_recall_tool(store, settings)
     try:
         if toolkit is not None:
             tools = [*tools, *toolkit.get_tools()]
@@ -643,6 +732,7 @@ async def build_agent_async(
             store=store,
             subagents=subagents,
             episodic_tool=episodic_tool,
+            semantic_tool=semantic_tool,
             context_schema=OssiaContext,
         )
     finally:

@@ -1,4 +1,19 @@
-"""Postgres-backed checkpointing and cross-session memory."""
+"""Postgres- and Redis-backed checkpointing and cross-session memory.
+
+The ``get_checkpointer`` / ``get_store`` factories yield Postgres
+backends (when ``POSTGRES_URL`` is set). The ``get_redis_checkpointer``
+/ ``get_redis_store`` factories yield Redis backends from
+``langgraph-checkpoint-redis`` (when ``REDIS_URL`` is set).
+
+Selection is done by the caller (the lifespan in ``core.api`` and the
+agent builder in ``core.agent``): Redis is preferred when set, then
+Postgres, then in-memory. Both backends implement the same
+LangGraph interfaces (``BaseCheckpointSaver`` / ``BaseStore``) so
+the rest of the codebase is backend-agnostic.
+
+Ponytail: keep both paths alive, no shared abstraction over the two
+backends. Add a wrapper class only when the third backend arrives.
+"""
 
 from __future__ import annotations
 
@@ -9,8 +24,10 @@ from typing import Any
 
 from deepagents.backends.utils import create_file_data
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from langgraph.store.base import BaseStore
+from langgraph.checkpoint.redis.aio import AsyncRedisSaver
+from langgraph.store.base import BaseStore, IndexConfig
 from langgraph.store.postgres.aio import AsyncPostgresStore
+from langgraph.store.redis.aio import AsyncRedisStore
 from psycopg import AsyncConnection
 from psycopg.rows import dict_row
 
@@ -23,9 +40,20 @@ Single-tenant fallback used when no caller context is available (e.g.,
 tests, one-off scripts). In production the ``_make_backend`` namespace
 factory prepends the ``user_id`` (caller hash) to create a per-user
 namespace like ``("ossia", "abc123def456")`` so memory files never bleed
-between authenticated callers.
+between authenticated callers. Set ``Settings.memory_scope = "agent"``
+to share one namespace across all callers instead.
 
 See :func:`agent._make_memory_namespace` for the production path.
+"""
+
+POLICY_NAMESPACE: tuple[str, ...] = ("ossia", "policies")
+"""Org/policy namespace.
+
+Shared across all callers (org-level scoping per the DeepAgents docs).
+The ``/policies/`` route in :func:`agent._make_backend` is mounted on
+this namespace AND protected by a write-deny ``FilesystemPermission``,
+so application code populates it and the agent can read but never
+rewrite.
 """
 
 AGENTS_MEMORY_KEY: str = "/memories/AGENTS.md"
@@ -145,6 +173,78 @@ async def get_store(
         await conn.close()
 
 
+@asynccontextmanager
+async def get_redis_checkpointer(
+    settings: Settings | None = None,
+) -> AsyncGenerator[AsyncRedisSaver, None]:
+    """Yield an initialized Redis checkpointer (langgraph-checkpoint-redis).
+
+    Requires ``REDIS_URL`` and a Redis server with the RedisJSON and
+    RediSearch modules (Redis 8+ ships them by default; Redis Stack
+    is the equivalent for older Redis). The library raises
+    ``ResponseError`` on ``setup()`` if the modules are missing —
+    we let it propagate so the lifespan fails fast with a clear
+    message.
+
+    Args:
+        settings: Optional settings instance; defaults to cached settings.
+
+    Yields:
+        AsyncRedisSaver ready for use with a LangGraph graph.
+    """
+    settings = settings or get_settings()
+    if not settings.redis_url:
+        raise ValueError("REDIS_URL must be set to use the Redis checkpointer.")
+    async with AsyncRedisSaver.from_conn_string(settings.redis_url) as saver:
+        await saver.asetup()
+        yield saver
+
+
+@asynccontextmanager
+async def get_redis_store(
+    settings: Settings | None = None,
+    *,
+    index: IndexConfig | None = None,
+) -> AsyncGenerator[AsyncRedisStore, None]:
+    """Yield an initialized Redis store (langgraph-checkpoint-redis).
+
+    When ``index`` is provided, the store is created with a RediSearch
+    vector index using the supplied config. When ``index`` is
+    ``None`` and ``Settings.enable_vector_index`` is ``True`` (the
+    default), the index is auto-built with the local Ollama
+    embedder (``Settings.embedding_model`` / ``embedding_dim``).
+    Pass ``index={}`` (empty dict) to force key-value-only.
+
+    Args:
+        settings: Optional settings instance; defaults to cached settings.
+        index: Explicit RediSearch index config. When ``None`` and
+            vector indexing is enabled, the Ollama-backed default
+            is used. When the empty dict ``{}`` is passed, no index
+            is created (key-value only).
+
+    Yields:
+        AsyncRedisStore ready for use as a LangGraph BaseStore.
+    """
+    settings = settings or get_settings()
+    if not settings.redis_url:
+        raise ValueError("REDIS_URL must be set to use the Redis store.")
+    resolved_index: IndexConfig | None
+    if index is None and settings.enable_vector_index:
+        from core.embeddings import make_ollama_embedder
+
+        resolved_index = {  # type: ignore[typeddict-item]
+            "dims": settings.embedding_dim,
+            "embed": make_ollama_embedder(settings),
+        }
+    else:
+        resolved_index = index
+    async with AsyncRedisStore.from_conn_string(
+        settings.redis_url, index=resolved_index
+    ) as store:
+        await store.setup()
+        yield store
+
+
 async def seed_memory(
     store: BaseStore,
     *,
@@ -169,11 +269,48 @@ async def seed_memory(
         True when a new file was created, False when the key already
         existed (idempotent re-seed).
     """
-    existing = await store.aget(namespace, key)
+    from core.cache import redis_lock
+
+    # Surface #4: serialize the get-then-put critical section via a
+    # short Redis lock. Two concurrent first boots both see "absent"
+    # otherwise and both write; lock collapses them to a single
+    # writer. When Redis is unset, the lock is a no-op and we fall
+    # back to last-write-wins (the previous behavior).
+    async with redis_lock("seed_memory", *namespace, key):
+        existing = await store.aget(namespace, key)
+        if existing is not None:
+            return False
+        file_data = create_file_data(content or initial_agents_memory())
+        await store.aput(namespace, key, file_data)  # type: ignore[arg-type]
+        return True
+
+
+async def seed_policy(
+    store: BaseStore,
+    key: str,
+    content: str,
+) -> bool:
+    """Seed a read-only policy file in :data:`POLICY_NAMESPACE`.
+
+    Companion to :func:`seed_memory` for the ``/policies/`` route, which
+    is mounted on :data:`POLICY_NAMESPACE` and protected by a write-deny
+    ``FilesystemPermission``. Application code populates these files at
+    startup; the agent can read them via ``read_file`` but cannot edit
+    or delete them.
+
+    Args:
+        store: The LangGraph ``BaseStore`` to seed.
+        key: Policy file path, e.g. ``"/policies/compliance.md"``.
+        content: Policy body.
+
+    Returns:
+        True when a new file was created, False when the key already
+        existed.
+    """
+    existing = await store.aget(POLICY_NAMESPACE, key)
     if existing is not None:
         return False
-    file_data = create_file_data(content or initial_agents_memory())
-    await store.aput(namespace, key, file_data)  # type: ignore[arg-type]
+    await store.aput(POLICY_NAMESPACE, key, create_file_data(content))  # type: ignore[arg-type]
     return True
 
 

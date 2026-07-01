@@ -11,7 +11,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from core.agent import _build_middlewares, build_agent
 from core.config import Provider, Settings
-from core.tools import create_kb
+from core.tools import _build_kb
 
 
 def _test_settings() -> Settings:
@@ -38,17 +38,30 @@ def test_build_agent_creates_graph() -> None:
 
 @pytest.mark.asyncio
 async def test_kb_search_returns_results() -> None:
-    """Knowledge base search returns matching documents."""
-    kb = create_kb()
-    results = kb.search("Nebius Serverless Endpoints", top_k=2)
+    """Knowledge base search returns matching documents when seeded."""
+    kb = _build_kb(
+        [
+            {
+                "title": "Deep Agents memory",
+                "source": "mem",
+                "content": "Memory lets your agent learn across conversations.",
+            },
+            {
+                "title": "Postgres checkpointer",
+                "source": "pg",
+                "content": "Postgres is required when human review is enabled.",
+            },
+        ]
+    )
+    results = kb.search("memory agent", top_k=2)
     assert len(results) >= 1
-    assert any("endpoint" in r.content.lower() for r in results)
+    assert any("memory" in r.title.lower() for r in results)
 
 
 @pytest.mark.asyncio
 async def test_kb_empty_uses_fallback() -> None:
     """When KB is empty, search returns no results instead of crashing."""
-    kb = create_kb(documents=[])
+    kb = _build_kb([])
     results = kb.search("unknown query", top_k=3)
     assert results == []
 

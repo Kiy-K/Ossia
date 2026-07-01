@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
-from functools import lru_cache
+import math
+import re
+from dataclasses import dataclass, field
 from typing import Any
 
 from ddgs import DDGS
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
+
+from core.kb_loader import read_kb_from_redis, search_redis_kb
+from core.redis_client import get_async_redis
 
 logger = logging.getLogger(__name__)
 
@@ -39,84 +43,122 @@ class KBSearchOutput(BaseModel):
     reasoning: str = Field(default="", description="Short explanation of how results were obtained.")
 
 
+# Ponytail: simple proportion-based ranking with length penalty.
+# BM25-lite without IDF — good for KBs of <1000 docs. When the corpus
+# grows, switch to BM25 with proper IDF or embed-and-ANN search.
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+def _tokenize(text: str) -> list[str]:
+    return _TOKEN_RE.findall(text.lower())
+
+
 @dataclass
 class KnowledgeBase:
-    """In-memory knowledge base for local development and tests."""
+    """In-memory knowledge base snapshot.
 
-    documents: list[dict[str, Any]]
+    Constructed from a list of document dicts (``title``, ``source``,
+    ``content``). For the live tool, instances are built once per
+    process from the Redis snapshot and cached.
+    """
+
+    documents: list[dict[str, Any]] = field(default_factory=list)
+    avg_doc_length: float = 1.0
 
     def search(self, query: str, top_k: int = 3) -> list[SearchResult]:
-        """Return documents whose content contains any query token."""
-        tokens = query.lower().split()
+        """Return documents ranked by term-overlap proportion with a
+        mild length penalty.
+
+        Ranking: ``score = overlap / (1 + log(doc_len / avg_doc_len))``
+        where ``overlap`` is the number of distinct query tokens that
+        appear at least once in the document. Documents with zero
+        overlap are dropped.
+        """
+        if not self.documents:
+            return []
+        query_tokens = _tokenize(query)
+        if not query_tokens:
+            return []
+        query_set = set(query_tokens)
         scored: list[tuple[float, dict[str, Any]]] = []
         for doc in self.documents:
-            text = doc.get("content", "").lower()
-            matches = sum(1 for token in tokens if token in text)
-            if matches:
-                scored.append((matches, doc))
+            doc_tokens = _tokenize(doc.get("content", ""))
+            if not doc_tokens:
+                continue
+            doc_set = set(doc_tokens)
+            overlap = len(query_set & doc_set)
+            if overlap == 0:
+                continue
+            ratio = overlap / len(query_set)
+            len_penalty = 1.0 + math.log(
+                max(1.0, len(doc_tokens) / self.avg_doc_length)
+            )
+            scored.append((ratio / len_penalty, doc))
         scored.sort(key=lambda item: item[0], reverse=True)
         return [
             SearchResult(
                 title=doc.get("title", "Untitled"),
                 source=doc.get("source", "kb"),
                 content=doc.get("content", "")[:800],
-                score=float(score),
+                score=round(score, 4),
             )
             for score, doc in scored[:top_k]
         ]
 
 
-def create_kb(documents: list[dict[str, Any]] | None = None) -> KnowledgeBase:
-    """Create a knowledge base with optional seed documents."""
+def _build_kb(docs: list[dict[str, Any]]) -> KnowledgeBase:
+    """Construct a KnowledgeBase from a list of doc dicts."""
+    avg_len = (
+        sum(len(_tokenize(d.get("content", ""))) for d in docs) / max(1, len(docs))
+    )
+    return KnowledgeBase(documents=list(docs), avg_doc_length=max(1.0, avg_len))
+
+
+# Process-local KB cache. Rebuilt on first call after the lifespan
+# loader populates Redis, and on explicit ``reset_kb_cache()``.
+_kb_cache: KnowledgeBase | None = None
+
+
+async def create_kb(
+    documents: list[dict[str, Any]] | None = None,
+) -> KnowledgeBase:
+    """Return the live KB, building it from Redis on first call.
+
+    When ``documents`` is provided, build a one-off KB from those
+    (used by tests that don't want to mock Redis). Otherwise, read
+    the snapshot from Redis and cache it for the rest of the
+    process. Returns an empty KB when Redis is unset.
+    """
+    global _kb_cache
     if documents is not None:
-        return KnowledgeBase(documents=documents)
-    return _default_kb()
-
-
-@lru_cache(maxsize=1)
-def _default_kb() -> KnowledgeBase:
-    """Build and cache the default seed knowledge base."""
-    default_docs: list[dict[str, Any]] = [
-        {
-            "title": "Nebius Serverless Endpoints",
-            "source": "https://docs.nebius.com/serverless/endpoints",
-            "content": (
-                "Nebius Serverless Endpoints provide on-demand GPU inference for "
-                "LLMs. You pay only for compute time. Cold starts are handled by "
-                "keeping a configurable minimum number of containers warm. Use "
-                "vLLM for OpenAI-compatible serving."
-            ),
-        },
-        {
-            "title": "Nebius Serverless Jobs",
-            "source": "https://docs.nebius.com/serverless/jobs",
-            "content": (
-                "Nebius Serverless Jobs run batch or training workloads. Jobs are "
-                "ideal for fine-tuning, evaluation pipelines, and offline inference. "
-                "They start from a container image and can mount object storage."
-            ),
-        },
-        {
-            "title": "Resetting endpoint credentials",
-            "source": "https://docs.nebius.com/serverless/troubleshooting",
-            "content": (
-                "If you lose endpoint credentials, regenerate the API key from the "
-                "Nebius console under the endpoint's 'Access' tab. Update your "
-                "application's environment variable and restart the deployment."
-            ),
-        },
-    ]
-    return KnowledgeBase(documents=default_docs)
+        return _build_kb(documents)
+    if _kb_cache is None:
+        docs = await read_kb_from_redis(get_async_redis())
+        _kb_cache = _build_kb(docs)
+    return _kb_cache
 
 
 @tool(args_schema=KBSearchInput)
 async def search_knowledge_base(query: str, top_k: int = 3) -> KBSearchOutput:
-    """Search the local knowledge base for internal documentation, known issues, and troubleshooting guides.
+    """Search the local knowledge base for internal documentation.
 
-    Use this when the user's question is about project-specific topics:
-    deployment guides, known bugs, setup instructions, or internal conventions.
-    Falls back to DuckDuckGo web search if the KB returns no matches.
-    For broad external research, prefer ``internet_search`` instead.
+    Use this when the user's question is about project-specific
+    topics: deployment guides, known bugs, setup instructions, or
+    internal conventions configured via ``KB_SOURCE_URLS``. Falls
+    back to DuckDuckGo web search when the KB is empty or returns
+    no matches. For broad external research, prefer
+    ``internet_search`` instead.
+
+    The KB is loaded at startup from the URLs in
+    ``Settings.kb_source_urls``; each URL (or each entry in a JSON
+    manifest) becomes one document. The agent reads from the
+    process-local snapshot — Redis is the source of truth, the
+    snapshot is the read cache.
+
+    When the RediSearch index is available, the read path uses
+    ``FT.SEARCH`` for sub-ms server-side ranking. Falls back to
+    the in-process proportion search when the index is missing,
+    the RediSearch module is not loaded, or Redis is unset.
 
     Args:
         query: User query to search.
@@ -125,17 +167,57 @@ async def search_knowledge_base(query: str, top_k: int = 3) -> KBSearchOutput:
     Returns:
         Knowledge base results or web fallback results.
     """
-    kb = create_kb()
+    # Fast path: RediSearch server-side ranking. Returns None on
+    # any failure (no index, no module, no client) → fall through
+    # to the in-process search.
+    redis_client = get_async_redis()
+    redis_hits = await search_redis_kb(redis_client, query, top_k)
+    if redis_hits:
+        return KBSearchOutput(
+            results=[
+                SearchResult(
+                    title=hit["title"],
+                    source=hit["source"],
+                    content=hit["content"],
+                    # RediSearch without WITHSCORES does not
+                    # return a score; leave 0.0 to signal the
+                    # caller. Add WITHSCORES + a parser if a
+                    # numeric score becomes useful.
+                    score=0.0,
+                )
+                for hit in redis_hits
+            ],
+            fallback_used=False,
+            reasoning=(
+                f"Matched {len(redis_hits)} document(s) via RediSearch."
+            ),
+        )
+    # Slow path: in-process ranking. Same shape, slower for large
+    # KBs because every doc is loaded and tokenized on the agent
+    # host.
+    kb = await create_kb()
     results = kb.search(query, top_k=top_k)
     if results:
-        return KBSearchOutput(results=results, fallback_used=False, reasoning="Matched documents in the local knowledge base.")
+        return KBSearchOutput(
+            results=results,
+            fallback_used=False,
+            reasoning=f"Matched {len(results)} document(s) in the local knowledge base.",
+        )
     try:
         web_results = await asyncio.to_thread(_ddgs_text, query, top_k)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Web search fallback failed for query %r: %s", query, exc)
-        return KBSearchOutput(results=[], fallback_used=True, reasoning="No KB match and web search failed; will use model internal knowledge.")
+        return KBSearchOutput(
+            results=[],
+            fallback_used=True,
+            reasoning="No KB match and web search failed; will use model internal knowledge.",
+        )
     if not web_results:
-        return KBSearchOutput(results=[], fallback_used=True, reasoning="No KB match and no web results; will use model internal knowledge.")
+        return KBSearchOutput(
+            results=[],
+            fallback_used=True,
+            reasoning="No KB match and no web results; will use model internal knowledge.",
+        )
     return KBSearchOutput(
         results=[
             SearchResult(
