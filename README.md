@@ -1,8 +1,8 @@
 # Ossia — Portable AI Support Agent
 
 <p align="center">
-  <a href="https://github.com/Kiy-K/Ossia/actions/workflows/tui-test.yml">
-    <img src="https://img.shields.io/github/actions/workflow/status/Kiy-K/Ossia/tui-test.yml?label=TUI%20tests&logo=github" alt="TUI tests">
+  <a href="https://github.com/Kiy-K/Ossia/actions/workflows/release.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/Kiy-K/Ossia/release.yml?label=CI&logo=github" alt="CI">
   </a>
   <img src="https://img.shields.io/badge/coverage-84%25-green" alt="coverage">
   <img src="https://img.shields.io/badge/python-3.12-blue" alt="python">
