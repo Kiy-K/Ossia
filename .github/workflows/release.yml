@@ -4,13 +4,6 @@ on:
   push:
     branches: [master]
     tags: ["v*.*.*"]
-    paths-ignore:
-      - "docs/**"
-      - "specs/features/**"
-      - ".github/dependabot.yml"
-      - "README.md"
-      - "LICENSE"
-      - ".gitignore"
   pull_request:
     branches: [master]
     paths-ignore:
@@ -30,7 +23,6 @@ env:
   BUN_VERSION: "latest"
 
 jobs:
-  # ── Python: Lint + Typecheck + Test ──────────────────────────────────────
   # ── Python: Lint + Typecheck + Test ──────────────────────────────────────
   test-python:
     name: Python — lint / typecheck / test
