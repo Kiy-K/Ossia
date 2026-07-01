@@ -1,269 +1,170 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # =============================================================================
-# Ossia — One-command install script
+# Ossia — package-runner installer (Kilo / DeepAgents Code style)
 # =============================================================================
+# One-command install of the latest released version of Ossia. Detects
+# platform + Python tooling, downloads the source tarball from the
+# GitHub release, and installs the `ossia` command into a uv tool
+# environment (or a pip venv fallback).
+#
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/Kiy-K/Ossia/master/install.sh | bash
 #
-# Or from a local checkout:
-#   bash install.sh
+#   # Pin a specific version:
+#   curl -fsSL ... | OSSIA_VERSION=0.9.0 bash
 #
-# What it does:
-#   1. Checks prerequisites (git, python3 3.11+, uv/pip, bun)
-#   2. Clones the Ossia repo to ~/.ossia (or updates if already present)
-#   3. Runs `make ossia-setup` — installs Python deps, TUI deps, creates .env
-#   4. Optionally adds the `ossia` command to PATH
-#   5. Prints next steps
+#   # Custom install location (default: $XDG_BIN_HOME or $HOME/.local/bin):
+#   curl -fsSL ... | OSSIA_INSTALL_DIR=/usr/local/bin bash
 #
-# Flags:
-#   --help          Show this help message
-#   --no-path       Skip adding ossia to PATH
-#   --dir <path>    Install to a custom directory (default: ~/.ossia)
-#   --branch <ref>  Git branch/tag to clone (default: master)
-#   --server-only   Skip TUI (Bun) dependency installation
+# After install:
+#   ossia --help        # shows usage
+#   ossia --port 9000   # start backend + TUI on a custom port
 # =============================================================================
 
-set -euo pipefail
+set -eu
 
-# ── Colors ───────────────────────────────────────────────────────────────────
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-NC='\033[0m' # No Color
+# ── Configuration (overridable via env) ─────────────────────────────────────
+OSSIA_REPO="${OSSIA_REPO:-Kiy-K/Ossia}"
+OSSIA_VERSION="${OSSIA_VERSION:-}"
+OSSIA_INSTALL_DIR="${OSSIA_INSTALL_DIR:-}"
+OSSIA_EXTRAS="${OSSIA_EXTRAS:-dev,notebook}"
 
-# ── Defaults ─────────────────────────────────────────────────────────────────
-INSTALL_DIR="${HOME}/.ossia"
-GIT_BRANCH="master"
-MODIFY_PATH=true
-SERVER_ONLY=false
+# ── Colors (no-op when piped) ────────────────────────────────────────────────
+if [ -t 1 ]; then
+    BOLD="\033[1m"; DIM="\033[2m"; GREEN="\033[0;32m"; YELLOW="\033[0;33m"; RED="\033[0;31m"; RESET="\033[0m"
+else
+    BOLD=""; DIM=""; GREEN=""; YELLOW=""; RED=""; RESET=""
+fi
+say()  { printf "%b\n" "$*" >&2; }
+warn() { say "${YELLOW}$*${RESET}"; }
+fail() { say "${RED}$*${RESET}"; exit 1; }
+ok()   { say "${GREEN}$*${RESET}"; }
 
-# ── Parse flags ──────────────────────────────────────────────────────────────
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --help)
-            sed -n '/^# =/,/^$/p' "$0" | grep -v '^#!/' | sed 's/^# //; s/^#$//'
-            exit 0
-            ;;
-        --no-path) MODIFY_PATH=false; shift ;;
-        --dir) INSTALL_DIR="$2"; shift 2 ;;
-        --branch) GIT_BRANCH="$2"; shift 2 ;;
-        --server-only) SERVER_ONLY=true; shift ;;
-        *) echo "Unknown option: $1"; exit 1 ;;
-    esac
-done
+# ── Pick install location ───────────────────────────────────────────────────
+pick_install_dir() {
+    if [ -n "$OSSIA_INSTALL_DIR" ]; then
+        echo "$OSSIA_INSTALL_DIR"
+        return
+    fi
+    if [ -n "${XDG_BIN_HOME:-}" ]; then
+        echo "$XDG_BIN_HOME"
+        return
+    fi
+    echo "$HOME/.local/bin"
+}
 
-# ── Header ───────────────────────────────────────────────────────────────────
-echo ""
-echo -e "${BLUE}╔══════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║      ${BOLD}Ossia — AI Support Agent${NC}${BLUE}         ║${NC}"
-echo -e "${BLUE}╚══════════════════════════════════════════╝${NC}"
-echo ""
+# ── Tool detection ──────────────────────────────────────────────────────────
+have_uv()  { command -v uv    >/dev/null 2>&1; }
+have_pip() { command -v pip3  >/dev/null 2>&1 || command -v pip >/dev/null 2>&1; }
+have_curl(){ command -v curl  >/dev/null 2>&1; }
+have_jq()  { command -v jq    >/dev/null 2>&1; }
 
-# ── Helper functions ─────────────────────────────────────────────────────────
-info()  { echo -e "${CYAN}  →${NC} $1"; }
-ok()    { echo -e "${GREEN}  ✓${NC} $1"; }
-warn()  { echo -e "${YELLOW}  ⚠${NC} $1"; }
-fail()  { echo -e "${RED}  ✗${NC} $1"; exit 1; }
-
-check_cmd() {
-    if command -v "$1" &>/dev/null; then
-        ok "$1 found: $(command -v "$1")"
-        return 0
+# ── Get latest version from GitHub API ──────────────────────────────────────
+latest_version() {
+    if [ -n "$OSSIA_VERSION" ]; then
+        echo "$OSSIA_VERSION" | sed 's/^v//'
+        return
+    fi
+    have_curl || fail "ERROR: curl is required to fetch the latest version."
+    # Use jq if available, fall back to grep/sed.
+    local api="https://api.github.com/repos/${OSSIA_REPO}/releases/latest"
+    if have_curl && have_jq; then
+        curl -fsSL "$api" | jq -r '.tag_name // empty' | sed 's/^v//'
     else
-        warn "$1 not found"
-        return 1
+        curl -fsSL "$api" \
+            | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' \
+            | head -1 \
+            | sed -E 's/.*"v?([^"]+)".*/\1/'
     fi
 }
 
-# ── Step 1: Check prerequisites ──────────────────────────────────────────────
-echo -e "${BOLD}Checking prerequisites...${NC}"
+# ── Download source tarball ──────────────────────────────────────────────────
+download_tarball() {
+    local version="$1" dest="$2"
+    have_curl || fail "ERROR: curl is required to download the tarball."
+    local url="https://github.com/${OSSIA_REPO}/archive/refs/tags/v${version}.tar.gz"
+    say "  ${DIM}→ $url${RESET}"
+    curl -fsSL "$url" -o "$dest" || fail "ERROR: download failed from $url"
+}
 
-# Git
-check_cmd git || fail "Git is required. Install: https://git-scm.com/downloads"
-
-# Python 3.11+
-PYTHON_CMD=""
-for cmd in python3 python; do
-    if command -v "$cmd" &>/dev/null; then
-        full_ver=$("$cmd" --version 2>&1)
-        # Extract major.minor — works on both GNU grep and BSD/macOS
-        ver=$(echo "$full_ver" | awk '{for(i=1;i<=NF;i++){if($i~/^[0-9]+\.[0-9]+/){print $i}}}')
-        major=$(echo "$ver" | cut -d. -f1)
-        minor=$(echo "$ver" | cut -d. -f2)
-        if [[ "$major" -gt 3 ]] || [[ "$major" -eq 3 && "$minor" -ge 11 ]] 2>/dev/null; then
-            PYTHON_CMD="$cmd"
-            ok "$cmd $full_ver"
-            break
-        fi
-    fi
-done
-if [[ -z "$PYTHON_CMD" ]]; then
-    fail "Python 3.11+ is required. Install: https://www.python.org/downloads/"
-fi
-
-# uv (preferred) or pip
-UV_CMD=""
-if check_cmd uv; then
-    UV_CMD="uv"
-    ok "Using uv (fast package manager)"
-else
-    if check_cmd pip3; then
-        warn "uv not found — falling back to pip3 (slower). Install uv for faster installs:"
-        warn "  curl -fsSL https://astral.sh/uv/install.sh | bash"
+# ── Install with uv (preferred) or pip (fallback) ───────────────────────────
+install_ossia() {
+    local tarball="$1"
+    if have_uv; then
+        say "  using uv (isolated tool environment)"
+        # --force replaces an existing install; --no-cache avoids
+        # stale wheel caches when testing prereleases.
+        uv tool install --force --no-cache "ossia @ ${tarball}[${OSSIA_EXTRAS}]" \
+            || fail "ERROR: uv tool install failed. Run with OSSIA_NO_UV=1 to use pip."
+        # uv's bin dir; defaults to ~/.local/bin on Linux/macOS.
+        uv tool dir --bin 2>/dev/null || echo "$HOME/.local/bin"
+    elif have_pip; then
+        say "  using pip (uv not detected; install uv for a faster path)"
+        local venv="${OSSIA_HOME:-$HOME/.ossia}"
+        python3 -m venv "$venv"
+        "$venv/bin/pip" install --upgrade "${tarball}[${OSSIA_EXTRAS}]" \
+            || fail "ERROR: pip install failed."
+        echo "$venv/bin"
     else
-        warn "pip3 not found — will use python -m pip"
+        fail "ERROR: need either 'uv' or 'pip' on PATH. Install uv: https://docs.astral.sh/uv/"
     fi
-fi
+}
 
-# Bun (optional, only for TUI)
-if [[ "$SERVER_ONLY" == "false" ]]; then
-    if check_cmd bun; then
-        BUN_CMD="bun"
-    else
-        warn "Bun is optional — needed only for the Terminal UI (TUI)."
-        warn "  Install: curl -fsSL https://bun.sh/install | bash"
-        warn "  Or run with --server-only to skip the TUI."
-        echo ""
-        # Don't fail — user can still run backend-only
-    fi
-fi
+# ── Main ────────────────────────────────────────────────────────────────────
+main() {
+    say "${BOLD}Ossia installer${RESET}"
+    say ""
 
-echo ""
+    local version
+    version=$(latest_version)
+    [ -n "$version" ] || fail "ERROR: could not determine latest version (set OSSIA_VERSION to override)."
+    say "  ${DIM}latest:${RESET}  v${version}"
 
-# ── Step 2: Clone / update repo ──────────────────────────────────────────────
-echo -e "${BOLD}Setting up Ossia in ${INSTALL_DIR}...${NC}"
+    local install_dir
+    install_dir=$(pick_install_dir)
+    say "  ${DIM}target:${RESET}  ${install_dir}"
+    say ""
 
-if [[ -d "$INSTALL_DIR/.git" ]]; then
-    info "Updating existing installation..."
-    cd "$INSTALL_DIR"
-    git fetch origin
-    git checkout "$GIT_BRANCH"
-    git pull origin "$GIT_BRANCH"
-    ok "Updated to latest $(git describe --tags --always 2>/dev/null || echo 'commit')"
-else
-    info "Cloning repository (branch: ${GIT_BRANCH})..."
-    git clone --branch "$GIT_BRANCH" --depth 1 \
-        https://github.com/Kiy-K/Ossia.git "$INSTALL_DIR"
-    ok "Repository cloned"
-fi
+    local tarball
+    tarball=$(mktemp -t "ossia-${version}.XXXXXX.tar.gz")
+    # Ensure cleanup on exit.
+    trap 'rm -f "$tarball" 2>/dev/null || true' EXIT INT TERM
 
-cd "$INSTALL_DIR"
-echo ""
+    say "${BOLD}→${RESET} downloading tarball"
+    download_tarball "$version" "$tarball"
+    ok "  downloaded"
 
-# ── Step 3: Install dependencies ─────────────────────────────────────────────
-echo -e "${BOLD}Installing dependencies...${NC}"
+    say "${BOLD}→${RESET} installing (extras: ${OSSIA_EXTRAS})"
+    local bin_dir
+    bin_dir=$(install_ossia "$tarball")
+    ok "  installed"
 
-info "Creating Python virtual environment..."
-_install_log=$(mktemp)
-if [[ -n "$UV_CMD" ]]; then
-    "$UV_CMD" venv 2>/dev/null || true
-    if ! "$UV_CMD" pip install -e ".[dev,notebook]" >"$_install_log" 2>&1; then
-        cat "$_install_log"
-        fail "Python dependency installation failed"
-    fi
-else
-    "$PYTHON_CMD" -m venv .venv 2>/dev/null || true
-    if ! .venv/bin/pip install -e ".[dev,notebook]" >"$_install_log" 2>&1; then
-        cat "$_install_log"
-        fail "Python dependency installation failed"
-    fi
-fi
-rm -f "$_install_log"
-ok "Python dependencies installed"
-
-if [[ "$SERVER_ONLY" == "false" ]] && command -v bun &>/dev/null; then
-    info "Installing TUI dependencies..."
-    _tui_log=$(mktemp)
-    if ! (cd src/tui && bun install >"$_tui_log" 2>&1); then
-        cat "$_tui_log"
-        warn "TUI dependency installation failed — run 'cd src/tui && bun install' manually"
-    else
-        ok "TUI dependencies installed"
-    fi
-    rm -f "$_tui_log"
-fi
-
-echo ""
-
-# ── Step 4: Create .env ──────────────────────────────────────────────────────
-echo -e "${BOLD}Setting up environment...${NC}"
-
-if [[ -f .env ]]; then
-    warn ".env already exists — keeping existing configuration"
-else
-    cp .env.example .env
-    ok "Created .env from .env.example"
-    info "Edit ${INSTALL_DIR}/.env to set your API keys:"
-    info "  OSSIA_API_KEY — secret for authenticating requests"
-    info "  OPENROUTER_API_KEY or another provider key"
-fi
-
-echo ""
-
-# ── Step 5: Add to PATH ──────────────────────────────────────────────────────
-if [[ "$MODIFY_PATH" == "true" ]]; then
-    # Symlink the ossia command into ~/.local/bin for PATH access
-    LOCAL_BIN="${HOME}/.local/bin"
-    mkdir -p "$LOCAL_BIN"
-
-    OSSIA_CMD="${INSTALL_DIR}/.venv/bin/ossia"
-    SYMLINK="${LOCAL_BIN}/ossia"
-
-    if [[ -L "$SYMLINK" ]] || [[ ! -e "$SYMLINK" ]]; then
-        ln -sf "$OSSIA_CMD" "$SYMLINK"
-        ok "Linked ossia command to ${SYMLINK}"
-    else
-        warn "${SYMLINK} already exists and is not a symlink — skipping"
+    # Symlink the entry point into the requested PATH location.
+    if [ -n "$bin_dir" ] && [ "$bin_dir" != "$install_dir" ] && [ -x "$bin_dir/ossia" ]; then
+        mkdir -p "$install_dir"
+        ln -sf "$bin_dir/ossia" "$install_dir/ossia"
+        ok "  linked → ${install_dir}/ossia"
     fi
 
-    # Add ~/.local/bin to PATH if not already there
-    SHELL_CONFIG=""
-    if [[ -n "$BASH_VERSION" ]]; then
-        [[ -f "${HOME}/.bashrc" ]] && SHELL_CONFIG="${HOME}/.bashrc"
-    elif [[ -n "$ZSH_VERSION" ]]; then
-        [[ -f "${HOME}/.zshrc" ]] && SHELL_CONFIG="${HOME}/.zshrc"
-    fi
+    say ""
+    ok "${BOLD}ossia ${version} installed${RESET}"
 
-    if [[ -n "$SHELL_CONFIG" ]]; then
-        if ! grep -q '\.local/bin' "$SHELL_CONFIG" 2>/dev/null; then
-            echo "" >> "$SHELL_CONFIG"
-            echo '# Add ~/.local/bin to PATH (Ossia)' >> "$SHELL_CONFIG"
-            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$SHELL_CONFIG"
-            ok "Added ~/.local/bin to PATH in ${SHELL_CONFIG}"
-        fi
-    else
-        warn "Could not detect shell config — add ~/.local/bin to your PATH manually"
-    fi
-fi
+    # PATH nudge (only when install_dir isn't on PATH already).
+    case ":$PATH:" in
+        *":$install_dir:"*) ;;
+        *)
+            say ""
+            warn "  ${install_dir} is not on your PATH."
+            warn "  Add it to your shell profile:"
+            warn "    export PATH=\"${install_dir}:\$PATH\""
+            ;;
+    esac
 
-echo ""
+    say ""
+    say "  ${BOLD}next steps:${RESET}"
+    say "    export OSSIA_API_KEY=dev      # any non-empty value for dev"
+    say "    ossia --help                  # show CLI options"
+    say "    ossia --port 9000             # start backend + TUI"
+}
 
-# ── Done ─────────────────────────────────────────────────────────────────────
-echo -e "${GREEN}${BOLD}Installation complete!${NC}"
-echo ""
-echo -e "  ${CYAN}ossia${NC} command installed at:"
-echo -e "    ${INSTALL_DIR}"
-echo ""
-
-echo -e "${BOLD}Quick start:${NC}"
-echo ""
-echo -e "  1. Edit your API keys:"
-echo -e "     ${CYAN}vim ${INSTALL_DIR}/.env${NC}"
-echo ""
-echo -e "  2. Start the server:"
-echo -e "     ${CYAN}cd ${INSTALL_DIR} && make dev${NC}"
-echo ""
-echo -e "  3. Or with the unified CLI (backend + TUI):"
-echo -e "     ${CYAN}cd ${INSTALL_DIR} && make ossia${NC}"
-echo ""
-echo -e "  4. Test it:"
-echo -e "     ${CYAN}curl -X POST http://localhost:8000/v1/chat \\${NC}"
-echo -e "     ${CYAN}  -H \"X-API-Key: dev\" \\${NC}"
-echo -e "     ${CYAN}  -H \"Content-Type: application/json\" \\${NC}"
-echo -e "     ${CYAN}  -d '{\"message\": \"Hello!\"}'${NC}"
-echo ""
-echo -e "${BOLD}Docs:${NC}  ${CYAN}https://github.com/Kiy-K/Ossia${NC}"
-echo ""
+main "$@"

@@ -3,7 +3,37 @@ Human-readable record of breaking and notable non-breaking changes to the
 Ossia HTTP contract. The machine-readable record is the git history of
 `openapi.checked.json`.
 
-## Unreleased — Redis cache + memory write lock
+## Unreleased
+
+## v0.9.0-rc1 - 2026-07-01 - package-runner installer + Redis-backed memory
+
+**Test release** to verify the release workflow on a real version
+bump. Contains all the changes shipped under "Unreleased" since
+v0.4.1 plus the package-runner installer rewrite. Marked as
+prerelease on the GitHub Release; pin to `v0.9.0-rc1` if you
+need a stable install target.
+
+### New: one-command installer
+
+`install.sh` rewritten in the Kilo / DeepAgents Code pattern:
+fetch the latest tag from the GitHub API, download the source
+tarball, install with `uv tool install` (or `pip` venv fallback),
+and symlink the `ossia` entry point into `$XDG_BIN_HOME` /
+`$HOME/.local/bin`.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Kiy-K/Ossia/master/install.sh | bash
+```
+
+Override `OSSIA_VERSION`, `OSSIA_INSTALL_DIR`, `OSSIA_EXTRAS`,
+or `OSSIA_REPO` via env. The previous `git clone + make
+ossia-setup` flow is gone; pip-install from a tag is the
+supported path.
+
+A `[project.scripts]` entry point in `pyproject.toml` exposes
+`core.cli:main` as the `ossia` command. See `core.cli` for the
+full CLI surface.
+
 
 **Non-breaking** for the HTTP contract. No routes changed. Adds
 optional Redis support for surface #1 (tool result cache) and
