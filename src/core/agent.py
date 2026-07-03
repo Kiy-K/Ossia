@@ -24,7 +24,7 @@ from langgraph.middleware.redis import (
 from langgraph.store.base import BaseStore
 from langgraph.store.memory import InMemoryStore
 
-from core.config import Provider, Settings, get_settings
+from core.config import Settings, get_settings
 from core.context import OssiaContext
 from core.episodic import (
     make_episodic_recall_tool,
@@ -32,11 +32,13 @@ from core.episodic import (
     make_search_threads_tool,
     make_semantic_recall_tool,
 )
+from core.llm import create_chat_model
 from core.mcp_tools import MCPToolkit
 from core.memory import (
     AGENT_NAMESPACE,
     AGENTS_MEMORY_KEY,
     POLICY_NAMESPACE,
+    SCRATCH_NAMESPACE,
     get_redis_store,
     get_store,
     seed_memory,
@@ -72,6 +74,12 @@ from core.tools import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Module-level fallback for ``compiled.store`` when a future LangGraph
+# release makes the compiled graph frozen. Set by ``build_agent_async``
+# on every successful boot, cleared on teardown. Read by the FastAPI
+# ``/v1/memories/*`` and ``/v1/policies/*`` debug routes.
+_runtime_store: BaseStore | None = None
 
 _DEV_CONCIERGE_SUBAGENTS = (
     (
@@ -256,6 +264,55 @@ _DEV_CONCIERGE_SUBAGENTS = (
             "Keep the response under 250 words."
         ),
     ),
+    (
+        "web-reviewer",
+        "Visit a live URL with a real browser to verify, fetch, or "
+        "interact with a page. Use this when the user asks to check a "
+        "deployed app, fetch JS-rendered content, fill a form, or confirm "
+        "something on a third-party site that the plain HTTP fetch_url tool "
+        "cannot reach.",
+        (
+            "You are a web reviewer for the Ossia platform.\n"
+            "\n"
+            "You have ONE tool: browser_use_task. It drives a real Chromium "
+            "browser (the browser-use cloud browser on the free tier) to "
+            "complete a task. Use it sparingly — each call costs one "
+            "free-tier task.\n"
+            "\n"
+            "When to use it:\n"
+            "  - The user asks to verify a deployed URL (e.g. 'is the PR "
+            "preview live?', 'what does the staging site show?').\n"
+            "  - A page requires JavaScript to render meaningful content.\n"
+            "  - A page is behind a login wall or has anti-bot protection.\n"
+            "  - The task requires clicking, scrolling, or filling a form.\n"
+            "\n"
+            "How to use it well:\n"
+            "  - Write a precise, action-oriented task string. Name the URL, "
+            "the action, and the exact data to extract.\n"
+            "  - Keep max_steps low (default 15) to stay within budget.\n"
+            "  - Leave flash_mode=True (the default) — it skips the agent's "
+            "internal thinking step and halves the LLM calls per task. "
+            "Set flash_mode=False only when navigation keeps going off-rail.\n"
+            "  - When the user wants specific fields (e.g. 'just the version "
+            "and the date'), pass output_schema={'version': 'the release "
+            "version string', 'date': 'the release date'}. The tool will "
+            "extract into that shape on the final step.\n"
+            "  - If the tool returns success=False, report the error "
+            "verbatim — do NOT retry without user confirmation.\n"
+            "\n"
+            "IMPORTANT: Return only the distilled web review. Do NOT include "
+            "raw URLs, browser-use transcripts, or step-by-step actions. "
+            "The main agent receives only this report.\n"
+            "\n"
+            "Output format:\n"
+            "  - What was verified (1 sentence).\n"
+            "  - Key findings (bullet points).\n"
+            "  - URLs visited.\n"
+            "  - Any errors or caveats.\n"
+            "\n"
+            "Keep the response under 200 words."
+        ),
+    ),
 )
 
 
@@ -286,68 +343,6 @@ def create_core_tools() -> list[BaseTool]:
         run_audit_pipeline,
         run_refactor_pipeline,
     ]
-
-
-def create_chat_model(settings: Settings | None = None) -> BaseChatModel:
-    """Create a model-agnostic chat model from environment settings."""
-    settings = settings or get_settings()
-    provider = settings.provider
-    if provider == Provider.NEBIUS:
-        raise NotImplementedError(
-            "Provider.NEBIUS was removed; the adapter was deleted. "
-            "Use Provider.OPENROUTER (or another OpenAI-compatible "
-            "provider) with a Nebius-routed model id."
-        )
-    openai_like_providers = {
-        Provider.OPENROUTER: ("https://openrouter.ai/api/v1", settings.openrouter_api_key),
-        Provider.FIREWORKS: ("https://api.fireworks.ai/inference/v1", settings.fireworks_api_key),
-        Provider.BASETEN: ("https://inference.baseten.co/v1", settings.baseten_api_key),
-        Provider.OPENAI: (None, settings.openai_api_key),
-    }
-    if provider in openai_like_providers:
-        base_url, api_key = openai_like_providers[provider]
-        if not api_key:
-            raise ValueError(f"API key for provider '{provider}' is not configured.")
-        from langchain_openai import ChatOpenAI
-        kwargs: dict[str, Any] = {
-            "model": settings.model,
-            "temperature": settings.temperature,
-            "max_tokens": settings.max_tokens,
-            "api_key": api_key,
-            "streaming": True,
-        }
-        if base_url:
-            kwargs["base_url"] = base_url
-        return ChatOpenAI(**kwargs)
-    if provider == Provider.ANTHROPIC:
-        from langchain_anthropic import ChatAnthropic
-        if not settings.anthropic_api_key:
-            raise ValueError("ANTHROPIC_API_KEY is required for the anthropic provider.")
-        return ChatAnthropic(  # type: ignore[call-arg]
-            model=settings.model,  # pyright: ignore[reportCallIssue]
-            temperature=settings.temperature,
-            max_tokens=settings.max_tokens,  # pyright: ignore[reportCallIssue]
-            api_key=settings.anthropic_api_key,  # type: ignore[arg-type]
-            streaming=True,
-        )
-    if provider == Provider.GOOGLE:
-        from langchain_google_genai import ChatGoogleGenerativeAI
-        if not settings.google_api_key:
-            raise ValueError("GOOGLE_API_KEY is required for the google provider.")
-        return ChatGoogleGenerativeAI(
-            model=settings.model,
-            temperature=settings.temperature,
-            max_tokens=settings.max_tokens,
-            api_key=settings.google_api_key,
-        )
-    if provider == Provider.OLLAMA:
-        from langchain_ollama import ChatOllama
-        return ChatOllama(  # type: ignore[no-any-return]
-            model=settings.model,
-            temperature=settings.temperature,
-            base_url=settings.ollama_base_url,
-        )
-    raise ValueError(f"Unsupported provider: {provider}")
 
 
 def _build_async_subagents(settings: Settings) -> list[AsyncSubAgent]:
@@ -412,15 +407,19 @@ def _build_middlewares(settings: Settings) -> list[Any]:
         # Model fallback switches to a secondary model when the primary
         # provider is degraded. Only wired when a fallback model is configured.
         ModelFallbackMiddleware(
-            fallback_model=create_chat_model(Settings(
-                provider=settings.fallback_provider,  # type: ignore[arg-type]
-                model=settings.fallback_model,
-                openrouter_api_key=settings.openrouter_api_key,
-                openai_api_key=settings.openai_api_key,
-                anthropic_api_key=settings.anthropic_api_key,
-                google_api_key=settings.google_api_key,
-            ))
-        ) if settings.fallback_model else None,
+            fallback_model=create_chat_model(
+                Settings(
+                    provider=settings.fallback_provider,  # type: ignore[arg-type]
+                    model=settings.fallback_model,
+                    openrouter_api_key=settings.openrouter_api_key,
+                    openai_api_key=settings.openai_api_key,
+                    anthropic_api_key=settings.anthropic_api_key,
+                    google_api_key=settings.google_api_key,
+                )
+            )
+        )
+        if settings.fallback_model
+        else None,
         # Circuit breaker opens when an external service repeatedly fails,
         # preventing retries from hammering a downed service. Placed before
         # RetryToolMiddleware so the breaker fails fast instead of exhausting
@@ -486,9 +485,7 @@ def _build_middlewares(settings: Settings) -> list[Any]:
     if settings.enable_async_subagents:
         try:
             async_subagents = _build_async_subagents(settings)
-            middlewares.append(
-                AsyncSubAgentMiddleware(async_subagents=async_subagents)
-            )
+            middlewares.append(AsyncSubAgentMiddleware(async_subagents=async_subagents))
             logger.info(
                 "Async subagent middleware wired with %d subagents: %s",
                 len(async_subagents),
@@ -510,6 +507,30 @@ def _interrupt_config(settings: Settings, checkpointer: Any | None) -> dict[str,
 _READ_ONLY_TOOLS: list[BaseTool] = [search_codebase, search_knowledge_base]
 # Tools that test-runner subagents may also use.
 _TEST_TOOLS: list[BaseTool] = [*_READ_ONLY_TOOLS, run_tests]
+# Web-reviewer: read-only + the browser-use wrapper. Built lazily because
+# the wrapper may be unavailable (no API key, no package). Resolved once
+# at agent-build time; the subagent simply does not exist if the tool
+# cannot be built.
+_WEB_REVIEWER_TOOLS: list[BaseTool] | None = None
+
+
+def _resolve_web_reviewer_tools() -> list[BaseTool] | None:
+    """Return tools for the web-reviewer subagent, or None to skip wiring it.
+
+    Imports are deferred to the function body to keep ``agent.py`` importable
+    even when ``browser-use`` is not installed.
+    """
+    global _WEB_REVIEWER_TOOLS
+    if _WEB_REVIEWER_TOOLS is not None:
+        return _WEB_REVIEWER_TOOLS
+    from core.browser_use_tool import get_browser_use_tool
+
+    tool = get_browser_use_tool()
+    if tool is None:
+        return None
+    _WEB_REVIEWER_TOOLS = [*_READ_ONLY_TOOLS, tool]
+    return _WEB_REVIEWER_TOOLS
+
 
 # Subagent permission tiers: maps subagent name -> allowed tools.
 _SUBAGENT_TOOL_MAP: dict[str, list[BaseTool]] = {
@@ -524,16 +545,28 @@ _SUBAGENT_TOOL_MAP: dict[str, list[BaseTool]] = {
 
 
 def _build_subagents(model: BaseChatModel) -> list[dict[str, Any]]:
-    return [
-        {
-            "name": name,
-            "description": description,
-            "system_prompt": prompt,
-            "tools": _SUBAGENT_TOOL_MAP.get(name, _READ_ONLY_TOOLS),
-            "model": model,
-        }
-        for name, description, prompt in _DEV_CONCIERGE_SUBAGENTS
-    ]
+    web_reviewer_tools = _resolve_web_reviewer_tools()
+    out: list[dict[str, Any]] = []
+    for name, description, prompt in _DEV_CONCIERGE_SUBAGENTS:
+        if name == "web-reviewer":
+            # Skip wiring the subagent entirely when browser-use is not
+            # configured. The subagent's whole purpose is the browser-use
+            # tool; without it, there is nothing for the subagent to do.
+            if web_reviewer_tools is None:
+                continue
+            tools = web_reviewer_tools
+        else:
+            tools = _SUBAGENT_TOOL_MAP.get(name, _READ_ONLY_TOOLS)
+        out.append(
+            {
+                "name": name,
+                "description": description,
+                "system_prompt": prompt,
+                "tools": tools,
+                "model": model,
+            }
+        )
+    return out
 
 
 def _make_memory_namespace(base: tuple[str, ...] = AGENT_NAMESPACE) -> tuple[str, ...]:
@@ -574,35 +607,66 @@ _POLICY_DENY_WRITE: list[FilesystemPermission] = [
 ]
 
 
+def _make_scratch_namespace() -> tuple[str, ...]:
+    """Per-caller scratch (working-memory) namespace.
+
+    Mirrors :func:`_make_memory_namespace`'s per-caller default; the
+    agent-scoped mode (``Settings.memory_scope == "agent"``) is
+    intentionally not honored here — scratch is always per-caller.
+    One user's transient working state should not bleed into the
+    next user's session.
+    """
+    caller = caller_var.get()
+    if caller:
+        return (SCRATCH_NAMESPACE[0], caller)
+    return SCRATCH_NAMESPACE
+
+
 def _make_backend(
     store: BaseStore,
+    scratch_store: BaseStore | None = None,
     namespace: tuple[str, ...] = AGENT_NAMESPACE,
 ) -> CompositeBackend:
-    """Build the filesystem backend with per-user memory isolation
-    and a shared read-only /policies/ route.
+    """Build the filesystem backend with per-user memory isolation,
+    a shared read-only /policies/ route, and an optional /scratch/
+    working-memory route.
 
     ``/memories/`` is backed by the LangGraph store namespaced via
     :func:`_make_memory_namespace` (per-caller by default; shared when
     ``Settings.memory_scope == "agent"``). ``/policies/`` is backed by
     the same store on the fixed :data:`POLICY_NAMESPACE` and protected
-    by :data:`_POLICY_DENY_WRITE` at the agent level. All other paths
-    use the in-process StateBackend.
+    by :data:`_POLICY_DENY_WRITE` at the agent level.
+
+    ``/scratch/`` is the *working-memory* surface per the hybrid
+    Redis-for-hot/Postgres-for-cold recommendation. When
+    ``scratch_store`` is provided, it mounts there with per-caller
+    namespacing via :func:`_make_scratch_namespace`. When ``None``,
+    the /scratch/ route is not mounted and the agent gets an
+    automatic 404 on those paths.
+
+    All other paths use the in-process StateBackend.
 
     The store is injected directly into ``StoreBackend`` so writes do
     not depend on runtime context resolution.
     """
+    routes = {
+        "/memories/": StoreBackend(
+            store=store,
+            namespace=lambda rt, _ns=namespace: _make_memory_namespace(_ns),  # type: ignore[misc]
+        ),
+        "/policies/": StoreBackend(
+            store=store,
+            namespace=lambda rt: POLICY_NAMESPACE,
+        ),
+    }
+    if scratch_store is not None:
+        routes["/scratch/"] = StoreBackend(
+            store=scratch_store,
+            namespace=lambda rt: _make_scratch_namespace(),
+        )
     return CompositeBackend(
         default=StateBackend(),
-        routes={
-            "/memories/": StoreBackend(
-                store=store,
-                namespace=lambda rt, _ns=namespace: _make_memory_namespace(_ns),  # type: ignore[misc]
-            ),
-            "/policies/": StoreBackend(
-                store=store,
-                namespace=lambda rt: POLICY_NAMESPACE,
-            ),
-        },
+        routes=routes,  # type: ignore[arg-type]
     )
 
 
@@ -614,12 +678,14 @@ def _compile_agent(
     checkpointer: Any | None,
     *,
     store: BaseStore | None = None,
+    scratch_store: BaseStore | None = None,
     subagents: list[dict[str, Any]] | None = None,
     episodic_tool: BaseTool | None = None,
     semantic_tool: BaseTool | None = None,
     context_schema: type | None = None,
+    plugin_middlewares: list[Any] | None = None,
 ) -> CompiledStateGraph[Any, Any, Any, Any]:
-    backend = _make_backend(store) if store is not None else None
+    backend = _make_backend(store, scratch_store) if store is not None else None
     all_tools: list[BaseTool] = list(tools)
     if episodic_tool is not None:
         all_tools.append(episodic_tool)
@@ -629,6 +695,12 @@ def _compile_agent(
     if search_tool is not None:
         all_tools.append(search_tool)
     middlewares = _build_middlewares(settings)
+    # Plugin middlewares run AFTER the core stack but BEFORE the
+    # caller-context middleware (which must be closest to the model
+    # call). Ponytail: insertion order matters for the middleware
+    # chain; document it once, get it right.
+    if plugin_middlewares:
+        middlewares.extend(plugin_middlewares)
     # Wire the @dynamic_prompt middleware to inject runtime caller context.
     # This is appended after all other middlewares so it runs closest to the
     # model call, ensuring the caller identity is visible in every LLM turn.
@@ -659,6 +731,18 @@ def build_agent(
     model = create_chat_model(settings)
     tools = create_core_tools()
     system_prompt = load_system_prompt()
+    subagents = _build_subagents(model)
+    # Discover and merge plugins. A bad plugin never takes down the
+    # agent — failures are logged and skipped (see
+    # ``core.plugin._load_one``).
+    from core.plugin import load_plugins_into
+
+    plugin_middlewares: list[Any] = []
+    load_plugins_into(
+        tools=tools,
+        subagents=subagents,
+        middlewares=plugin_middlewares,
+    )
     # Sync build path is for tests and one-off scripts. No event loop here,
     # so we cannot seed the in-process store; tests seed explicitly via
     # ``seed_memory`` after the agent is built. Production uses the async
@@ -669,8 +753,9 @@ def build_agent(
         tools,
         system_prompt,
         checkpointer,
-        subagents=_build_subagents(model),
+        subagents=subagents,
         context_schema=OssiaContext,
+        plugin_middlewares=plugin_middlewares,
     )
 
 
@@ -690,19 +775,34 @@ async def build_agent_async(
         try:
             toolkit = await MCPToolkit(settings).__aenter__()
         except Exception as exc:  # noqa: BLE001
-            logger.warning("MCP toolkit initialization failed (%s); falling back to core tools.", exc)
+            logger.warning(
+                "MCP toolkit initialization failed (%s); falling back to core tools.", exc
+            )
             toolkit = None
     store: BaseStore
     store_cm: Any | None = None
+    scratch_store: BaseStore | None = None
+    global _runtime_store
     if settings.redis_url:
         # Redis store from langgraph-checkpoint-redis. Replaces the
         # Postgres store when REDIS_URL is set; key-value by default
         # — pass an IndexConfig to enable vector RAG (see Settings).
         store_cm = get_redis_store(settings)
         store = await store_cm.__aenter__()
+        # Reuse the same Redis store as the /scratch/ working-memory
+        # backend. Redis is the hot path (sub-ms reads, TTL-friendly)
+        # so it fits /scratch/ naturally; reusing the connection also
+        # avoids a second AsyncRedisStore round-trip per request.
+        # Ponytail: one connection, two routes, no extra plumbing.
+        scratch_store = store
     elif settings.postgres_url:
         store_cm = get_store(settings)
         store = await store_cm.__aenter__()
+        # No scratch_store on Postgres-only deployments: the /scratch/
+        # route is not mounted and the agent's working memory falls
+        # through to StateBackend (in-thread, ephemeral). To enable
+        # the hybrid on Postgres+Redis, set both URLs and Redis wins
+        # for scratch.
     else:
         store = InMemoryStore()
     # Seed agent-scoped memory once per store. Idempotent: re-runs leave
@@ -723,19 +823,46 @@ async def build_agent_async(
     try:
         if toolkit is not None:
             tools = [*tools, *toolkit.get_tools()]
-        yield _compile_agent(
+        # Discover and merge plugins AFTER MCP tools so user plugins
+        # can override or extend MCP toolchains. Plugins can also
+        # register middlewares which are appended to the runtime
+        # stack.
+        from core.plugin import load_plugins_into
+
+        plugin_middlewares: list[Any] = []
+        load_plugins_into(
+            tools=tools,
+            subagents=subagents,
+            middlewares=plugin_middlewares,
+        )
+        compiled = _compile_agent(
             settings,
             model,
             tools,
             system_prompt,
             checkpointer,
             store=store,
+            scratch_store=scratch_store,
             subagents=subagents,
             episodic_tool=episodic_tool,
             semantic_tool=semantic_tool,
             context_schema=OssiaContext,
+            plugin_middlewares=plugin_middlewares,
         )
+        # Expose the store on the compiled graph so the FastAPI layer
+        # can serve ``/v1/memories/*`` and ``/v1/policies/*`` debug routes
+        # without a parallel Postgres/Redis connection. The compiled
+        # graph is a Pydantic model but attribute assignment works for
+        # arbitrary objects (verified — see tests).
+        try:
+            compiled.store = store  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001
+            # If a future LangGraph release makes the graph frozen, fall
+            # back to module-level state. Ponytail: keep one path.
+            _runtime_store = store
+        yield compiled
     finally:
+        _runtime_store = None
         if store_cm is not None:
             await store_cm.__aexit__(None, None, None)
         if toolkit is not None:

@@ -6,6 +6,7 @@ agent can execute via the interpreter's ``eval`` tool. This two-step
 process works because ``task()`` is only available in the JavaScript
 interpreter context, not in Python.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -26,7 +27,9 @@ class AuditPipelineInput(BaseModel):
     """Input schema for the audit pipeline tool."""
 
     target: str = Field(default=".", description="Directory or file path to audit.")
-    focus: str = Field(default="general", description="Audit focus: security / performance / style / general.")
+    focus: str = Field(
+        default="general", description="Audit focus: security / performance / style / general."
+    )
 
 
 class RefactorPipelineInput(BaseModel):
@@ -83,6 +86,7 @@ def run_bugfix_pipeline(
     """
     del repo, issue_number  # used for context but not in JS template yet
     from core.orchestrators.bugfix_pipeline import get_bugfix_pipeline_js
+
     js = get_bugfix_pipeline_js(issue_description)
     return _pipeline_result("bugfix", js)
 
@@ -110,6 +114,7 @@ def run_audit_pipeline(
         Dict with ``js_code`` (str) and ``instruction`` for the agent.
     """
     from core.orchestrators.audit_pipeline import get_audit_pipeline_js
+
     js = get_audit_pipeline_js(target=target, focus=focus)
     return _pipeline_result("audit", js)
 
@@ -137,5 +142,6 @@ def run_refactor_pipeline(
         Dict with ``js_code`` (str) and ``instruction`` for the agent.
     """
     from core.orchestrators.refactor_pipeline import get_refactor_pipeline_js
+
     js = get_refactor_pipeline_js(target=target, goal=goal)
     return _pipeline_result("refactor", js)

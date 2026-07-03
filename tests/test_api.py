@@ -146,6 +146,99 @@ def test_tools_returns_core_tools(client: TestClient) -> None:
         assert t["source"] in {"core", "mcp"}
 
 
+def test_plugins_returns_loaded_plugins(client: TestClient) -> None:
+    """GET /v1/plugins returns the bundled ponytail plugin with its tools."""
+    r = client.get("/v1/plugins", headers={"X-API-Key": API_KEY})
+    assert r.status_code == 200
+    body = r.json()
+    names = {p["name"] for p in body["plugins"]}
+    assert "ponytail" in names
+    pony = next(p for p in body["plugins"] if p["name"] == "ponytail")
+    assert "ponytail_review" in pony["tool_names"]
+    assert pony["path"].endswith("__init__.py")
+    assert isinstance(pony["config"], dict)
+
+
+def test_plugins_requires_api_key(client: TestClient) -> None:
+    r = client.get("/v1/plugins")
+    assert r.status_code == 401
+
+
+# ── Webhook routes ──────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def fresh_webhook_store() -> Generator[None, None, None]:
+    """Reset the in-memory webhook store around each test."""
+    import asyncio as _asyncio
+
+    from core.webhooks import get_webhook_store
+
+    store = get_webhook_store()
+
+    async def _drain() -> None:
+        for w in await store.list():
+            await store.delete(w.id)
+
+    _asyncio.run(_drain())
+    yield
+    _asyncio.run(_drain())
+
+
+def test_webhooks_create_returns_secret_once(
+    client: TestClient, fresh_webhook_store: None
+) -> None:
+    r = client.post(
+        "/v1/webhooks",
+        headers={"X-API-Key": API_KEY},
+        json={"url": "https://example.com/h", "events": ["*"]},
+    )
+    assert r.status_code == 201
+    body = r.json()
+    assert body["url"] == "https://example.com/h"
+    assert body["events"] == ["*"]
+    assert len(body["secret"]) >= 16
+
+
+def test_webhooks_list_redacts_secret(
+    client: TestClient, fresh_webhook_store: None
+) -> None:
+    client.post(
+        "/v1/webhooks",
+        headers={"X-API-Key": API_KEY},
+        json={"url": "https://example.com/h"},
+    )
+    r = client.get("/v1/webhooks", headers={"X-API-Key": API_KEY})
+    assert r.status_code == 200
+    items = r.json()["webhooks"]
+    assert len(items) == 1
+    assert "secret" not in items[0]
+
+
+def test_webhooks_delete_removes(
+    client: TestClient, fresh_webhook_store: None
+) -> None:
+    r1 = client.post(
+        "/v1/webhooks",
+        headers={"X-API-Key": API_KEY},
+        json={"url": "https://example.com/h"},
+    )
+    wid = r1.json()["id"]
+    r2 = client.delete(f"/v1/webhooks/{wid}", headers={"X-API-Key": API_KEY})
+    assert r2.status_code == 200
+    assert r2.json() == {"deleted": True, "id": wid}
+    # Second delete is a no-op
+    r3 = client.delete(f"/v1/webhooks/{wid}", headers={"X-API-Key": API_KEY})
+    assert r3.json()["deleted"] is False
+
+
+def test_webhooks_create_requires_api_key(
+    client: TestClient, fresh_webhook_store: None
+) -> None:
+    r = client.post("/v1/webhooks", json={"url": "https://x"})
+    assert r.status_code == 401
+
+
 def test_eval_with_no_api_key_returns_empty_report(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -495,7 +588,9 @@ def test_msg_to_chat_message_text_only_yields_empty_artifacts() -> None:
         ToolMessage(content="result", tool_call_id="call-1"),
     ]:
         result = _msg_to_chat_message(msg)
-        assert len(result.artifacts) == 0, f"expected empty artifacts for msg type {type(msg).__name__}"
+        assert len(result.artifacts) == 0, (
+            f"expected empty artifacts for msg type {type(msg).__name__}"
+        )
 
 
 def test_msg_to_chat_message_with_artifact_message_attribute() -> None:
@@ -558,7 +653,9 @@ def test_artifact_schema_valid_types_accepted() -> None:
         message="Multiple artifacts",
         artifacts=[
             Artifact(type="image", mime_type="image/png", data="img1"),
-            Artifact(type="document", mime_type="application/pdf", url="https://example.com/doc.pdf"),
+            Artifact(
+                type="document", mime_type="application/pdf", url="https://example.com/doc.pdf"
+            ),
             Artifact(type="audio", mime_type="audio/wav", data="audio1"),
             Artifact(type="video", mime_type="video/mp4", url="https://example.com/vid.mp4"),
         ],
@@ -743,6 +840,7 @@ async def test_thread_events_returns_events_after_stream(client: TestClient) -> 
     from argon2 import low_level as argon2_low_level
 
     from core.events import EventNormalizer, get_thread_event_buffer, serialize_sse
+
     caller_hash = argon2_low_level.hash_secret_raw(
         secret=b"test-api-key",
         salt=b"ossia-caller-id",  # must be exactly 16 bytes
@@ -837,6 +935,7 @@ def test_thread_events_delete_does_not_affect_other_threads(client: TestClient) 
         OssiaEvent,
         get_thread_event_buffer,
     )
+
     caller_hash = argon2_low_level.hash_secret_raw(
         secret=b"test-api-key",
         salt=b"ossia-caller-id",  # must be exactly 16 bytes

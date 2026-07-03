@@ -93,14 +93,15 @@ def _patched_tavily(client: _FakeTavilyClient | None, *, key: str = "tvly-test")
     """
     if client is None:
         with (
-            patch("core.tools._get_tavily_client", return_value=None),        patch("core.config.get_settings") as gs,
-            ):
+            patch("core.tools._get_tavily_client", return_value=None),
+            patch("core.config.get_settings") as gs,
+        ):
             gs.return_value.tavily_api_key = None
             yield
     else:
         with (
-        patch("core.tools._get_tavily_client", return_value=client),
-        patch("core.config.get_settings") as gs,
+            patch("core.tools._get_tavily_client", return_value=client),
+            patch("core.config.get_settings") as gs,
         ):
             gs.return_value.tavily_api_key = key
             yield
@@ -130,26 +131,102 @@ def test_internet_search_returns_tavily_results() -> None:
 def test_internet_search_clamps_max_results() -> None:
     """The Pydantic input schema rejects out-of-range ``max_results``."""
     with pytest.raises(ValidationError):
-        internet_search.invoke(
-            {"query": "x", "max_results": 0, "topic": "general"}
-        )
+        internet_search.invoke({"query": "x", "max_results": 0, "topic": "general"})
 
 
 def test_internet_search_falls_back_to_duckduckgo_when_key_missing() -> None:
     """No TAVILY_API_KEY -> DuckDuckGo path; backend='duckduckgo', no answer."""
-    canned_ddg = [
-        {"title": "DDG result", "href": "https://ddg.example.com", "body": "snippet"}
-    ]
-    with _patched_tavily(client=None),        patch("core.tools._ddgs_text", return_value=canned_ddg
-    ):
-        result = internet_search.invoke(
-            {"query": "x", "max_results": 3, "topic": "general"}
-        )
+    canned_ddg = [{"title": "DDG result", "href": "https://ddg.example.com", "body": "snippet"}]
+    with _patched_tavily(client=None), patch("core.tools._ddgs_text", return_value=canned_ddg):
+        result = internet_search.invoke({"query": "x", "max_results": 3, "topic": "general"})
     assert result.backend == "duckduckgo"
     assert result.answer == ""
     assert len(result.results) == 1
     assert result.results[0].title == "DDG result"
     assert result.results[0].url == "https://ddg.example.com"
+
+
+def test_internet_search_falls_back_to_ddg_when_tavily_errors() -> None:
+    """Tavily is configured but the call raises -> fall back to DDG.
+
+    Regression: previously a runtime Tavily failure returned
+    ``backend='tavily'`` with empty results. The contract is now:
+    on any error, log + fall through to DDG, mark the result
+    ``backend='duckduckgo'`` so the agent knows the source.
+    """
+    from tests.test_tools import _FakeTavilyClient as _Fake  # type: ignore[no-redef]
+
+    class _BoomClient(_Fake):
+        def search(self, **_k: Any) -> Any:
+            raise RuntimeError("rate limited")
+
+    canned_ddg = [{"title": "DDG fallback", "href": "https://ddg.example.com", "body": "x"}]
+    with (
+        _patched_tavily(client=_BoomClient()),
+        patch("core.tools._ddgs_text", return_value=canned_ddg),
+    ):
+        result = internet_search.invoke(
+            {"query": "x", "max_results": 3, "topic": "general"}
+        )
+    assert result.backend == "duckduckgo"
+    assert result.results[0].title == "DDG fallback"
+
+
+def test_fetch_url_falls_back_to_ddg_when_tavily_errors() -> None:
+    """fetch_url: Tavily extract error -> DDG fetches the page directly."""
+    from tests.test_tools import _FakeTavilyClient as _Fake  # type: ignore[no-redef]
+
+    class _BoomClient(_Fake):
+        def extract(self, **_k: Any) -> Any:
+            raise RuntimeError("tavily down")
+
+    with (
+        _patched_tavily(client=_BoomClient()),
+        patch(
+            "core.tools._ddg_fetch_url_via_search",
+            return_value="ddg content",
+        ),
+    ):
+        result = fetch_url.invoke(
+            {"url": "https://example.com/x", "question": None}
+        )
+    assert result.backend == "duckduckgo"
+    assert result.content == "ddg content"
+
+
+def test_qna_search_falls_back_to_ddg_when_tavily_errors() -> None:
+    """qna_search: Tavily qna error -> DDG synthesizes an answer from snippets."""
+    from tests.test_tools import _FakeTavilyClient as _Fake  # type: ignore[no-redef]
+
+    class _BoomClient(_Fake):
+        def qna_search(self, **_k: Any) -> Any:
+            raise RuntimeError("tavily down")
+
+    with (
+        _patched_tavily(client=_BoomClient()),
+        patch(
+            "core.tools._ddg_search_for_answer",
+            return_value="synthesized answer",
+        ),
+    ):
+        result = qna_search.invoke({"query": "what is x?", "topic": "general"})
+    assert result.backend == "duckduckgo"
+    assert result.answer == "synthesized answer"
+
+
+def test_tavily_first_returns_none_backend_when_both_fail() -> None:
+    """When both backends fail, _tavily_first returns (None, 'duckduckgo')."""
+    from core.tools import _tavily_first
+
+    def _tav(client: Any) -> Any:
+        raise RuntimeError("down")
+
+    def _ddg() -> Any:
+        raise RuntimeError("also down")
+
+    result, backend = _tavily_first(op="search", tavily_fn=_tav, ddg_fn=_ddg)
+    assert result is None
+    assert backend == "duckduckgo"
 
 
 # ---------------------------------------------------------------------------
@@ -160,9 +237,7 @@ def test_internet_search_falls_back_to_duckduckgo_when_key_missing() -> None:
 def test_fetch_url_returns_extracted_content() -> None:
     client = _FakeTavilyClient()
     with _patched_tavily(client):
-        result = fetch_url.invoke(
-            {"url": "https://example.com/article", "question": None}
-        )
+        result = fetch_url.invoke({"url": "https://example.com/article", "question": None})
     assert result.backend == "tavily"
     assert result.url == "https://example.com/article"
     assert "markdown" in result.content
@@ -190,12 +265,11 @@ def test_fetch_url_falls_back_to_httpx_when_key_missing() -> None:
     + BeautifulSoup, but ``"duckduckgo"`` is the umbrella name we
     use for the DDG-side fallback family).
     """
-    with _patched_tavily(client=None), patch(
-        "core.tools._ddg_fetch_url_via_search", return_value="Hello world"
-    ) as mock:
-        result = fetch_url.invoke(
-            {"url": "https://example.com/article", "question": None}
-        )
+    with (
+        _patched_tavily(client=None),
+        patch("core.tools._ddg_fetch_url_via_search", return_value="Hello world") as mock,
+    ):
+        result = fetch_url.invoke({"url": "https://example.com/article", "question": None})
     assert result.backend == "duckduckgo"
     assert result.content == "Hello world"
     assert result.answer == ""
@@ -210,12 +284,11 @@ def test_fetch_url_falls_back_to_ddg_search_when_question_and_no_tavily() -> Non
     ``is_query=True`` and the answer field stays empty (DDG has no
     Q&A primitive).
     """
-    with _patched_tavily(client=None), patch(
-        "core.tools._ddg_fetch_url_via_search", return_value="page text"
-    ) as mock:
-        result = fetch_url.invoke(
-            {"url": "what is X?", "question": "what is X?"}
-        )
+    with (
+        _patched_tavily(client=None),
+        patch("core.tools._ddg_fetch_url_via_search", return_value="page text") as mock,
+    ):
+        result = fetch_url.invoke({"url": "what is X?", "question": "what is X?"})
     assert result.backend == "duckduckgo"
     assert result.content == "page text"
     assert result.answer == ""
@@ -240,9 +313,7 @@ def test_fetch_url_truncates_content() -> None:
         }
     )
     with _patched_tavily(client):
-        result = fetch_url.invoke(
-            {"url": "https://example.com/long", "question": None}
-        )
+        result = fetch_url.invoke({"url": "https://example.com/long", "question": None})
     assert len(result.content) == 4000
 
 
@@ -265,8 +336,9 @@ def test_qna_search_falls_back_to_ddg_when_key_missing() -> None:
     the top snippets. The ``backend`` field is set to
     ``"duckduckgo"`` so the caller can see the lower quality path.
     """
-    with _patched_tavily(client=None), patch(
-        "core.tools._ddg_search_for_answer", return_value="DDG answer"
+    with (
+        _patched_tavily(client=None),
+        patch("core.tools._ddg_search_for_answer", return_value="DDG answer"),
     ):
         result = qna_search.invoke({"query": "what is X?", "topic": "general"})
     assert result.backend == "duckduckgo"

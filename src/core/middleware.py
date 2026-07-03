@@ -40,21 +40,27 @@ def _discover_transient_exceptions() -> tuple[type[Exception], ...]:
     exc_types: list[type[Exception]] = []
     try:
         import openai
-        exc_types.extend([
-            openai.RateLimitError,
-            openai.APITimeoutError,
-            openai.APIConnectionError,
-            openai.InternalServerError,
-        ])
+
+        exc_types.extend(
+            [
+                openai.RateLimitError,
+                openai.APITimeoutError,
+                openai.APIConnectionError,
+                openai.InternalServerError,
+            ]
+        )
     except (ImportError, AttributeError):
         pass
     try:
         import httpx
-        exc_types.extend([
-            httpx.TimeoutException,
-            httpx.ConnectError,
-            httpx.RemoteProtocolError,
-        ])
+
+        exc_types.extend(
+            [
+                httpx.TimeoutException,
+                httpx.ConnectError,
+                httpx.RemoteProtocolError,
+            ]
+        )
     except (ImportError, AttributeError):
         pass
     return tuple(exc_types)
@@ -384,7 +390,6 @@ class CircuitBreakerMiddleware(AgentMiddleware):
         return result
 
 
-
 # ── Model Retry Middleware ───────────────────────────────────────────────────
 
 
@@ -565,7 +570,9 @@ class RevisionLoopCapMiddleware(AgentMiddleware):
         self._counts[tid] = count
 
         if count > self.max_loops:
-            tool_call_id = request.tool_call.get("id", "") if isinstance(request.tool_call, dict) else ""
+            tool_call_id = (
+                request.tool_call.get("id", "") if isinstance(request.tool_call, dict) else ""
+            )
             logger.info(
                 "Revision cap reached (%d > %d) for thread %s; forcing finalization.",
                 count,
@@ -611,11 +618,7 @@ def make_caller_context_middleware(base_prompt: str) -> AgentMiddleware[Any, Any
     @dynamic_prompt
     def _inject_caller(request: ModelRequest[OssiaContext]) -> str:
         caller = request.runtime.context.caller if request.runtime.context else "unknown"
-        return (
-            f"{base_prompt}\n\n"
-            f"## Current session\n"
-            f"- Caller ID: {caller}\n"
-        )
+        return f"{base_prompt}\n\n## Current session\n- Caller ID: {caller}\n"
 
     return _inject_caller
 
@@ -848,7 +851,9 @@ class ToolCallLimitMiddleware(AgentMiddleware):
         self._counts[tid] = count
 
         if count > self.max_calls:
-            tool_call_id = request.tool_call.get("id", "") if isinstance(request.tool_call, dict) else ""
+            tool_call_id = (
+                request.tool_call.get("id", "") if isinstance(request.tool_call, dict) else ""
+            )
             logger.info(
                 "Tool call limit reached (%d > %d) for thread %s; blocking call to %s.",
                 count,
@@ -868,4 +873,3 @@ class ToolCallLimitMiddleware(AgentMiddleware):
             )
 
         return await handler(request)
-

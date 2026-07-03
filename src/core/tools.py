@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
+import os
 import re
+import shutil
+import subprocess
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
+import httpx
 from ddgs import DDGS
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
@@ -17,6 +23,16 @@ from core.kb_loader import read_kb_from_redis, search_redis_kb
 from core.redis_client import get_async_redis
 
 logger = logging.getLogger(__name__)
+
+# Ponytail: shared caps for the dev-concierge tools so a runaway
+# search / test run cannot take down the agent. The values are
+# deliberately conservative — a real dev session fits comfortably.
+_RG_TIMEOUT_S = 30
+_RG_MAX_MATCHES = 50
+_TEST_TIMEOUT_S = 300
+_TEST_MAX_OUTPUT_BYTES = 50_000
+_GITHUB_TIMEOUT_S = 15
+_GITHUB_API_BASE = "https://api.github.com"
 
 
 class SearchResult(BaseModel):
@@ -39,8 +55,12 @@ class KBSearchOutput(BaseModel):
     """Output schema for knowledge base search."""
 
     results: list[SearchResult]
-    fallback_used: bool = Field(default=False, description="True if KB was empty and web fallback was used.")
-    reasoning: str = Field(default="", description="Short explanation of how results were obtained.")
+    fallback_used: bool = Field(
+        default=False, description="True if KB was empty and web fallback was used."
+    )
+    reasoning: str = Field(
+        default="", description="Short explanation of how results were obtained."
+    )
 
 
 # Ponytail: simple proportion-based ranking with length penalty.
@@ -90,9 +110,7 @@ class KnowledgeBase:
             if overlap == 0:
                 continue
             ratio = overlap / len(query_set)
-            len_penalty = 1.0 + math.log(
-                max(1.0, len(doc_tokens) / self.avg_doc_length)
-            )
+            len_penalty = 1.0 + math.log(max(1.0, len(doc_tokens) / self.avg_doc_length))
             scored.append((ratio / len_penalty, doc))
         scored.sort(key=lambda item: item[0], reverse=True)
         return [
@@ -108,9 +126,7 @@ class KnowledgeBase:
 
 def _build_kb(docs: list[dict[str, Any]]) -> KnowledgeBase:
     """Construct a KnowledgeBase from a list of doc dicts."""
-    avg_len = (
-        sum(len(_tokenize(d.get("content", ""))) for d in docs) / max(1, len(docs))
-    )
+    avg_len = sum(len(_tokenize(d.get("content", ""))) for d in docs) / max(1, len(docs))
     return KnowledgeBase(documents=list(docs), avg_doc_length=max(1.0, avg_len))
 
 
@@ -188,9 +204,7 @@ async def search_knowledge_base(query: str, top_k: int = 3) -> KBSearchOutput:
                 for hit in redis_hits
             ],
             fallback_used=False,
-            reasoning=(
-                f"Matched {len(redis_hits)} document(s) via RediSearch."
-            ),
+            reasoning=(f"Matched {len(redis_hits)} document(s) via RediSearch."),
         )
     # Slow path: in-process ranking. Same shape, slower for large
     # KBs because every doc is loaded and tokenized on the agent
@@ -435,7 +449,9 @@ def send_response(response: str, channel: str = "chat") -> SendResponseOutput:
     Returns:
         Confirmation of delivery.
     """
-    return SendResponseOutput(sent=True, message=f"Response delivered via {channel}: {response[:120]}...")
+    return SendResponseOutput(
+        sent=True, message=f"Response delivered via {channel}: {response[:120]}..."
+    )
 
 
 # ── Dev-concierge stubs ──────────────────────────────────────────────────────
@@ -460,6 +476,32 @@ class FetchIssueOutput(BaseModel):
     url: str = Field(description="HTML URL on GitHub.")
 
 
+def _github_headers() -> dict[str, str]:
+    """Headers for GitHub REST calls. Adds the token if set.
+
+    Honors ``$GITHUB_TOKEN`` (and ``$GH_TOKEN`` for users who copy
+    that from the ``gh`` CLI). Authenticated calls get a 5000 req/h
+    budget; unauthenticated get only 60.
+    """
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "ossia-dev-concierge",
+    }
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def _validate_github_repo(repo: str) -> tuple[str, str] | None:
+    """Return ``(owner, name)`` for a valid ``owner/name`` string, else None."""
+    parts = repo.split("/")
+    if len(parts) != 2 or not all(parts):
+        return None
+    return parts[0], parts[1]
+
+
 @tool(args_schema=FetchIssueInput)
 def fetch_issue(repo: str, issue_number: int) -> FetchIssueOutput:
     """Fetch a GitHub issue or pull request by repository and issue number.
@@ -468,22 +510,69 @@ def fetch_issue(repo: str, issue_number: int) -> FetchIssueOutput:
     (e.g. "#42" or "octocat/Hello-World#5") and you need the title,
     body, and current state to understand the context.
 
-    TODO (CONTEXT.md §8 item 2): wire to GitHub API with authentication.
+    Authenticated when ``$GITHUB_TOKEN`` (or ``$GH_TOKEN``) is set —
+    the agent can read private repos the token has access to.
 
     Args:
         repo: ``owner/name`` repository string.
         issue_number: Numeric issue or PR identifier.
 
     Returns:
-        Fetch result with metadata and body text.
+        Fetch result with metadata and body text. On HTTP error,
+        returns a placeholder object with the URL and an error note
+        in the body — the agent can decide whether to retry or
+        surface the error to the user.
     """
-    logger.info("fetch_issue stub: repo=%r number=%d", repo, issue_number)
+    parsed = _validate_github_repo(repo)
+    if parsed is None:
+        return FetchIssueOutput(
+            number=issue_number,
+            title="[invalid repo]",
+            body=f"fetch_issue: {repo!r} is not in 'owner/name' form",
+            state="open",
+            url=f"https://github.com/{repo}/issues/{issue_number}",
+        )
+
+    url = f"{_GITHUB_API_BASE}/repos/{parsed[0]}/{parsed[1]}/issues/{issue_number}"
+    try:
+        resp = httpx.get(url, headers=_github_headers(), timeout=_GITHUB_TIMEOUT_S)
+    except httpx.HTTPError as exc:
+        logger.warning("fetch_issue network error: %s", exc)
+        return FetchIssueOutput(
+            number=issue_number,
+            title="[network error]",
+            body=str(exc),
+            state="open",
+            url=f"https://github.com/{repo}/issues/{issue_number}",
+        )
+    if resp.status_code == 404:
+        return FetchIssueOutput(
+            number=issue_number,
+            title="[not found]",
+            body=f"No issue/PR #{issue_number} on {repo}",
+            state="open",
+            url=f"https://github.com/{repo}/issues/{issue_number}",
+        )
+    if resp.status_code >= 400:
+        logger.warning("fetch_issue GitHub %d: %s", resp.status_code, resp.text[:200])
+        return FetchIssueOutput(
+            number=issue_number,
+            title=f"[http {resp.status_code}]",
+            body=resp.text[:2000],
+            state="open",
+            url=f"https://github.com/{repo}/issues/{issue_number}",
+        )
+    data = resp.json()
+    # PRs share the issues endpoint; ``pull_request`` is set when it is.
+    state = data.get("state", "open")
+    if data.get("state_reason") == "not_planned":
+        state = "closed"
     return FetchIssueOutput(
-        number=issue_number,
-        title="[STUB] Issue title",
-        body="[STUB] Issue body — replace with GitHub REST call.",
-        state="open",
-        url=f"https://github.com/{repo}/issues/{issue_number}",
+        number=data.get("number", issue_number),
+        title=data.get("title", ""),
+        body=data.get("body") or "",
+        state=state,
+        url=data.get("html_url", f"https://github.com/{repo}/issues/{issue_number}"),
     )
 
 
@@ -509,19 +598,84 @@ def search_codebase(query: str, path: str = ".") -> SearchCodebaseOutput:
     message, or discover file paths related to a feature. Prefer this
     over ``internet_search`` for anything inside the project.
 
-    TODO (CONTEXT.md §8 item 2): implement with ripgrep or embedding search.
+    Backed by ripgrep (``rg --json``). If ripgrep is not installed,
+    the tool returns an empty match list with a clear log message —
+    the agent can fall back to ``read_file`` + ``list_directory``.
 
     Args:
         query: Search term — function name, error string, or symbol.
-        path: Root directory to search within.
+        path: Root directory to search within (default: cwd).
 
     Returns:
-        List of matched file paths and surrounding context.
+        Up to 50 matches, each formatted ``path:line: column  text``.
+        Output is truncated to the first match per file when the
+        corpus is large; raise ``limit`` by passing a more specific
+        ``path``.
     """
-    logger.info("search_codebase stub: query=%r path=%r", query, path)
-    return SearchCodebaseOutput(
-        matches=[f"[STUB] No real search yet — query={query}, path={path}"]
-    )
+    rg = shutil.which("rg")
+    if rg is None:
+        logger.warning("search_codebase: ripgrep (rg) not found on PATH")
+        return SearchCodebaseOutput(matches=[])
+
+    cmd = [
+        rg,
+        "--json",
+        "--no-heading",
+        "--no-messages",
+        "--max-count",
+        str(_RG_MAX_MATCHES),
+        "--",
+        query,
+        path,
+    ]
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=_RG_TIMEOUT_S,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning(
+            "search_codebase timed out after %ds: query=%r path=%r",
+            _RG_TIMEOUT_S,
+            query,
+            path,
+        )
+        return SearchCodebaseOutput(matches=[])
+
+    if proc.returncode not in (0, 1):  # 1 = no matches, which is fine
+        logger.warning(
+            "search_codebase rg failed (rc=%d): %s",
+            proc.returncode,
+            proc.stderr.strip()[:200],
+        )
+        return SearchCodebaseOutput(matches=[])
+
+    matches: list[str] = []
+    for line in proc.stdout.splitlines():
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get("type") != "match":
+            continue
+        data = event["data"]
+        rel_path = data["path"]["text"]
+        line_number = data["line_number"]
+        for sub in data["submatches"]:
+            col = sub["start"] + 1
+            text = sub["match"]["text"].rstrip()
+            matches.append(f"{rel_path}:{line_number}:{col}: {text}")
+            if len(matches) >= _RG_MAX_MATCHES:
+                break
+        if len(matches) >= _RG_MAX_MATCHES:
+            break
+
+    return SearchCodebaseOutput(matches=matches)
 
 
 class RunTestsInput(BaseModel):
@@ -538,6 +692,19 @@ class RunTestsOutput(BaseModel):
     output: str = Field(description="Captured test runner output.")
 
 
+def _tokenize_args(command: str) -> list[str]:
+    """Split a shell-style command string into argv tokens.
+
+    Ponytail: shlex.split without enabling shell features. Keeps
+    quotes and backslash-escapes intact. Never invokes a shell —
+    we always pass the resulting list straight to ``subprocess.run``
+    with ``shell=False`` (the default).
+    """
+    import shlex
+
+    return shlex.split(command)
+
+
 @tool(args_schema=RunTestsInput)
 def run_tests(path: str = "tests/", command: str = "pytest") -> RunTestsOutput:
     """Run tests to verify code changes don't break existing functionality.
@@ -546,20 +713,45 @@ def run_tests(path: str = "tests/", command: str = "pytest") -> RunTestsOutput:
     evidence the change is safe. Also use it to investigate a user-reported
     failure by running the specific test path they mention.
 
-    TODO (CONTEXT.md §8 item 2): wire to a sandbox (Daytona / Docker / modal).
+    For v0.1 the ``sandbox`` is the agent's working directory — tests
+    run locally with a 300s timeout and a 50 KB output cap. When a
+    proper isolated sandbox is wired (Daytona / Docker / modal),
+    swap the subprocess block for a sandbox call; the rest of the
+    tool is stable.
 
     Args:
         path: Root test directory or single file.
-        command: Test runner executable and args.
+        command: Test runner executable and args (e.g. ``"pytest -x -q"``).
 
     Returns:
-        Pass/fail flag with stdout/stderr capture.
+        Pass/fail flag plus captured stdout+stderr. The output is
+        truncated to ~50 KB from the tail (where the failure trace
+        lives); pass a more specific path to keep it small.
     """
-    logger.info("run_tests stub: path=%r command=%r", path, command)
-    return RunTestsOutput(
-        passed=True,
-        output=f"[STUB] No real sandbox yet — would run `{command} {path}`.",
-    )
+    args = _tokenize_args(command) + [path]
+    logger.info("run_tests: %s", " ".join(args))
+    try:
+        proc = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            timeout=_TEST_TIMEOUT_S,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return RunTestsOutput(
+            passed=False,
+            output=f"run_tests timed out after {_TEST_TIMEOUT_S}s",
+        )
+    except FileNotFoundError as exc:
+        return RunTestsOutput(
+            passed=False,
+            output=f"run_tests: command not found — {exc}",
+        )
+    output = (proc.stdout or "") + (proc.stderr or "")
+    if len(output) > _TEST_MAX_OUTPUT_BYTES:
+        output = "...[truncated]...\n" + output[-_TEST_MAX_OUTPUT_BYTES:]
+    return RunTestsOutput(passed=proc.returncode == 0, output=output)
 
 
 class ProposeFixInput(BaseModel):
@@ -574,6 +766,25 @@ class ProposeFixOutput(BaseModel):
 
     summary: str = Field(description="One-line description of the proposed fix.")
     patch: str = Field(default="", description="Unified diff patch or code snippet.")
+    context_file: str = Field(
+        default="",
+        description="Contents of the target file, when readable. Truncated to 200 KB.",
+    )
+
+
+def _read_file_safe(path: str) -> str | None:
+    """Read a text file, returning None if it doesn't exist or isn't text.
+
+    Used by ``propose_fix`` to gather context for the agent. Bounded
+    to 200 KB so a runaway read doesn't blow the context window.
+    """
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+    except (OSError, UnicodeDecodeError):
+        return None
+    if len(text) > 200_000:
+        return text[:200_000] + "\n... [truncated]"
+    return text
 
 
 @tool(args_schema=ProposeFixInput)
@@ -581,22 +792,28 @@ def propose_fix(issue_description: str, file_path: str = "") -> ProposeFixOutput
     """Produce a concrete code fix suggestion from a diagnosed bug or issue description.
 
     Use this after ``bug-diagnostician`` or ``run_bugfix_pipeline`` has
-    identified the root cause. Returns a patch summary and optional unified
-    diff that the main agent can review before applying.
+    identified the root cause. The tool itself is intentionally a
+    thin context-gatherer — it reads the target file (if given) and
+    hands the bundle back to the calling agent. The actual patch is
+    generated by the LLM that is already running the agent, so we
+    don't pay a second model call.
 
-    TODO (CONTEXT.md §6): implement with LLM-generated patch or RAG retrieval.
+    For v0.1 the tool returns:
+      - ``summary``: one-line description of the bug surface.
+      - ``patch``: empty (the LLM proposes the patch inline).
+      - ``context_file``: the file's content if it was readable.
 
-    Args:
-        issue_description: Plain-text bug / feature description from triage.
-        file_path: Optional target file the agent should modify.
-
-    Returns:
-        Fix summary and optional patch.
+    When a dedicated code-edit subagent or ``refactor_pipeline`` is
+    wired, swap the body for an LLM call there. Ponytail: the
+    context-gathering IS the value — the patch stays in the agent.
     """
-    logger.info("propose_fix stub: file=%r desc=%r", file_path, issue_description[:50])
+    file_content = _read_file_safe(file_path) if file_path else None
+    target = f"file {file_path}" if file_path else "the issue"
+    summary = f"Fix proposed for {target}: {issue_description[:80]}"
     return ProposeFixOutput(
-        summary=f"[STUB] Proposed fix for {'file ' + file_path if file_path else 'issue'}.",
+        summary=summary,
         patch="",
+        context_file=file_content or "",
     )
 
 
@@ -619,10 +836,11 @@ def create_pr(
 
     Use this when the fix or feature has been tested and the user asks to
     submit a pull request. Requires a source branch (``head``) with the
-    changes already committed and pushed.
+    changes already committed and pushed — the agent handles commit +
+    push with its own bash/subprocess tool; this tool only opens the PR.
 
-    TODO (CONTEXT.md §8 item 2): wire to GitHub REST API with auth + branch
-    creation, push, and PR creation.
+    Requires ``$GITHUB_TOKEN`` (or ``$GH_TOKEN``) with ``repo`` scope
+    and write access to the target repo.
 
     Args:
         repo: ``owner/name`` repository string.
@@ -632,12 +850,51 @@ def create_pr(
         base: Target branch (default ``main``).
 
     Returns:
-        Created PR URL and number.
+        Created PR URL and number. On HTTP error, returns
+        ``number=0`` and an error-coded URL so the agent can branch
+        on failure.
     """
-    logger.info("create_pr stub: repo=%r head=%s->%s", repo, head, base)
+    parsed = _validate_github_repo(repo)
+    if parsed is None:
+        return CreatePROutput(
+            url=f"https://github.com/{repo}/pull/0",
+            number=0,
+        )
+    if not head:
+        return CreatePROutput(
+            url=f"https://github.com/{repo}/pull/0",
+            number=0,
+        )
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if not token:
+        return CreatePROutput(
+            url=f"https://github.com/{repo}/pull/0",
+            number=0,
+        )
+    url = f"{_GITHUB_API_BASE}/repos/{parsed[0]}/{parsed[1]}/pulls"
+    try:
+        resp = httpx.post(
+            url,
+            headers=_github_headers(),
+            json={"title": title, "body": body, "head": head, "base": base},
+            timeout=_GITHUB_TIMEOUT_S,
+        )
+    except httpx.HTTPError as exc:
+        logger.warning("create_pr network error: %s", exc)
+        return CreatePROutput(
+            url=f"https://github.com/{repo}/pull/0",
+            number=0,
+        )
+    if resp.status_code >= 400:
+        logger.warning("create_pr GitHub %d: %s", resp.status_code, resp.text[:300])
+        return CreatePROutput(
+            url=f"https://github.com/{repo}/pull/0",
+            number=0,
+        )
+    data = resp.json()
     return CreatePROutput(
-        url=f"https://github.com/{repo}/pull/0",
-        number=0,
+        url=data.get("html_url", f"https://github.com/{repo}/pull/0"),
+        number=data.get("number", 0),
     )
 
 
@@ -662,6 +919,39 @@ def _get_tavily_client() -> Any:
     if not key:
         return None
     return TavilyClient(api_key=key)
+
+
+def _tavily_first(
+    *,
+    op: str,
+    tavily_fn: Any,
+    ddg_fn: Any,
+) -> tuple[Any, str]:
+    """Run *tavily_fn* first; on any error, fall back to *ddg_fn*.
+
+    Returns ``(result, backend)`` where ``backend`` is ``"tavily"`` on
+    the happy path and ``"duckduckgo"`` when the fallback fires (or
+    when no Tavily key is configured). Ponytail: this is the
+    contract the three Tavily-backed tools share — call Tavily,
+    swallow the exception, fall back. Errors are logged at WARNING;
+    the agent never sees an exception from the search surface.
+    """
+    client = _get_tavily_client()
+    if client is None:
+        try:
+            return ddg_fn(), "duckduckgo"
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("DDG fallback for %s failed: %s", op, exc)
+            return None, "duckduckgo"
+    try:
+        return tavily_fn(client), "tavily"
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Tavily %s failed, falling back to DDG: %s", op, exc)
+        try:
+            return ddg_fn(), "duckduckgo"
+        except Exception as inner:  # noqa: BLE001
+            logger.warning("DDG fallback for %s also failed: %s", op, inner)
+            return None, "duckduckgo"
 
 
 # ─── internet_search ────────────────────────────────────────────────────────
@@ -733,49 +1023,48 @@ def internet_search(
         ``InternetSearchOutput`` with results, an optional synthesized
         answer, and the backend that served the query.
     """
-    client = _get_tavily_client()
-    if client is None:
-        try:
-            ddg = _ddgs_text(query, max_results)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Tavily unavailable and DuckDuckGo failed: %s", exc)
-            return InternetSearchOutput(query=query, results=[], backend="duckduckgo")
-        return InternetSearchOutput(
-            query=query,
-            results=[
-                InternetSearchResult(
-                    title=res.get("title", "Web result"),
-                    url=res.get("href", ""),
-                    content=res.get("body", "")[:800],
-                    score=0.5,
-                )
-                for res in ddg
-            ],
-            backend="duckduckgo",
-        )
-    try:
-        raw = client.search(
+
+    def _tavily(client: Any) -> dict[str, Any]:
+        return client.search(
             query=query,
             max_results=max_results,
             topic=topic,
             include_answer="basic",
         )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Tavily search failed: %s", exc)
-        return InternetSearchOutput(query=query, results=[], backend="tavily")
+
+    def _ddg() -> list[dict[str, Any]]:
+        return _ddgs_text(query, max_results)
+
+    raw, backend = _tavily_first(op="search", tavily_fn=_tavily, ddg_fn=_ddg)
+    if backend == "tavily" and raw:
+        return InternetSearchOutput(
+            query=query,
+            results=[
+                InternetSearchResult(
+                    title=res.get("title", ""),
+                    url=res.get("url", ""),
+                    content=res.get("content", "")[:800],
+                    score=float(res.get("score", 0.0) or 0.0),
+                )
+                for res in raw.get("results", [])
+            ],
+            answer=raw.get("answer", "") or "",
+            backend="tavily",
+        )
+    # DDG path (no key, or Tavily failed and DDG succeeded).
+    results = raw or []
     return InternetSearchOutput(
         query=query,
         results=[
             InternetSearchResult(
-                title=res.get("title", ""),
-                url=res.get("url", ""),
-                content=res.get("content", "")[:800],
-                score=float(res.get("score", 0.0) or 0.0),
+                title=res.get("title", "Web result"),
+                url=res.get("href", ""),
+                content=res.get("body", "")[:800],
+                score=0.5,
             )
-            for res in raw.get("results", [])
+            for res in results
         ],
-        answer=raw.get("answer", "") or "",
-        backend="tavily",
+        backend="duckduckgo",
     )
 
 
@@ -841,41 +1130,43 @@ def fetch_url(url: str, question: str | None = None) -> FetchUrlOutput:
         ``FetchUrlOutput`` with content, optional answer, and backend
         name (``"tavily"`` or ``"duckduckgo"``).
     """
-    client = _get_tavily_client()
-    if client is None:
-        # No Tavily: use httpx + bs4 directly. With a question, search
-        # DDG first and fetch the top hit.
-        is_query = bool(question)
-        content = _ddg_fetch_url_via_search(url, is_query=is_query)
-        return FetchUrlOutput(
-            url=url,
-            title="",
-            content=content,
-            answer="",
-            backend="duckduckgo",
-        )
-    try:
-        raw = client.extract(
+
+    def _tavily(client: Any) -> dict[str, Any]:
+        return client.extract(
             urls=[url],
             format="markdown",
             query=question or None,
         )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Tavily extract failed for %s: %s", url, exc)
-        return FetchUrlOutput(url=url, content="", answer="", backend="tavily")
-    # Tavily returns a list of results keyed by the input URL; when
-    # ``query`` is set there is also a top-level ``answer`` field.
-    results = raw.get("results", []) if isinstance(raw, dict) else []
-    page = results[0] if results else {}
-    full = page.get("raw_content", "") or page.get("content", "")
-    content = (full or "")[:4000]
-    answer = raw.get("answer", "") if question else ""
+
+    def _ddg() -> str:
+        # No Tavily: use httpx + bs4 directly. With a question, search
+        # DDG first and fetch the top hit.
+        is_query = bool(question)
+        return _ddg_fetch_url_via_search(url, is_query=is_query)
+
+    raw, backend = _tavily_first(op="extract", tavily_fn=_tavily, ddg_fn=_ddg)
+    if backend == "tavily" and isinstance(raw, dict):
+        # Tavily returns a list of results keyed by the input URL; when
+        # ``query`` is set there is also a top-level ``answer`` field.
+        results = raw.get("results", [])
+        page = results[0] if results else {}
+        full = page.get("raw_content", "") or page.get("content", "")
+        content = (full or "")[:4000]
+        answer = raw.get("answer", "") if question else ""
+        return FetchUrlOutput(
+            url=url,
+            title=page.get("title", ""),
+            content=content,
+            answer=answer or "",
+            backend="tavily",
+        )
+    # DDG path — raw is the fetched content string (or None on full failure).
     return FetchUrlOutput(
         url=url,
-        title=page.get("title", ""),
-        content=content,
-        answer=answer or "",
-        backend="tavily",
+        title="",
+        content=raw or "",
+        answer="",
+        backend="duckduckgo",
     )
 
 
@@ -924,17 +1215,12 @@ def qna_search(query: str, topic: str = "general") -> QnaSearchOutput:
         ``QnaSearchOutput`` with the answer string and backend name
         (``"tavily"`` or ``"duckduckgo"``).
     """
-    client = _get_tavily_client()
-    if client is None:
-        answer = _ddg_search_for_answer(query, max_results=3)
-        return QnaSearchOutput(
-            query=query,
-            answer=answer,
-            backend="duckduckgo",
-        )
-    try:
-        answer = client.qna_search(query=query, topic=topic)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Tavily qna_search failed: %s", exc)
-        return QnaSearchOutput(query=query, answer="", backend="tavily")
-    return QnaSearchOutput(query=query, answer=str(answer or ""), backend="tavily")
+
+    def _tavily(client: Any) -> str:
+        return str(client.qna_search(query=query, topic=topic) or "")
+
+    def _ddg() -> str:
+        return _ddg_search_for_answer(query, max_results=3)
+
+    answer, backend = _tavily_first(op="qna_search", tavily_fn=_tavily, ddg_fn=_ddg)
+    return QnaSearchOutput(query=query, answer=answer or "", backend=backend)

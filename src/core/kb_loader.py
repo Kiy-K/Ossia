@@ -138,10 +138,12 @@ async def load_kb_into_redis(
     if client is None or not urls:
         return 0
     if fetcher is None:
+
         async def default_fetcher(url: str) -> str:
             response = httpx.get(url, timeout=15.0, follow_redirects=True)
             response.raise_for_status()
             return response.text
+
         fetcher = default_fetcher
 
     all_docs: list[dict[str, str]] = []
@@ -227,12 +229,20 @@ async def ensure_kb_index(client: aioredis.Redis | None) -> bool:
     if client is None:
         return False
     await client.execute_command(
-        "FT.CREATE", _KB_INDEX,
-        "ON", "HASH",
-        "PREFIX", "1", _DOC_KEY_PREFIX,
+        "FT.CREATE",
+        _KB_INDEX,
+        "ON",
+        "HASH",
+        "PREFIX",
+        "1",
+        _DOC_KEY_PREFIX,
         "SCHEMA",
-            "title", "TEXT", "WEIGHT", "2.0",
-            "content", "TEXT",
+        "title",
+        "TEXT",
+        "WEIGHT",
+        "2.0",
+        "content",
+        "TEXT",
         "IFNX",
     )
     return True
@@ -295,9 +305,17 @@ async def search_redis_kb(
         return None
     try:
         raw = await client.execute_command(
-            "FT.SEARCH", _KB_INDEX, query,
-            "LIMIT", "0", str(top_k),
-            "RETURN", "3", "title", "source", "content",
+            "FT.SEARCH",
+            _KB_INDEX,
+            query,
+            "LIMIT",
+            "0",
+            str(top_k),
+            "RETURN",
+            "3",
+            "title",
+            "source",
+            "content",
         )
     except Exception:  # noqa: BLE001
         # Index missing, RediSearch module not loaded, connection

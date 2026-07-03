@@ -75,6 +75,7 @@ def get_bugfix_pipeline_js(issue_description: str) -> str:
         pydantic_to_js_response_schema,
         serialize_schema_js,
     )
+
     escaped = issue_description.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
     js = BUGFIX_PIPELINE_JS.replace("ISSUE_DESCRIPTION", escaped)
     return (
@@ -83,4 +84,3 @@ def get_bugfix_pipeline_js(issue_description: str) -> str:
         f"const TEST_RESULT_SCHEMA = {serialize_schema_js(pydantic_to_js_response_schema(TestResult))};\n\n"
         f"{js}"
     )
-

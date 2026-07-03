@@ -73,10 +73,7 @@ def test_all_graph_ids_have_corresponding_modules() -> None:
     for gid in graph_ids:
         module_path = GRAPHS_DIR / f"{gid}.py"
         if not module_path.exists():
-            errors.append(
-                f"graph_id '{gid}' has no matching module at "
-                f"src/core/graphs/{gid}.py"
-            )
+            errors.append(f"graph_id '{gid}' has no matching module at src/core/graphs/{gid}.py")
     assert not errors, f"\n\n{chr(10).join(errors)}"
 
 
@@ -90,17 +87,11 @@ def test_all_graph_modules_export_graph_variable() -> None:
         try:
             mod = importlib.import_module(f"core.graphs.{gid}")
             if not hasattr(mod, "graph"):
-                errors.append(
-                    f"Module core.graphs.{gid} does not export 'graph'"
-                )
+                errors.append(f"Module core.graphs.{gid} does not export 'graph'")
         except ImportError as exc:
-            errors.append(
-                f"Could not import core.graphs.{gid}: {exc}"
-            )
+            errors.append(f"Could not import core.graphs.{gid}: {exc}")
         except Exception as exc:  # noqa: BLE001
-            errors.append(
-                f"Error loading core.graphs.{gid}.graph: {exc}"
-            )
+            errors.append(f"Error loading core.graphs.{gid}.graph: {exc}")
     assert not errors, f"\n\n{chr(10).join(errors)}"
 
 
@@ -114,10 +105,7 @@ def test_all_graph_ids_registered_in_langgraph_json() -> None:
     assert not missing, (
         f"graph_ids {missing} are not registered in langgraph.json. "
         f"Add entries like:\n"
-        + "\n".join(
-            f'  "{gid}": "./src/core/graphs/{gid}.py:graph"'
-            for gid in sorted(missing)
-        )
+        + "\n".join(f'  "{gid}": "./src/core/graphs/{gid}.py:graph"' for gid in sorted(missing))
     )
 
 
@@ -166,9 +154,6 @@ def test_langgraph_json_entries_point_to_valid_modules() -> None:
                     f"to {dotted} which does not export 'graph'"
                 )
         except ImportError as exc:
-            errors.append(
-                f"langgraph.json entry '{graph_name}' -> '{ref}' failed "
-                f"to import: {exc}"
-            )
+            errors.append(f"langgraph.json entry '{graph_name}' -> '{ref}' failed to import: {exc}")
 
     assert not errors, f"\n\n{chr(10).join(errors)}"

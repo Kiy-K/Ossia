@@ -77,6 +77,7 @@ class FakePipeline:
         def op(*args: Any) -> FakePipeline:
             self._ops.append((name, args))
             return self
+
         return op
 
     async def execute(self) -> list[Any]:
@@ -126,12 +127,11 @@ async def test_load_kb_into_redis_writes_docs_from_plain_url(
     fake_redis: FakeAsyncRedis,
 ) -> None:
     """A plain markdown body becomes one doc; manifest + per-doc key written."""
+
     async def fetcher(url: str) -> str:
         return "# Guide\n\nUse the grader tool to evaluate responses."
 
-    count = await load_kb_into_redis(
-        fake_redis, ["https://example.com/guide.md"], fetcher=fetcher
-    )
+    count = await load_kb_into_redis(fake_redis, ["https://example.com/guide.md"], fetcher=fetcher)
     assert count == 1
     assert "kb:manifest" in fake_redis.sets
     manifest = fake_redis.sets["kb:manifest"]
@@ -186,9 +186,7 @@ async def test_load_kb_into_redis_clears_previous_manifest(
     async def fetcher(url: str) -> str:
         return "# New\n\nfresh content"
 
-    count = await load_kb_into_redis(
-        fake_redis, ["https://example.com/new"], fetcher=fetcher
-    )
+    count = await load_kb_into_redis(fake_redis, ["https://example.com/new"], fetcher=fetcher)
     assert count == 1
     assert "stale-id" not in fake_redis.sets["kb:manifest"]
     assert "kb:doc:stale-id" not in fake_redis.store
@@ -247,12 +245,11 @@ async def test_read_kb_from_redis_returns_empty_when_no_redis() -> None:
 @pytest.mark.asyncio
 async def test_read_kb_from_redis_round_trip(fake_redis: FakeAsyncRedis) -> None:
     """Write via loader, read back, verify the same shape."""
+
     async def fetcher(url: str) -> str:
         return "# Hello\n\nworld"
 
-    await load_kb_into_redis(
-        fake_redis, ["https://example.com/hello"], fetcher=fetcher
-    )
+    await load_kb_into_redis(fake_redis, ["https://example.com/hello"], fetcher=fetcher)
     docs = await read_kb_from_redis(fake_redis)
     assert len(docs) == 1
     assert docs[0]["title"] == "Hello"
@@ -315,16 +312,13 @@ async def test_search_tool_uses_redis_snapshot(
     fake_redis: FakeAsyncRedis, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The tool reads from the Redis snapshot via create_kb."""
+
     async def fetcher(url: str) -> str:
         return "# Guide\n\nUse the grader tool to evaluate responses."
 
-    await load_kb_into_redis(
-        fake_redis, ["https://example.com/guide"], fetcher=fetcher
-    )
+    await load_kb_into_redis(fake_redis, ["https://example.com/guide"], fetcher=fetcher)
     reset_kb_cache()
-    out = await tools_module.search_knowledge_base.ainvoke(
-        {"query": "grader tool", "top_k": 3}
-    )
+    out = await tools_module.search_knowledge_base.ainvoke({"query": "grader tool", "top_k": 3})
     assert out.fallback_used is False
     assert out.results
     assert out.results[0].title == "Guide"
@@ -339,9 +333,7 @@ async def test_search_tool_falls_back_to_web_when_kb_empty(
     monkeypatch.setattr(
         tools_module, "_ddgs_text", lambda q, n: (_ for _ in ()).throw(RuntimeError("offline"))
     )
-    out = await tools_module.search_knowledge_base.ainvoke(
-        {"query": "anything", "top_k": 3}
-    )
+    out = await tools_module.search_knowledge_base.ainvoke({"query": "anything", "top_k": 3})
     assert out.results == []
     assert out.fallback_used is True
     assert "web search failed" in out.reasoning
@@ -386,9 +378,7 @@ def test_search_zero_overlap_returns_empty() -> None:
 
 def test_search_dedupes_query_tokens() -> None:
     """Repeating the same query token doesn't inflate the overlap score."""
-    kb = _build_kb(
-        [{"title": "X", "source": "x", "content": "alpha alpha alpha bravo"}]
-    )
+    kb = _build_kb([{"title": "X", "source": "x", "content": "alpha alpha alpha bravo"}])
     a = kb.search("alpha alpha", top_k=1)
     b = kb.search("alpha", top_k=1)
     assert a and b
@@ -441,13 +431,29 @@ async def test_search_redis_kb_parses_ft_search_response() -> None:
     from core.kb_loader import search_redis_kb
 
     fake = FakeAsyncRedis()
-    fake.set_exec([
-        2,
-        b"kb:doc:abc123",
-        [b"title", b"Guide", b"source", b"https://example.com/g", b"content", b"Use the grader"],
-        b"kb:doc:def456",
-        [b"title", b"FAQ", b"source", b"https://example.com/f", b"content", b"Frequently asked"],
-    ])
+    fake.set_exec(
+        [
+            2,
+            b"kb:doc:abc123",
+            [
+                b"title",
+                b"Guide",
+                b"source",
+                b"https://example.com/g",
+                b"content",
+                b"Use the grader",
+            ],
+            b"kb:doc:def456",
+            [
+                b"title",
+                b"FAQ",
+                b"source",
+                b"https://example.com/f",
+                b"content",
+                b"Frequently asked",
+            ],
+        ]
+    )
     out = await search_redis_kb(fake, "grader", top_k=5)
     assert out is not None
     assert len(out) == 2
@@ -473,9 +479,7 @@ async def test_search_redis_kb_returns_none_on_error() -> None:
     """Any exception (no index, no module, connection error) → ``None``."""
 
     class _BrokenRedis(FakeAsyncRedis):
-        async def execute_command(
-            self, *args: Any, **kwargs: Any
-        ) -> Any:
+        async def execute_command(self, *args: Any, **kwargs: Any) -> Any:
             raise RuntimeError("no RediSearch module")
 
     from core.kb_loader import search_redis_kb
@@ -490,11 +494,13 @@ async def test_search_redis_kb_handles_missing_fields() -> None:
     from core.kb_loader import search_redis_kb
 
     fake = FakeAsyncRedis()
-    fake.set_exec([
-        1,
-        b"kb:doc:x",
-        [b"content", b"orphan doc body"],
-    ])
+    fake.set_exec(
+        [
+            1,
+            b"kb:doc:x",
+            [b"content", b"orphan doc body"],
+        ]
+    )
     out = await search_redis_kb(fake, "x", top_k=5)
     assert out is not None
     assert out[0]["title"] == "Untitled"
@@ -519,15 +525,15 @@ async def test_search_tool_uses_redis_kb_when_available(
         return "# Guide\n\ncontent"
 
     await load_kb_into_redis(client, ["https://example.com/guide"], fetcher=fetcher)
-    client.set_exec([
-        1,
-        b"kb:doc:abc",
-        [b"title", b"Guide", b"source", b"https://example.com/guide", b"content", b"content"],
-    ])
-    reset_kb_cache()
-    out = await tools_module.search_knowledge_base.ainvoke(
-        {"query": "guide", "top_k": 3}
+    client.set_exec(
+        [
+            1,
+            b"kb:doc:abc",
+            [b"title", b"Guide", b"source", b"https://example.com/guide", b"content", b"content"],
+        ]
     )
+    reset_kb_cache()
+    out = await tools_module.search_knowledge_base.ainvoke({"query": "guide", "top_k": 3})
     assert out.fallback_used is False
     assert "RediSearch" in out.reasoning
     assert out.results

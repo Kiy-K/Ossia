@@ -58,10 +58,7 @@ def test_cache_middleware_uses_configured_ttl() -> None:
         tool_cache_ttl_seconds=120,
     )
     middlewares = _build_middlewares(settings)
-    cache_mw = next(
-        m for m in middlewares
-        if type(m).__name__ == "ToolResultCacheMiddleware"
-    )
+    cache_mw = next(m for m in middlewares if type(m).__name__ == "ToolResultCacheMiddleware")
     assert cache_mw._config.ttl_seconds == 120  # type: ignore[attr-defined]
 
 
@@ -76,10 +73,7 @@ def test_cache_middleware_blocks_edit_prefix() -> None:
 
     settings = _settings(redis_url="redis://localhost:6379/0")
     middlewares = _build_middlewares(settings)
-    cache_mw = next(
-        m for m in middlewares
-        if type(m).__name__ == "ToolResultCacheMiddleware"
-    )
+    cache_mw = next(m for m in middlewares if type(m).__name__ == "ToolResultCacheMiddleware")
     prefixes = cache_mw._config.side_effect_prefixes  # type: ignore[attr-defined]
     assert "edit_" in prefixes
     # The default prefixes are preserved.
@@ -92,10 +86,7 @@ def test_cache_middleware_uses_configured_redis_url() -> None:
 
     settings = _settings(redis_url="redis://custom:1234/2")
     middlewares = _build_middlewares(settings)
-    cache_mw = next(
-        m for m in middlewares
-        if type(m).__name__ == "ToolResultCacheMiddleware"
-    )
+    cache_mw = next(m for m in middlewares if type(m).__name__ == "ToolResultCacheMiddleware")
     assert cache_mw._config.redis_url == "redis://custom:1234/2"  # type: ignore[attr-defined]
 
 

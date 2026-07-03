@@ -91,6 +91,7 @@ def get_refactor_pipeline_js(target: str, goal: str) -> str:
         pydantic_to_js_response_schema,
         serialize_schema_js,
     )
+
     escaped_target = target.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
     escaped_goal = goal.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
     js = REFACTOR_PIPELINE_JS
@@ -103,4 +104,3 @@ def get_refactor_pipeline_js(target: str, goal: str) -> str:
         f"const VALIDATION_SCHEMA = {serialize_schema_js(pydantic_to_js_response_schema(ValidationResult))};\n\n"
         f"{js}"
     )
-

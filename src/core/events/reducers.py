@@ -149,10 +149,12 @@ def reduce_event(state: AgentState, event: OssiaEvent) -> AgentState:
     elif etype == "message_completed":
         node = _navigate_to_target(state, source)
         text = data.get("text", "")
-        node.setdefault("messages", []).append({
-            "role": data.get("role", "ai"),
-            "content": text,
-        })
+        node.setdefault("messages", []).append(
+            {
+                "role": data.get("role", "ai"),
+                "content": text,
+            }
+        )
         node["pending_message"] = None
 
     elif etype == "subagent_spawned":
@@ -189,11 +191,13 @@ def reduce_event(state: AgentState, event: OssiaEvent) -> AgentState:
 
     elif etype == "tool_started":
         node = _navigate_to_target(state, source)
-        node.setdefault("tools", []).append({
-            "name": data.get("name", "unknown"),
-            "input": data.get("input", {}),
-            "state": "running",
-        })
+        node.setdefault("tools", []).append(
+            {
+                "name": data.get("name", "unknown"),
+                "input": data.get("input", {}),
+                "state": "running",
+            }
+        )
 
     elif etype == "tool_completed":
         node = _navigate_to_target(state, source)
@@ -214,11 +218,13 @@ def reduce_event(state: AgentState, event: OssiaEvent) -> AgentState:
                 break
 
     elif etype == "async_task_started":
-        state.setdefault("async_tasks", []).append({
-            "task_id": data.get("task_id", ""),
-            "agent_name": data.get("agent_name", ""),
-            "status": "running",
-        })
+        state.setdefault("async_tasks", []).append(
+            {
+                "task_id": data.get("task_id", ""),
+                "agent_name": data.get("agent_name", ""),
+                "status": "running",
+            }
+        )
 
     elif etype == "async_task_completed":
         for t in state.get("async_tasks", []):

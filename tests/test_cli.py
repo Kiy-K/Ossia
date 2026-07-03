@@ -69,16 +69,20 @@ class TestFindBun:
         """_find_bun returns None when bun is not on PATH and not local."""
         from core.cli import _find_bun
 
-        with patch("core.cli.os.path.isfile", return_value=False), \
-             patch("core.cli.shutil.which", return_value=None):
+        with (
+            patch("core.cli.os.path.isfile", return_value=False),
+            patch("core.cli.shutil.which", return_value=None),
+        ):
             assert _find_bun() is None
 
     def test_returns_path_when_on_path(self) -> None:
         """_find_bun returns the path from shutil.which when bun is on PATH."""
         from core.cli import _find_bun
 
-        with patch("core.cli.os.path.isfile", return_value=False), \
-             patch("core.cli.shutil.which", return_value="/usr/local/bin/bun"):
+        with (
+            patch("core.cli.os.path.isfile", return_value=False),
+            patch("core.cli.shutil.which", return_value="/usr/local/bin/bun"),
+        ):
             result = _find_bun()
             assert result == "/usr/local/bin/bun"
 
@@ -87,8 +91,10 @@ class TestFindBun:
         from core.cli import _TUI_DIR, _find_bun
 
         local = os.path.join(_TUI_DIR, "node_modules", ".bin", "bun")
-        with patch("core.cli.os.path.isfile", return_value=True), \
-             patch("core.cli.shutil.which") as mock_which:
+        with (
+            patch("core.cli.os.path.isfile", return_value=True),
+            patch("core.cli.shutil.which") as mock_which,
+        ):
             result = _find_bun()
             assert result == local
             mock_which.assert_not_called()
@@ -178,11 +184,13 @@ class TestMainServerOnly:
 
         proc = _running_process()
 
-        with patch("core.cli.sys.argv", ["ossia", "--server-only", "--port", "9000"]), \
-             patch("core.cli._start_server", return_value=proc) as mock_start, \
-             patch("core.cli.wait_for_health") as mock_health, \
-             patch("core.cli.terminate"), \
-             patch("core.cli.os.path.isdir", return_value=True):
+        with (
+            patch("core.cli.sys.argv", ["ossia", "--server-only", "--port", "9000"]),
+            patch("core.cli._start_server", return_value=proc) as mock_start,
+            patch("core.cli.wait_for_health") as mock_health,
+            patch("core.cli.terminate"),
+            patch("core.cli.os.path.isdir", return_value=True),
+        ):
             # KeyboardInterrupt to break out of the blocking wait loop
             mock_health.side_effect = KeyboardInterrupt()
             main()
@@ -196,12 +204,13 @@ class TestMainServerOnly:
 
         proc = _running_process()
 
-        with patch("core.cli.sys.argv",
-                   ["ossia", "--server-only", "--startup-timeout", "5.0"]), \
-             patch("core.cli._start_server", return_value=proc), \
-             patch("core.cli.wait_for_health") as mock_health, \
-             patch("core.cli.terminate"), \
-             patch("core.cli.os.path.isdir", return_value=True):
+        with (
+            patch("core.cli.sys.argv", ["ossia", "--server-only", "--startup-timeout", "5.0"]),
+            patch("core.cli._start_server", return_value=proc),
+            patch("core.cli.wait_for_health") as mock_health,
+            patch("core.cli.terminate"),
+            patch("core.cli.os.path.isdir", return_value=True),
+        ):
             mock_health.side_effect = KeyboardInterrupt()
             main()
 
@@ -213,11 +222,13 @@ class TestMainServerOnly:
 
         proc = _exiting_process(exit_code=3, after_calls=0)
 
-        with patch("core.cli.sys.argv", ["ossia", "--server-only"]), \
-             patch("core.cli._start_server", return_value=proc), \
-             patch("core.cli.wait_for_health"), \
-             patch("core.cli.terminate"), \
-             patch("core.cli.os.path.isdir", return_value=True):
+        with (
+            patch("core.cli.sys.argv", ["ossia", "--server-only"]),
+            patch("core.cli._start_server", return_value=proc),
+            patch("core.cli.wait_for_health"),
+            patch("core.cli.terminate"),
+            patch("core.cli.os.path.isdir", return_value=True),
+        ):
             rc = main()
             assert rc == 3
 
@@ -227,11 +238,13 @@ class TestMainServerOnly:
 
         srv = _exiting_process(exit_code=0, after_calls=2)
 
-        with patch("core.cli.sys.argv", ["ossia", "--server-only"]), \
-             patch("core.cli._start_server", return_value=srv), \
-             patch("core.cli.wait_for_health"), \
-             patch("core.cli.terminate") as mock_term, \
-             patch("core.cli.os.path.isdir", return_value=True):
+        with (
+            patch("core.cli.sys.argv", ["ossia", "--server-only"]),
+            patch("core.cli._start_server", return_value=srv),
+            patch("core.cli.wait_for_health"),
+            patch("core.cli.terminate") as mock_term,
+            patch("core.cli.os.path.isdir", return_value=True),
+        ):
             rc = main()
             assert rc == 0
 
@@ -247,12 +260,14 @@ class TestMainTuiOnly:
 
         proc = _exiting_process(exit_code=0, after_calls=1)
 
-        with patch("core.cli.sys.argv", ["ossia", "--tui-only"]), \
-             patch("core.cli._start_tui", return_value=proc) as mock_tui, \
-             patch("core.cli._find_bun", return_value="/usr/bin/bun"), \
-             patch("core.cli.wait_for_health") as mock_health, \
-             patch("core.cli.terminate"), \
-             patch("core.cli.os.path.isdir", return_value=True):
+        with (
+            patch("core.cli.sys.argv", ["ossia", "--tui-only"]),
+            patch("core.cli._start_tui", return_value=proc) as mock_tui,
+            patch("core.cli._find_bun", return_value="/usr/bin/bun"),
+            patch("core.cli.wait_for_health") as mock_health,
+            patch("core.cli.terminate"),
+            patch("core.cli.os.path.isdir", return_value=True),
+        ):
             main()
 
         mock_tui.assert_called_once()
@@ -269,13 +284,15 @@ class TestMainBoth:
         srv = _exiting_process(exit_code=0, after_calls=5)
         tui = _exiting_process(exit_code=0, after_calls=2)
 
-        with patch("core.cli.sys.argv", ["ossia"]), \
-             patch("core.cli._start_server", return_value=srv), \
-             patch("core.cli._start_tui", return_value=tui) as mock_tui, \
-             patch("core.cli._find_bun", return_value="/usr/bin/bun"), \
-             patch("core.cli.wait_for_health"), \
-             patch("core.cli.terminate"), \
-             patch("core.cli.os.path.isdir", return_value=True):
+        with (
+            patch("core.cli.sys.argv", ["ossia"]),
+            patch("core.cli._start_server", return_value=srv),
+            patch("core.cli._start_tui", return_value=tui) as mock_tui,
+            patch("core.cli._find_bun", return_value="/usr/bin/bun"),
+            patch("core.cli.wait_for_health"),
+            patch("core.cli.terminate"),
+            patch("core.cli.os.path.isdir", return_value=True),
+        ):
             main()
 
         assert mock_tui.called
@@ -286,11 +303,13 @@ class TestMainBoth:
 
         proc = _exiting_process(exit_code=0, after_calls=0)
 
-        with patch("core.cli.sys.argv", ["ossia", "--server-only"]), \
-             patch("core.cli._start_server") as mock_start, \
-             patch("core.cli.wait_for_health"), \
-             patch("core.cli.terminate"), \
-             patch("core.cli.os.path.isdir", return_value=True):
+        with (
+            patch("core.cli.sys.argv", ["ossia", "--server-only"]),
+            patch("core.cli._start_server") as mock_start,
+            patch("core.cli.wait_for_health"),
+            patch("core.cli.terminate"),
+            patch("core.cli.os.path.isdir", return_value=True),
+        ):
             mock_start.return_value = proc
             main()
 
@@ -307,11 +326,13 @@ class TestMainErrors:
         """main() returns 1 when bun is not installed and --server-only is not set."""
         from core.cli import main
 
-        with patch("core.cli.sys.argv", ["ossia"]), \
-             patch("core.cli._find_bun", return_value=None), \
-             patch("core.cli.os.path.isdir", return_value=True), \
-             patch("core.cli._start_server"), \
-             patch("core.cli.wait_for_health"):
+        with (
+            patch("core.cli.sys.argv", ["ossia"]),
+            patch("core.cli._find_bun", return_value=None),
+            patch("core.cli.os.path.isdir", return_value=True),
+            patch("core.cli._start_server"),
+            patch("core.cli.wait_for_health"),
+        ):
             rc = main()
             assert rc == 1
 
@@ -319,11 +340,13 @@ class TestMainErrors:
         """main() returns 1 when the TUI directory is not found."""
         from core.cli import main
 
-        with patch("core.cli.sys.argv", ["ossia"]), \
-             patch("core.cli._find_bun", return_value="/usr/bin/bun"), \
-             patch("core.cli.os.path.isdir", return_value=False), \
-             patch("core.cli._start_server"), \
-             patch("core.cli.wait_for_health"):
+        with (
+            patch("core.cli.sys.argv", ["ossia"]),
+            patch("core.cli._find_bun", return_value="/usr/bin/bun"),
+            patch("core.cli.os.path.isdir", return_value=False),
+            patch("core.cli._start_server"),
+            patch("core.cli.wait_for_health"),
+        ):
             rc = main()
             assert rc == 1
 
@@ -333,10 +356,12 @@ class TestMainErrors:
 
         proc = _running_process()
 
-        with patch("core.cli.sys.argv", ["ossia", "--server-only"]), \
-             patch("core.cli._start_server", return_value=proc), \
-             patch("core.cli.wait_for_health") as mock_health, \
-             patch("core.cli.terminate"):
+        with (
+            patch("core.cli.sys.argv", ["ossia", "--server-only"]),
+            patch("core.cli._start_server", return_value=proc),
+            patch("core.cli.wait_for_health") as mock_health,
+            patch("core.cli.terminate"),
+        ):
             mock_health.side_effect = KeyboardInterrupt()
             rc = main()
             assert rc == 0
@@ -347,10 +372,12 @@ class TestMainErrors:
 
         proc = _exiting_process(exit_code=2, after_calls=0)
 
-        with patch("core.cli.sys.argv", ["ossia", "--server-only"]), \
-             patch("core.cli._start_server", return_value=proc), \
-             patch("core.cli.wait_for_health"), \
-             patch("core.cli.terminate"):
+        with (
+            patch("core.cli.sys.argv", ["ossia", "--server-only"]),
+            patch("core.cli._start_server", return_value=proc),
+            patch("core.cli.wait_for_health"),
+            patch("core.cli.terminate"),
+        ):
             rc = main()
             assert rc == 2
 
@@ -367,11 +394,13 @@ class TestArgParsing:
 
         proc = _exiting_process(exit_code=0, after_calls=0)
 
-        with patch("core.cli.sys.argv", ["ossia", "--server-only"]), \
-             patch("core.cli._start_server") as mock_start, \
-             patch("core.cli.wait_for_health"), \
-             patch("core.cli.terminate"), \
-             patch("core.cli.os.path.isdir", return_value=True):
+        with (
+            patch("core.cli.sys.argv", ["ossia", "--server-only"]),
+            patch("core.cli._start_server") as mock_start,
+            patch("core.cli.wait_for_health"),
+            patch("core.cli.terminate"),
+            patch("core.cli.os.path.isdir", return_value=True),
+        ):
             mock_start.return_value = proc
             main()
 
@@ -384,11 +413,13 @@ class TestArgParsing:
 
         proc = _exiting_process(exit_code=0, after_calls=0)
 
-        with patch("core.cli.sys.argv", ["ossia", "--server-only", "--port", "9000"]), \
-             patch("core.cli._start_server") as mock_start, \
-             patch("core.cli.wait_for_health"), \
-             patch("core.cli.terminate"), \
-             patch("core.cli.os.path.isdir", return_value=True):
+        with (
+            patch("core.cli.sys.argv", ["ossia", "--server-only", "--port", "9000"]),
+            patch("core.cli._start_server") as mock_start,
+            patch("core.cli.wait_for_health"),
+            patch("core.cli.terminate"),
+            patch("core.cli.os.path.isdir", return_value=True),
+        ):
             mock_start.return_value = proc
             main()
 
@@ -401,14 +432,169 @@ class TestArgParsing:
 
         proc = _exiting_process(exit_code=0, after_calls=0)
 
-        with patch("core.cli.sys.argv",
-                   ["ossia", "--server-only", "--host", "0.0.0.0"]), \
-             patch("core.cli._start_server") as mock_start, \
-             patch("core.cli.wait_for_health"), \
-             patch("core.cli.terminate"), \
-             patch("core.cli.os.path.isdir", return_value=True):
+        with (
+            patch("core.cli.sys.argv", ["ossia", "--server-only", "--host", "0.0.0.0"]),
+            patch("core.cli._start_server") as mock_start,
+            patch("core.cli.wait_for_health"),
+            patch("core.cli.terminate"),
+            patch("core.cli.os.path.isdir", return_value=True),
+        ):
             mock_start.return_value = proc
             main()
 
         args, _ = mock_start.call_args
         assert args[0] == "0.0.0.0"
+
+
+# ── Subcommands: server, tui, doctor, plugins ────────────────────────────────
+
+
+class TestSubcommandServer:
+    """`ossia server` starts the backend only."""
+
+    def test_server_subcommand_starts_backend(
+        self,
+    ) -> None:
+        from core.cli import main
+
+        proc = _exiting_process(exit_code=0, after_calls=0)
+        proc.wait.return_value = 0
+        with (
+            patch("core.cli.sys.argv", ["ossia", "server"]),
+            patch("core.cli._start_server", return_value=proc) as mock_start,
+            patch("core.cli.wait_for_health") as mock_health,
+            patch("core.cli.terminate"),
+        ):
+            rc = main()
+        assert rc == 0
+        mock_start.assert_called_once()
+        mock_health.assert_called_once()
+
+
+class TestSubcommandTui:
+    """`ossia tui` starts the TUI only (no server)."""
+
+    def test_tui_subcommand_finds_bun_and_starts(
+        self,
+    ) -> None:
+        from core.cli import main
+
+        proc = _exiting_process(exit_code=0, after_calls=0)
+        proc.wait.return_value = 0
+        with (
+            patch("core.cli.sys.argv", ["ossia", "tui"]),
+            patch("core.cli._find_bun", return_value="/usr/bin/bun"),
+            patch("core.cli._start_tui", return_value=proc) as mock_tui,
+            patch("core.cli.terminate"),
+            patch("core.cli.os.path.isdir", return_value=True),
+        ):
+            rc = main()
+        assert rc == 0
+        mock_tui.assert_called_once()
+
+    def test_tui_subcommand_errors_when_bun_missing(
+        self,
+    ) -> None:
+        from core.cli import main
+
+        with (
+            patch("core.cli.sys.argv", ["ossia", "tui"]),
+            patch("core.cli._find_bun", return_value=None),
+        ):
+            rc = main()
+        assert rc == 1
+
+
+class TestSubcommandDoctor:
+    """`ossia doctor` reports env + plugin health without starting a server."""
+
+    def test_doctor_passes_when_required_keys_set(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setenv("OSSIA_API_KEY", "test")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test")
+        from core.cli import main
+
+        with patch("core.cli.sys.argv", ["ossia", "doctor"]):
+            rc = main()
+        captured = capsys.readouterr()
+        # No plugin/ossia.json failures — the bundled ponytail always loads.
+        assert rc in (0, 2)
+        assert "OSSIA_API_KEY" in captured.out
+        assert "OPENROUTER_API_KEY" in captured.out
+
+    def test_doctor_fails_when_api_key_missing(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.delenv("OSSIA_API_KEY", raising=False)
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test")
+        from core.cli import main
+
+        with patch("core.cli.sys.argv", ["ossia", "doctor"]):
+            rc = main()
+        captured = capsys.readouterr()
+        assert rc == 1
+        assert "OSSIA_API_KEY" in captured.out
+
+    def test_doctor_with_check_server_hits_health(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("OSSIA_API_KEY", "test")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test")
+        from core.cli import main
+
+        with (
+            patch("core.cli.sys.argv", ["ossia", "doctor", "--check-server"]),
+            patch("core.cli.httpx.get") as mock_get,
+        ):
+            mock_get.return_value = MagicMock(status_code=200)
+            main()
+        mock_get.assert_called_once()
+        assert "/health" in mock_get.call_args.args[0]
+
+
+class TestSubcommandPlugins:
+    """`ossia plugins list` reports loaded plugins."""
+
+    def test_plugins_list_prints_table(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from core.cli import main
+
+        with patch("core.cli.sys.argv", ["ossia", "plugins", "list"]):
+            main()
+        captured = capsys.readouterr()
+        # The bundled ponytail plugin should always appear.
+        assert "ponytail" in captured.out
+        assert "ponytail_review" in captured.out
+
+    def test_plugins_list_json_emits_valid_json(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        import json as _json
+
+        from core.cli import main
+
+        with patch("core.cli.sys.argv", ["ossia", "plugins", "list", "--json"]):
+            main()
+        captured = capsys.readouterr()
+        data = _json.loads(captured.out)
+        assert isinstance(data, list)
+        pony = next((p for p in data if p["name"] == "ponytail"), None)
+        assert pony is not None
+        assert "ponytail_review" in pony["tools"]
+
+
+class TestSubcommandParser:
+    """Argparser rejects unknown subcommands."""
+
+    def test_unknown_subcommand_exits(
+        self,
+    ) -> None:
+        from core.cli import main
+
+        with (
+            patch("core.cli.sys.argv", ["ossia", "frobnicate"]),
+            pytest.raises(SystemExit),
+        ):
+            main()

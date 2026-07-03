@@ -36,7 +36,7 @@ Think of Ossia as a **digital teammate**: it can research your codebase, diagnos
 
 ```mermaid
 flowchart TB
-    Client["🌐 Client<br/><i>TUI / curl / app</i>"]
+    Client["🌐 Client<br/><i>TUI / Web UI / curl / app</i>"]
     Proxy["🚀 Reverse Proxy<br/><i>Caddy / Nginx</i>"]
     API["⚙️ FastAPI Server<br/><i>POST /v1/chat<br/>POST /v1/chat/stream<br/>GET /v1/tools<br/>GET /v1/threads/*<br/>POST /v1/resume<br/>GET /v1/audit<br/>GET /metrics</i>"]
     MW["🔒 Middleware Stack<br/><i>10 layers: PII → Model Retry →<br/>Circuit Breaker → Tool Retry →<br/>Revision Cap → Tool Limit →<br/>Code Interpreter → Subagents →<br/>Caller Context</i>"]
@@ -97,6 +97,7 @@ Ossia's architecture is composed of six interconnected subsystems, each document
 | **Memory & Persistence** | [ADR-0007](docs/adr/0007-agent-scoped-memory-and-episodic-recall.md) | Postgres + in-memory store, per-caller namespaces, thread replay buffer | [Deployment topology](docs/diagrams.md#5-deployment-topology) |
 | **Orchestrator Pipelines** | [ADR-0008](docs/adr/0008-subagent-design-and-routing.md) | bugfix/audit/refactor pipelines via code interpreter with multi-step workflows | [Subagent routing](docs/diagrams.md#1-subagent-routing) |
 | **Terminal UI** | `src/tui/` | OpenTUI/React 19 terminal client consuming `/v1/chat/stream` over SSE | [TUI README](src/tui/README.md) |
+| **Web UI** | `src/webui/` | React 19 + Vite + Tailwind v4 web client with dark/light mode, 4 panels, SSE streaming | [Web UI README](src/webui/README.md) |
 
 ### Request lifecycle
 
@@ -127,11 +128,14 @@ make install
 # 4. Start the dev server
 make dev
 
-# 5. Test it
+# 5. Test it with curl, or open the Web UI:
 curl -X POST http://localhost:8000/v1/chat \
   -H "X-API-Key: dev" \
   -H "Content-Type: application/json" \
   -d '{"message": "Hello!"}'
+
+# Or open the Web UI (needs a terminal for backend + one for UI):
+make dev-web
 ```
 
 ### Using Docker
@@ -191,6 +195,7 @@ The project includes a `Makefile` with 40+ targets organized by category. Run `m
 | **Quality** | `make audit`, `make eval`, `make openapi-drift` |
 | **Spec** | `make spec-docs`, `make spec-coverage`, `make changelog` |
 | **TUI** | `make tui`, `make tui-install` |
+| **Web UI** | `make dev-web`, `make dev-all-web` |
 | **Cleanup** | `make clean`, `make clean-all` |
 
 ## Docker Compose Stack
@@ -251,7 +256,7 @@ Plug in any provider via a single env var: `OpenRouter`, `OpenAI`, `Anthropic`, 
 The EventNormalizer converts the raw DeepAgent v3 stream into a typed, ordered event protocol — coordinator messages, subagent lifecycle, tool calls, pipeline steps, async tasks, and multimodal artifacts all stream in a single ordered feed via SSE.
 
 ### Thread Replay Buffer
-Every streamed run's normalized events are stored in an in-memory buffer. Clients can late-join or replay via `GET /v1/threads/{id}/events` — useful for TUI session recovery, debugging, and audit.
+Every streamed run's normalized events are stored in an in-memory buffer. Clients can late-join or replay via `GET /v1/threads/{id}/events` — useful for session recovery, debugging, and audit.
 
 ### Subagent Delegation
 7 synchronous subagents (`code-researcher`, `bug-diagnostician`, `fix-proposer`, `test-runner`, `ui-debugger`, `diagram-analyzer`, `visual-regression-reviewer`) and 3 async subagents (`researcher`, `tester`, `auditor`) handle specialized work without filling the coordinator's context.
@@ -302,6 +307,38 @@ cd src/tui && bun install && bun dev
 
 See the [TUI README](src/tui/README.md) for full documentation.
 
+### Web UI
+
+Ossia also ships with a **Web UI** built with React 19, Vite, and Tailwind CSS v4.
+It connects to the backend via SSE and provides a browser-based interface:
+
+```bash
+# Start both backend + Web UI together:
+make dev-all-web
+
+# Or start just the Web UI (backend must be running separately):
+make dev-web
+
+# Open http://localhost:5173 in your browser
+```
+
+The Web UI features:
+
+| Feature | Description |
+|---------|-------------|
+| **4 panels** | Chat, Subagents (with pipelines), Tools (with async tasks), ReAct reasoning loop |
+| **Dark/light mode** | Sun/Moon toggle, persists to localStorage, no flash on load |
+| **Theme-aware favicon** | Purple ring that swaps color based on mode |
+| **Panel persistence** | Active tab survives page refreshes |
+| **Connection config** | Gear icon to set API URL and key, live connection indicator |
+| **SSE streaming** | Real-time agent responses via server-sent events |
+| **Playwright e2e tests** | 5 tests covering panel persistence, tab switching, and edge cases |
+
+```bash
+# Run e2e tests (auto-starts Vite dev server)
+cd src/webui && npm run test:e2e
+```
+
 ## Configuration
 
 All settings are driven by environment variables parsed through Pydantic in `src/core/config.py`.
@@ -331,6 +368,7 @@ src/
   core/              # Core library: agent, api, tools, events, memory,
                      # middleware, config, schemas, graphs, orchestrators
   tui/               # Terminal UI (bun + OpenTUI/React)
+  webui/             # Web UI (React + Vite + Tailwind v4)
 tests/               # 100+ tests across all modules
 scripts/             # Audit, eval, OpenAPI spec generation, coverage matrix
 specs/               # OpenAPI contract, changelog, feature specs, coverage

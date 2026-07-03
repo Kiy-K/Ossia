@@ -47,20 +47,29 @@ async def audit_memory() -> AuditSection:
     if not settings.postgres_url:
         try:
             async with get_checkpointer(settings) as _:
-                checks.append(_check(
-                    "get_checkpointer raises ValueError when POSTGRES_URL unset",
-                    False, detail="did not raise",
-                ))
+                checks.append(
+                    _check(
+                        "get_checkpointer raises ValueError when POSTGRES_URL unset",
+                        False,
+                        detail="did not raise",
+                    )
+                )
         except ValueError as exc:
-            checks.append(_check(
-                "get_checkpointer raises ValueError when POSTGRES_URL unset",
-                True, detail=str(exc),
-            ))
+            checks.append(
+                _check(
+                    "get_checkpointer raises ValueError when POSTGRES_URL unset",
+                    True,
+                    detail=str(exc),
+                )
+            )
         except Exception as exc:  # noqa: BLE001
-            checks.append(_check(
-                "get_checkpointer raises ValueError when POSTGRES_URL unset",
-                False, detail=f"unexpected: {type(exc).__name__}: {exc}",
-            ))
+            checks.append(
+                _check(
+                    "get_checkpointer raises ValueError when POSTGRES_URL unset",
+                    False,
+                    detail=f"unexpected: {type(exc).__name__}: {exc}",
+                )
+            )
     else:
         checks.append(_check("POSTGRES_URL set; skip unset-DSN check", True))
 
@@ -68,41 +77,53 @@ async def audit_memory() -> AuditSection:
     await store.aput(("users", "u1"), "pref", {"tone": "concise"})
     item = await store.aget(("users", "u1"), "pref")
     got = item.value if item else None
-    checks.append(_check(
-        "BaseStore.get returns item.value",
-        got == {"tone": "concise"},
-        detail=str(got),
-    ))
+    checks.append(
+        _check(
+            "BaseStore.get returns item.value",
+            got == {"tone": "concise"},
+            detail=str(got),
+        )
+    )
 
     await store.aput(("users", "u1"), "summary", {"last": "reset credentials"})
     item2 = await store.aget(("users", "u1"), "summary")
     got2 = item2.value if item2 else None
-    checks.append(_check(
-        "BaseStore.put/get round-trips",
-        got2 == {"last": "reset credentials"},
-        detail=str(got2),
-    ))
+    checks.append(
+        _check(
+            "BaseStore.put/get round-trips",
+            got2 == {"last": "reset credentials"},
+            detail=str(got2),
+        )
+    )
 
     found = await store.asearch(("users", "u1"))
     vals = [i.value for i in found]
-    checks.append(_check(
-        "BaseStore.search returns values",
-        any("reset" in str(v) for v in vals),
-        detail=str(vals),
-    ))
+    checks.append(
+        _check(
+            "BaseStore.search returns values",
+            any("reset" in str(v) for v in vals),
+            detail=str(vals),
+        )
+    )
 
     if not settings.postgres_url:
         try:
             async with get_store(settings) as _:
-                checks.append(_check(
-                    "get_store raises ValueError when POSTGRES_URL unset",
-                    False, detail="did not raise",
-                ))
+                checks.append(
+                    _check(
+                        "get_store raises ValueError when POSTGRES_URL unset",
+                        False,
+                        detail="did not raise",
+                    )
+                )
         except ValueError as exc:
-            checks.append(_check(
-                "get_store raises ValueError when POSTGRES_URL unset",
-                True, detail=str(exc),
-            ))
+            checks.append(
+                _check(
+                    "get_store raises ValueError when POSTGRES_URL unset",
+                    True,
+                    detail=str(exc),
+                )
+            )
     return _section("memory", checks)
 
 
@@ -129,11 +150,13 @@ async def audit_process_middleware() -> AuditSection:
         content = result.content if hasattr(result, "content") else str(result)
         is_forced = "send_response immediately" in str(content)
         forced_seen.append(is_forced)
-    checks.append(_check(
-        "RevisionLoopCapMiddleware forces finalize after 2 loops",
-        not forced_seen[0] and not forced_seen[1] and forced_seen[2] and forced_seen[3],
-        detail=str(forced_seen),
-    ))
+    checks.append(
+        _check(
+            "RevisionLoopCapMiddleware forces finalize after 2 loops",
+            not forced_seen[0] and not forced_seen[1] and forced_seen[2] and forced_seen[3],
+            detail=str(forced_seen),
+        )
+    )
 
     calls: list[int] = []
 
@@ -149,11 +172,13 @@ async def audit_process_middleware() -> AuditSection:
     t0 = _time.monotonic()
     result = await retry.awrap_tool_call(_Req("search_knowledge_base"), flaky_handler)
     elapsed = _time.monotonic() - t0
-    checks.append(_check(
-        "RetryToolMiddleware retried with non-zero backoff",
-        len(calls) == 3 and elapsed >= 0.05 and "recovered" in str(result.content),
-        detail=f"attempts={len(calls)} elapsed={elapsed:.3f}s",
-    ))
+    checks.append(
+        _check(
+            "RetryToolMiddleware retried with non-zero backoff",
+            len(calls) == 3 and elapsed >= 0.05 and "recovered" in str(result.content),
+            detail=f"attempts={len(calls)} elapsed={elapsed:.3f}s",
+        )
+    )
 
     calls2: list[int] = []
 
@@ -169,11 +194,13 @@ async def audit_process_middleware() -> AuditSection:
         await retry2.awrap_tool_call(_Req("search_knowledge_base"), always_fail)
     except RuntimeError:
         raised = True
-    checks.append(_check(
-        "RetryToolMiddleware re-raises after max_attempts",
-        raised and len(calls2) == 3,
-        detail=f"attempts={len(calls2)}",
-    ))
+    checks.append(
+        _check(
+            "RetryToolMiddleware re-raises after max_attempts",
+            raised and len(calls2) == 3,
+            detail=f"attempts={len(calls2)}",
+        )
+    )
 
     calls3: list[int] = []
 
@@ -187,11 +214,13 @@ async def audit_process_middleware() -> AuditSection:
         await retry3.awrap_tool_call(_Req("grade_response"), grade_fail)
     except RuntimeError:
         raised3 = True
-    checks.append(_check(
-        "RetryToolMiddleware skips non-external tools",
-        raised3 and len(calls3) == 1,
-        detail=f"attempts={len(calls3)}",
-    ))
+    checks.append(
+        _check(
+            "RetryToolMiddleware skips non-external tools",
+            raised3 and len(calls3) == 1,
+            detail=f"attempts={len(calls3)}",
+        )
+    )
     return _section("process", checks)
 
 
@@ -200,10 +229,13 @@ async def audit_runtime_and_langsmith() -> AuditSection:
     checks: list[CheckResult] = []
     api_key = os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
-        checks.append(_check(
-            "OPENROUTER_API_KEY is set",
-            False, detail="set OPENROUTER_API_KEY in env to run runtime audit",
-        ))
+        checks.append(
+            _check(
+                "OPENROUTER_API_KEY is set",
+                False,
+                detail="set OPENROUTER_API_KEY in env to run runtime audit",
+            )
+        )
         return _section("runtime", checks)
 
     settings = Settings(
@@ -238,16 +270,20 @@ async def audit_runtime_and_langsmith() -> AuditSection:
             {"configurable": {"thread_id": "audit-runtime-002"}},
         )
         final_msgs = result.get("messages", [])
-        checks.append(_check(
-            "End-to-end run completed with messages",
-            bool(final_msgs),
-            detail=f"streamed={len(stream_events)} tools={tool_events}",
-        ))
-        checks.append(_check(
-            "astream_events produced live events",
-            bool(stream_events),
-            detail=f"events={len(stream_events)}",
-        ))
+        checks.append(
+            _check(
+                "End-to-end run completed with messages",
+                bool(final_msgs),
+                detail=f"streamed={len(stream_events)} tools={tool_events}",
+            )
+        )
+        checks.append(
+            _check(
+                "astream_events produced live events",
+                bool(stream_events),
+                detail=f"events={len(stream_events)}",
+            )
+        )
     return _section("runtime", checks)
 
 
@@ -255,10 +291,13 @@ async def audit_langsmith_trace() -> AuditSection:
     """LangSmith: confirm a trace/run was recorded for the project."""
     checks: list[CheckResult] = []
     if os.environ.get("LANGSMITH_TRACING") != "true":
-        checks.append(_check(
-            "LangSmith tracing enabled (LANGSMITH_TRACING=true)", True,
-            detail="skipping trace query",
-        ))
+        checks.append(
+            _check(
+                "LangSmith tracing enabled (LANGSMITH_TRACING=true)",
+                True,
+                detail="skipping trace query",
+            )
+        )
         return _section("langsmith", checks)
     try:
         from langsmith import Client
@@ -269,11 +308,13 @@ async def audit_langsmith_trace() -> AuditSection:
         client = Client()
         project = os.environ.get("LANGSMITH_PROJECT", "Ossia")
         runs = list(client.list_runs(project_name=project, limit=5))
-        checks.append(_check(
-            f"LangSmith recorded runs for project '{project}'",
-            bool(runs),
-            detail=f"runs={len(runs)}",
-        ))
+        checks.append(
+            _check(
+                f"LangSmith recorded runs for project '{project}'",
+                bool(runs),
+                detail=f"runs={len(runs)}",
+            )
+        )
     except Exception as exc:  # noqa: BLE001
         checks.append(_check("LangSmith trace query", False, detail=str(exc)))
     return _section("langsmith", checks)
@@ -306,20 +347,21 @@ async def audit_fix_verifications() -> AuditSection:
             mcp_config_path=bad_cfg.name,
         )
         try:
-            async with build_agent_async(
-                settings=deg_settings, include_mcp_tools=True
-            ) as agent:
-                checks.append(_check(
-                    "build_agent_async degrades on bad MCP server",
-                    agent is not None
-                    and "model" in agent.nodes
-                    and "tools" in agent.nodes,
-                ))
+            async with build_agent_async(settings=deg_settings, include_mcp_tools=True) as agent:
+                checks.append(
+                    _check(
+                        "build_agent_async degrades on bad MCP server",
+                        agent is not None and "model" in agent.nodes and "tools" in agent.nodes,
+                    )
+                )
         except Exception as exc:  # noqa: BLE001
-            checks.append(_check(
-                "build_agent_async degrades on bad MCP server",
-                False, detail=str(exc),
-            ))
+            checks.append(
+                _check(
+                    "build_agent_async degrades on bad MCP server",
+                    False,
+                    detail=str(exc),
+                )
+            )
     finally:
         os.unlink(bad_cfg.name)
 
@@ -332,15 +374,20 @@ async def audit_fix_verifications() -> AuditSection:
     )
     try:
         graph = build_agent(settings=nr_settings, checkpointer=None)
-        checks.append(_check(
-            "Agent compiles with human review on and no checkpointer",
-            graph is not None,
-        ))
+        checks.append(
+            _check(
+                "Agent compiles with human review on and no checkpointer",
+                graph is not None,
+            )
+        )
     except Exception as exc:  # noqa: BLE001
-        checks.append(_check(
-            "Agent compiles with human review on and no checkpointer",
-            False, detail=str(exc),
-        ))
+        checks.append(
+            _check(
+                "Agent compiles with human review on and no checkpointer",
+                False,
+                detail=str(exc),
+            )
+        )
 
     cap = RevisionLoopCapMiddleware(max_loops=2)
 
@@ -354,16 +401,21 @@ async def audit_fix_verifications() -> AuditSection:
         assert cap._counts.get("default") == 2
         await cap.aafter_agent({}, None)
         reclaimed = "default" not in cap._counts
-        checks.append(_check(
-            "RevisionLoopCapMiddleware reclaims per-thread counters",
-            reclaimed,
-            detail=str(cap._counts),
-        ))
+        checks.append(
+            _check(
+                "RevisionLoopCapMiddleware reclaims per-thread counters",
+                reclaimed,
+                detail=str(cap._counts),
+            )
+        )
     except Exception as exc:  # noqa: BLE001
-        checks.append(_check(
-            "RevisionLoopCapMiddleware reclaims per-thread counters",
-            False, detail=str(exc),
-        ))
+        checks.append(
+            _check(
+                "RevisionLoopCapMiddleware reclaims per-thread counters",
+                False,
+                detail=str(exc),
+            )
+        )
     return _section("fix-verifications", checks)
 
 
@@ -392,47 +444,57 @@ async def audit_multi_tenancy() -> AuditSection:
 
         # 1. Default namespace when no caller context
         default_ns = _make_memory_namespace(AGENT_NAMESPACE)
-        checks.append(_check(
-            "Default namespace when caller not set",
-            default_ns == ("ossia", "default"),
-            detail=str(default_ns),
-        ))
+        checks.append(
+            _check(
+                "Default namespace when caller not set",
+                default_ns == ("ossia", "default"),
+                detail=str(default_ns),
+            )
+        )
 
         # 2. Per-user namespace includes caller hash
         caller_var.set("user-abc123")
         ns_a = _make_memory_namespace(AGENT_NAMESPACE)
-        checks.append(_check(
-            "Per-user namespace includes caller hash",
-            ns_a == ("ossia", "user-abc123"),
-            detail=str(ns_a),
-        ))
+        checks.append(
+            _check(
+                "Per-user namespace includes caller hash",
+                ns_a == ("ossia", "user-abc123"),
+                detail=str(ns_a),
+            )
+        )
 
         # 3. Different caller -> different namespace
         caller_var.set("user-def456")
         ns_b = _make_memory_namespace(AGENT_NAMESPACE)
-        checks.append(_check(
-            "Different caller yields different namespace",
-            ns_b == ("ossia", "user-def456") and ns_b != ns_a,
-            detail=f"user-a: {ns_a}, user-b: {ns_b}",
-        ))
+        checks.append(
+            _check(
+                "Different caller yields different namespace",
+                ns_b == ("ossia", "user-def456") and ns_b != ns_a,
+                detail=f"user-a: {ns_a}, user-b: {ns_b}",
+            )
+        )
 
         # 4. Same caller yields same namespace consistently
         caller_var.set("user-abc123")
         ns_a2 = _make_memory_namespace(AGENT_NAMESPACE)
-        checks.append(_check(
-            "Same caller yields same namespace consistently",
-            ns_a2 == ns_a,
-            detail=str(ns_a2),
-        ))
+        checks.append(
+            _check(
+                "Same caller yields same namespace consistently",
+                ns_a2 == ns_a,
+                detail=str(ns_a2),
+            )
+        )
 
         # 5. Cleared caller falls back to default
         caller_var.set(None)
         default_ns2 = _make_memory_namespace(AGENT_NAMESPACE)
-        checks.append(_check(
-            "Cleared caller falls back to default namespace",
-            default_ns2 == ("ossia", "default") and default_ns2 == default_ns,
-            detail=str(default_ns2),
-        ))
+        checks.append(
+            _check(
+                "Cleared caller falls back to default namespace",
+                default_ns2 == ("ossia", "default") and default_ns2 == default_ns,
+                detail=str(default_ns2),
+            )
+        )
 
         # ── End-to-end store isolation between users ────────────────────
 
@@ -458,11 +520,13 @@ async def audit_multi_tenancy() -> AuditSection:
         item_b = await store.aget(ns_b_read, "pref")
         val_b = item_b.value if item_b else None
 
-        checks.append(_check(
-            "Each user reads their own stored data",
-            val_a == {"theme": "dark"} and val_b == {"theme": "light"},
-            detail=f"user-a: {val_a}, user-b: {val_b}",
-        ))
+        checks.append(
+            _check(
+                "Each user reads their own stored data",
+                val_a == {"theme": "dark"} and val_b == {"theme": "light"},
+                detail=f"user-a: {val_a}, user-b: {val_b}",
+            )
+        )
 
         # Verify user-a does NOT see user-b's data in a search
         caller_var.set("user-isolation-a")
@@ -470,11 +534,13 @@ async def audit_multi_tenancy() -> AuditSection:
         found_a = await store.asearch(ns_a_search)
         vals_a = [i.value for i in found_a]
         has_b_data = any("light" in str(v) for v in vals_a)
-        checks.append(_check(
-            "User A cannot read User B's data via search",
-            not has_b_data,
-            detail=f"user-a sees: {vals_a}",
-        ))
+        checks.append(
+            _check(
+                "User A cannot read User B's data via search",
+                not has_b_data,
+                detail=f"user-a sees: {vals_a}",
+            )
+        )
 
         # Verify user-b does NOT see user-a's data in a search
         caller_var.set("user-isolation-b")
@@ -482,11 +548,13 @@ async def audit_multi_tenancy() -> AuditSection:
         found_b = await store.asearch(ns_b_search)
         vals_b = [i.value for i in found_b]
         has_a_data = any("dark" in str(v) for v in vals_b)
-        checks.append(_check(
-            "User B cannot read User A's data via search",
-            not has_a_data,
-            detail=f"user-b sees: {vals_b}",
-        ))
+        checks.append(
+            _check(
+                "User B cannot read User A's data via search",
+                not has_a_data,
+                detail=f"user-b sees: {vals_b}",
+            )
+        )
 
     finally:
         caller_var.set(None)
@@ -518,11 +586,13 @@ async def audit_model_middleware() -> AuditSection:
 
     class _MockResponse:
         """Minimal mock response for openai error construction."""
+
         status_code: int = 429
         headers: dict[str, str] = {}
 
         class _MockRequest:
             stream: bool = False
+
         request = _MockRequest()
 
     async def flaky_handler(request: Any) -> AIMessage:
@@ -548,16 +618,23 @@ async def audit_model_middleware() -> AuditSection:
 
     try:
         result = await retry_mw.awrap_model_call(_FakeRequest(), flaky_handler)  # type: ignore[arg-type]
-        checks.append(_check(
-            "ModelRetryMiddleware retries on RateLimitError",
-            len(calls) == 2 and hasattr(result, "content") and "recovered" in str(result.content),
-            detail=f"attempts={len(calls)}",
-        ))
+        checks.append(
+            _check(
+                "ModelRetryMiddleware retries on RateLimitError",
+                len(calls) == 2
+                and hasattr(result, "content")
+                and "recovered" in str(result.content),
+                detail=f"attempts={len(calls)}",
+            )
+        )
     except Exception as exc:  # noqa: BLE001
-        checks.append(_check(
-            "ModelRetryMiddleware retries on RateLimitError",
-            False, detail=f"unexpected error: {exc}",
-        ))
+        checks.append(
+            _check(
+                "ModelRetryMiddleware retries on RateLimitError",
+                False,
+                detail=f"unexpected error: {exc}",
+            )
+        )
 
     calls2: list[int] = []
 
@@ -575,22 +652,26 @@ async def audit_model_middleware() -> AuditSection:
         await retry_mw2.awrap_model_call(_FakeRequest(), always_fail_handler)  # type: ignore[arg-type]
     except openai.RateLimitError:
         raised = True
-    checks.append(_check(
-        "ModelRetryMiddleware re-raises after max_attempts",
-        raised and len(calls2) == 3,
-        detail=f"attempts={len(calls2)}",
-    ))
+    checks.append(
+        _check(
+            "ModelRetryMiddleware re-raises after max_attempts",
+            raised and len(calls2) == 3,
+            detail=f"attempts={len(calls2)}",
+        )
+    )
 
     # Verify non-transient exceptions are NOT retried
     calls3: list[int] = []
 
     class _AuthMockResponse:
         """Mock response that looks like a 401 auth error."""
+
         status_code: int = 401
         headers: dict[str, str] = {}
 
         class _MockRequest:
             stream: bool = False
+
         request = _MockRequest()
 
     async def auth_fail_handler(_request: Any) -> AIMessage:
@@ -607,11 +688,13 @@ async def audit_model_middleware() -> AuditSection:
         await retry_mw3.awrap_model_call(_FakeRequest(), auth_fail_handler)  # type: ignore[arg-type]
     except openai.AuthenticationError:
         raised3 = True
-    checks.append(_check(
-        "ModelRetryMiddleware does NOT retry non-transient errors (401)",
-        raised3 and len(calls3) == 1,
-        detail=f"attempts={len(calls3)}",
-    ))
+    checks.append(
+        _check(
+            "ModelRetryMiddleware does NOT retry non-transient errors (401)",
+            raised3 and len(calls3) == 1,
+            detail=f"attempts={len(calls3)}",
+        )
+    )
 
     # ── FallbackMiddleware ────────────────────────────────────────────
 
@@ -620,11 +703,15 @@ async def audit_model_middleware() -> AuditSection:
     model_or_fb: Any = None
 
     fallback_mw = ModelFallbackMiddleware(
-        fallback_model=create_chat_model(Settings(
-            provider=Provider.OPENROUTER,
-            model="openai/gpt-4o-mini",
-            openrouter_api_key=api_key,
-        )) if api_key else _FakeRequest()  # type: ignore[arg-type]
+        fallback_model=create_chat_model(
+            Settings(
+                provider=Provider.OPENROUTER,
+                model="openai/gpt-4o-mini",
+                openrouter_api_key=api_key,
+            )
+        )
+        if api_key
+        else _FakeRequest()  # type: ignore[arg-type]
     )
 
     async def primary_fail_then_fallback_succeed(request: Any) -> AIMessage:
@@ -640,32 +727,44 @@ async def audit_model_middleware() -> AuditSection:
 
     if api_key:
         try:
-            model_or_fb = create_chat_model(Settings(
-                provider=Provider.OPENROUTER,
-                model="openai/gpt-4o-mini",
-                openrouter_api_key=api_key,
-            ))
+            model_or_fb = create_chat_model(
+                Settings(
+                    provider=Provider.OPENROUTER,
+                    model="openai/gpt-4o-mini",
+                    openrouter_api_key=api_key,
+                )
+            )
             req = _FakeRequest()
             req.model = model_or_fb
             result2 = await fallback_mw.awrap_model_call(
                 req,  # type: ignore[arg-type]
                 primary_fail_then_fallback_succeed,
             )
-            checks.append(_check(
-                "ModelFallbackMiddleware switches to fallback model on transient failure",
-                len(primary_calls) == 1 and len(fallback_calls) == 1 and "fallback worked" in str(result2.content),
-                detail=f"primary={len(primary_calls)} fallback={len(fallback_calls)}",
-            ))
+            checks.append(
+                _check(
+                    "ModelFallbackMiddleware switches to fallback model on transient failure",
+                    len(primary_calls) == 1
+                    and len(fallback_calls) == 1
+                    and "fallback worked" in str(result2.content),
+                    detail=f"primary={len(primary_calls)} fallback={len(fallback_calls)}",
+                )
+            )
         except Exception as exc:  # noqa: BLE001
-            checks.append(_check(
-                "ModelFallbackMiddleware switches to fallback model on transient failure",
-                False, detail=str(exc),
-            ))
+            checks.append(
+                _check(
+                    "ModelFallbackMiddleware switches to fallback model on transient failure",
+                    False,
+                    detail=str(exc),
+                )
+            )
     else:
-        checks.append(_check(
-            "ModelFallbackMiddleware switches to fallback model on transient failure",
-            True, detail="skipped (no API key)",
-        ))
+        checks.append(
+            _check(
+                "ModelFallbackMiddleware switches to fallback model on transient failure",
+                True,
+                detail="skipped (no API key)",
+            )
+        )
 
     return _section("model", checks)
 

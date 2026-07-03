@@ -280,7 +280,9 @@ class StreamPipelinePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     pipeline_id: str = Field(description="Unique identifier for this pipeline run.")
-    pipeline_type: Literal["bugfix", "audit", "refactor"] = Field(description="Which pipeline is running.")
+    pipeline_type: Literal["bugfix", "audit", "refactor"] = Field(
+        description="Which pipeline is running."
+    )
     event: Literal[
         "pipeline_started",
         "pipeline_step_started",
@@ -366,8 +368,16 @@ class StreamEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     kind: Literal[
-        "message", "tool_call", "subagent", "value", "artifact", "interrupt", "complete", "protocol",
-        "async_task", "pipeline",
+        "message",
+        "tool_call",
+        "subagent",
+        "value",
+        "artifact",
+        "interrupt",
+        "complete",
+        "protocol",
+        "async_task",
+        "pipeline",
     ]
     seq: int | None = None
     data: dict[str, Any]
@@ -436,8 +446,7 @@ class ResumeResponse(BaseModel):
         description="True when the resumed run paused on a new interrupt.",
     )
     feedback: str | None = Field(
-        default=None,
-        description="Optional reviewer feedback forwarded to the agent on reject."
+        default=None, description="Optional reviewer feedback forwarded to the agent on reject."
     )
 
 
@@ -494,6 +503,128 @@ class ToolListResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     tools: list[ToolInfo]
+
+
+class PluginInfo(BaseModel):
+    """A plugin that the running agent has loaded.
+
+    Surface name, source file, and what it contributed. Used by
+    ``GET /v1/plugins`` for diagnostics. Ponytail: fields mirror
+    ``core.plugin.LoadedPlugin`` — no second class to keep in sync.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    module: str = Field(
+        description="Import alias used to load the plugin (e.g. ossia_plugin_ponytail).",
+    )
+    path: str = Field(description="Filesystem path of the plugin entry file.")
+    config: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Config dict from ossia.json passed to register(api, config=...).",
+    )
+    tool_names: list[str] = Field(
+        default_factory=list,
+        description="Tools this plugin registered.",
+    )
+    subagent_names: list[str] = Field(
+        default_factory=list,
+        description="Subagent specs this plugin registered.",
+    )
+    middleware_types: list[str] = Field(
+        default_factory=list,
+        description="Middleware class names this plugin registered.",
+    )
+
+
+class PluginListResponse(BaseModel):
+    """Response payload for GET /v1/plugins."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    plugins: list[PluginInfo]
+
+
+class WebhookCreate(BaseModel):
+    """Request payload for POST /v1/webhooks.
+
+    ``events`` is a list of event kinds (e.g. ``["message", "tool_call"]``)
+    or ``["*"]`` to subscribe to everything. ``secret`` is optional;
+    when omitted the server generates one and returns it once in the
+    response. The receiver should store the secret and verify the
+    ``X-Ossia-Signature`` header on every delivery.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    url: str = Field(description="HTTP(S) URL the server POSTs events to.")
+    events: list[str] = Field(
+        default_factory=lambda: ["*"],
+        description="Event kinds to subscribe to. '*' matches all.",
+    )
+    secret: str = Field(
+        default="",
+        description="Optional HMAC secret. Server generates one when empty.",
+    )
+
+
+class WebhookInfo(BaseModel):
+    """A registered webhook (public view, no secret)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    url: str
+    events: list[str]
+    created_at: float = Field(description="Unix timestamp.")
+
+
+class WebhookCreated(WebhookInfo):
+    """Response to POST /v1/webhooks.
+
+    Includes the secret once. The secret is the only chance the
+    caller has to copy it — subsequent GETs redact it. Ponytail:
+    no Redis / DB persistence in v0.1, so a server restart drops
+    the secret; the webhook still works, but the receiver cannot
+    verify signatures. The endpoint returns 200 with the secret
+    inline so a fresh install can capture it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    secret: str = Field(
+        description="HMAC secret used to sign deliveries. Returned once.",
+    )
+
+
+class WebhookListResponse(BaseModel):
+    """Response payload for GET /v1/webhooks."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    webhooks: list[WebhookInfo]
+
+
+class WhoAmIResponse(BaseModel):
+    """Response payload for GET /v1/whoami.
+
+    Returns the stable caller id derived from the presented API
+    key. Useful for clients to confirm which credential the
+    server saw and to debug multi-tenant setups. The ``key_fpr``
+    field is the first 8 chars of the Argon2id of the key — a
+    fingerprint the caller can use to label which key they sent
+    without revealing the secret.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    caller: str = Field(
+        description="Stable caller id used for thread scoping and audit logs.",
+    )
+    key_fpr: str = Field(
+        description="Short fingerprint of the presented key (first 8 hex chars).",
+    )
 
 
 class HealthResponse(BaseModel):
@@ -604,3 +735,36 @@ class ErrorEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     error: ErrorBody
+
+
+class MemoryFile(BaseModel):
+    """A single file in the agent's ``/memories/`` or ``/policies/`` filesystem.
+
+    Returned by ``GET /v1/memories/{path}`` and ``GET /v1/policies/{path}``.
+    Read-only debug surface for inspecting the agent-scoped memory
+    file (e.g. ``AGENTS.md``) and the shared policy files. The
+    ``content`` field is the raw FileData content — multi-line string
+    for plain text files, JSON-encoded blob for binary.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(
+        description=(
+            "Path relative to the route root, e.g. ``AGENTS.md`` for "
+            "``/v1/memories/AGENTS.md``."
+        ),
+    )
+    namespace: list[str] = Field(
+        description=(
+            "Resolved LangGraph store namespace for this read. Per-caller "
+            "for ``/v1/memories/*`` (matches the agent's view), shared "
+            "``ossia/policies`` for ``/v1/policies/*``."
+        ),
+    )
+    content: str = Field(
+        description="File body as UTF-8 string. Empty string when the file is missing or unreadable.",
+    )
+    exists: bool = Field(
+        description="True when the file was found in the store.",
+    )

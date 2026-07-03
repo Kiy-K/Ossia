@@ -69,20 +69,23 @@ def wait_for_health(
     )
 
 
-def run_server_subprocess(
-    host: str, port: int, env: dict[str, str]
-) -> subprocess.Popen[bytes]:
+def run_server_subprocess(host: str, port: int, env: dict[str, str]) -> subprocess.Popen[bytes]:
     """Start a uvicorn subprocess for ossia.api:app and return the Popen handle.
 
     The caller is responsible for terminating the process (use
     :func:`terminate` in a ``finally``).
     """
     cmd = [
-        sys.executable, "-m", "uvicorn",
+        sys.executable,
+        "-m",
+        "uvicorn",
         "core.api:app",
-        "--host", host,
-        "--port", str(port),
-        "--log-level", "warning",
+        "--host",
+        host,
+        "--port",
+        str(port),
+        "--log-level",
+        "warning",
     ]
     print(f"  starting server: {' '.join(cmd)}", file=sys.stderr)
     return subprocess.Popen(cmd, env=env, stdout=sys.stdout, stderr=sys.stderr)

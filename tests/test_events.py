@@ -189,6 +189,7 @@ def test_serialize_json() -> None:
     event = OssiaEvent(seq=1, type="complete", data={"interrupted": False})
     js = serialize_json(event)
     import json
+
     parsed = json.loads(js)
     assert parsed["type"] == "complete"
     assert parsed["data"]["interrupted"] is False
@@ -262,7 +263,8 @@ def test_reduce_subagent_spawned_creates_node() -> None:
     """subagent_spawned creates a node in the subagent tree."""
     state = initial_state()
     event = OssiaEvent(
-        seq=1, type="subagent_spawned",
+        seq=1,
+        type="subagent_spawned",
         data=subagent_spawned_data("researcher", ["researcher"]),
         source="coordinator.researcher",
     )
@@ -276,7 +278,8 @@ def test_reduce_tool_started_and_completed() -> None:
     """tool_started and tool_completed track tool lifecycle."""
     state = initial_state()
     event = OssiaEvent(
-        seq=1, type="tool_started",
+        seq=1,
+        type="tool_started",
         data=tool_started_data("search_codebase", {"query": "test"}),
     )
     state = reduce_event(state, event)
@@ -285,7 +288,8 @@ def test_reduce_tool_started_and_completed() -> None:
     assert state["coordinator"]["tools"][0]["state"] == "running"
 
     event2 = OssiaEvent(
-        seq=2, type="tool_completed",
+        seq=2,
+        type="tool_completed",
         data=tool_completed_data("search_codebase", output="results"),
     )
     state = reduce_event(state, event2)
@@ -309,7 +313,9 @@ def test_reduce_interrupt_and_complete() -> None:
 
     # Complete (not interrupted)
     state2 = initial_state()
-    event3 = OssiaEvent(seq=1, type="complete", data={"interrupted": False, "output": {"key": "val"}})
+    event3 = OssiaEvent(
+        seq=1, type="complete", data={"interrupted": False, "output": {"key": "val"}}
+    )
     state2 = reduce_event(state2, event3)
     assert state2["state"] == "completed"
     assert state2["interrupted"] is False
@@ -353,6 +359,7 @@ class _FakeAsyncProjection:
     def __await__(self):
         async def _resolve() -> str:
             return self._text
+
         return _resolve().__await__()
 
 
@@ -419,7 +426,9 @@ class _FakeV3Stream:
     @property
     def messages(self) -> Any:
         class _AG:
-            def __aiter__(self): return self
+            def __aiter__(self):
+                return self
+
             async def __anext__(self):
                 if not self._msgs:
                     raise StopAsyncIteration
@@ -432,7 +441,9 @@ class _FakeV3Stream:
     @property
     def tool_calls(self) -> Any:
         class _AG:
-            def __aiter__(self): return self
+            def __aiter__(self):
+                return self
+
             async def __anext__(self):
                 if not self._tcs:
                     raise StopAsyncIteration
@@ -445,7 +456,9 @@ class _FakeV3Stream:
     @property
     def subagents(self) -> Any:
         class _AG:
-            def __aiter__(self): return self
+            def __aiter__(self):
+                return self
+
             async def __anext__(self):
                 if not self._sas:
                     raise StopAsyncIteration
@@ -458,7 +471,9 @@ class _FakeV3Stream:
     @property
     def values(self) -> Any:
         class _AG:
-            def __aiter__(self): return self
+            def __aiter__(self):
+                return self
+
             async def __anext__(self):
                 if not self._vals:
                     raise StopAsyncIteration
@@ -493,9 +508,14 @@ class _FakeMsg:
 class _FakeToolCall:
     """Fake tool call projection item."""
 
-    def __init__(self, tool_name: str, input_: dict | None = None,
-                 output: Any = None, error: str | None = None,
-                 output_deltas: list[str] | None = None):
+    def __init__(
+        self,
+        tool_name: str,
+        input_: dict | None = None,
+        output: Any = None,
+        error: str | None = None,
+        output_deltas: list[str] | None = None,
+    ):
         self.tool_name = tool_name
         self.input = input_ or {}
         self.output = output
@@ -505,7 +525,9 @@ class _FakeToolCall:
     @property
     def output_deltas(self) -> Any:
         class _AG:
-            def __aiter__(self): return self
+            def __aiter__(self):
+                return self
+
             async def __anext__(self):
                 if not self._ds:
                     raise StopAsyncIteration
@@ -663,7 +685,9 @@ def test_source_from_path_one_level() -> None:
     """A single subagent path resolves to 'coordinator.<name>'."""
     normalizer = EventNormalizer()
     assert normalizer._source_from_path(["ossia", "researcher"]) == "coordinator.researcher"
-    assert normalizer._source_from_path(["ossia", "code-researcher"]) == "coordinator.code-researcher"
+    assert (
+        normalizer._source_from_path(["ossia", "code-researcher"]) == "coordinator.code-researcher"
+    )
 
 
 def test_source_from_path_two_levels() -> None:
@@ -725,7 +749,9 @@ async def test_normalizer_nested_subagents() -> None:
     stream._subagents = [
         _FakeSubagent("researcher", "started", ["ossia", "researcher"]),
         _FakeSubagent("security-reviewer", "started", ["ossia", "researcher", "security-reviewer"]),
-        _FakeSubagent("security-reviewer", "completed", ["ossia", "researcher", "security-reviewer"]),
+        _FakeSubagent(
+            "security-reviewer", "completed", ["ossia", "researcher", "security-reviewer"]
+        ),
         _FakeSubagent("researcher", "completed", ["ossia", "researcher"]),
     ]
     stream._output = {}
@@ -768,7 +794,9 @@ async def test_normalizer_nested_subagents_three_levels() -> None:
         _FakeSubagent("researcher", "started", ["ossia", "researcher"]),
         _FakeSubagent("sec-review", "started", ["ossia", "researcher", "sec-review"]),
         _FakeSubagent("deep-agent", "started", ["ossia", "researcher", "sec-review", "deep-agent"]),
-        _FakeSubagent("deep-agent", "completed", ["ossia", "researcher", "sec-review", "deep-agent"]),
+        _FakeSubagent(
+            "deep-agent", "completed", ["ossia", "researcher", "sec-review", "deep-agent"]
+        ),
         _FakeSubagent("sec-review", "completed", ["ossia", "researcher", "sec-review"]),
         _FakeSubagent("researcher", "completed", ["ossia", "researcher"]),
     ]
@@ -852,8 +880,12 @@ async def test_normalizer_subagent_message_delta_nested() -> None:
     stream._subagents = [
         _FakeSubagent("researcher", "started", ["ossia", "researcher"]),
         _FakeSubagent("security-reviewer", "started", ["ossia", "researcher", "security-reviewer"]),
-        _FakeSubagent("security-reviewer", "analyzing", ["ossia", "researcher", "security-reviewer"]),
-        _FakeSubagent("security-reviewer", "completed", ["ossia", "researcher", "security-reviewer"]),
+        _FakeSubagent(
+            "security-reviewer", "analyzing", ["ossia", "researcher", "security-reviewer"]
+        ),
+        _FakeSubagent(
+            "security-reviewer", "completed", ["ossia", "researcher", "security-reviewer"]
+        ),
         _FakeSubagent("researcher", "completed", ["ossia", "researcher"]),
     ]
     stream._output = {}
@@ -992,18 +1024,26 @@ async def test_normalizer_pipeline_bugfix_lifecycle() -> None:
 def test_normalizer_pipeline_audit_has_correct_steps() -> None:
     """Audit pipeline has expected steps: code-researcher → bug-diagnostician."""
     from core.events.normalizer import _PIPELINE_STEPS
+
     assert _PIPELINE_STEPS["audit"] == ["code-researcher", "bug-diagnostician"]
 
 
 def test_normalizer_pipeline_refactor_has_correct_steps() -> None:
     """Refactor pipeline has expected steps: code-researcher → fix-proposer ×2 → test-runner."""
     from core.events.normalizer import _PIPELINE_STEPS
-    assert _PIPELINE_STEPS["refactor"] == ["code-researcher", "fix-proposer", "fix-proposer", "test-runner"]
+
+    assert _PIPELINE_STEPS["refactor"] == [
+        "code-researcher",
+        "fix-proposer",
+        "fix-proposer",
+        "test-runner",
+    ]
 
 
 def test_normalizer_pipeline_tools_are_recognized() -> None:
     """All three pipeline orchestrator tools are in _PIPELINE_TOOLS."""
     from core.events.normalizer import _PIPELINE_TOOLS
+
     assert "run_bugfix_pipeline" in _PIPELINE_TOOLS
     assert "run_audit_pipeline" in _PIPELINE_TOOLS
     assert "run_refactor_pipeline" in _PIPELINE_TOOLS
@@ -1192,12 +1232,16 @@ async def test_normalizer_async_tasks() -> None:
     """Normalizer emits async_task events from stream.values."""
     stream = _FakeV3Stream()
     stream._values = [
-        _FakeValue(async_tasks=[
-            {"task_id": "task-1", "name": "researcher", "status": "running"},
-        ]),
-        _FakeValue(async_tasks=[
-            {"task_id": "task-1", "name": "researcher", "status": "success"},
-        ]),
+        _FakeValue(
+            async_tasks=[
+                {"task_id": "task-1", "name": "researcher", "status": "running"},
+            ]
+        ),
+        _FakeValue(
+            async_tasks=[
+                {"task_id": "task-1", "name": "researcher", "status": "success"},
+            ]
+        ),
     ]
     stream._output = {}
     stream._interrupted = False
@@ -1331,7 +1375,7 @@ async def test_resolve_text_async_projection_detects_non_string() -> None:
     proj = _FakeAsyncProjection("resolved")
     # Verify it's not a string (would go through awaitable path)
     assert not isinstance(proj, str)
-    assert hasattr(proj, '__await__')
+    assert hasattr(proj, "__await__")
     result = await normalizer._resolve_text(proj)
     assert result == "resolved"
 
@@ -1454,14 +1498,14 @@ async def test_normalizer_async_projection_text_not_leaked_as_repr() -> None:
     events = [e async for e in normalizer.normalize(stream)]
 
     # Collect all message events
-    msg_events = [e for e in events if e.type in ("message_started", "message_delta", "message_completed")]
+    msg_events = [
+        e for e in events if e.type in ("message_started", "message_delta", "message_completed")
+    ]
 
     for ev in msg_events:
         text = ev.data.get("text", "")
         # The text should NOT be a Python object repr
-        assert not text.startswith("<"), (
-            f"{ev.type} text is a Python object repr: {text!r}"
-        )
+        assert not text.startswith("<"), f"{ev.type} text is a Python object repr: {text!r}"
         # The text should NOT be the word "None"
         assert text != "None", f"{ev.type} text is 'None'"
         # The text should NOT be the str() of a non-string object
@@ -1475,8 +1519,18 @@ async def test_normalizer_async_projection_text_not_leaked_as_repr() -> None:
 
 def test_stream_event_kind_includes_new_types() -> None:
     """StreamEvent accepts 'pipeline' and 'async_task' as valid kinds."""
-    for kind in ("message", "tool_call", "subagent", "value", "artifact",
-                 "interrupt", "complete", "protocol", "async_task", "pipeline"):
+    for kind in (
+        "message",
+        "tool_call",
+        "subagent",
+        "value",
+        "artifact",
+        "interrupt",
+        "complete",
+        "protocol",
+        "async_task",
+        "pipeline",
+    ):
         evt = StreamEvent(kind=kind, data={"x": 1})  # type: ignore[arg-type]
         assert evt.kind == kind
 
@@ -1484,6 +1538,7 @@ def test_stream_event_kind_includes_new_types() -> None:
 def test_stream_event_rejects_unknown_kind() -> None:
     """StreamEvent rejects unknown kind values."""
     from pydantic import ValidationError
+
     with pytest.raises(ValidationError):
         StreamEvent(kind="unknown_event_type", data={})  # type: ignore[arg-type]
 
@@ -1542,7 +1597,10 @@ def test_buffer_thread_isolation() -> None:
     from core.events.buffer import ThreadEventBuffer
 
     buf = ThreadEventBuffer()
-    buf.store("thread-alpha", [OssiaEvent(seq=1, type="complete", data={"interrupted": False, "output": {}})])
+    buf.store(
+        "thread-alpha",
+        [OssiaEvent(seq=1, type="complete", data={"interrupted": False, "output": {}})],
+    )
     buf.store("thread-beta", [OssiaEvent(seq=1, type="message_delta", data={"text": "Beta"})])
 
     assert len(buf.get("thread-alpha")) == 1
@@ -1585,8 +1643,12 @@ def test_buffer_thread_ids() -> None:
     buf = ThreadEventBuffer()
     assert buf.thread_ids() == []
 
-    buf.store("alpha", [OssiaEvent(seq=1, type="complete", data={"interrupted": False, "output": {}})])
-    buf.store("beta", [OssiaEvent(seq=1, type="complete", data={"interrupted": False, "output": {}})])
+    buf.store(
+        "alpha", [OssiaEvent(seq=1, type="complete", data={"interrupted": False, "output": {}})]
+    )
+    buf.store(
+        "beta", [OssiaEvent(seq=1, type="complete", data={"interrupted": False, "output": {}})]
+    )
 
     ids = buf.thread_ids()
     assert "alpha" in ids
@@ -1621,7 +1683,10 @@ def test_buffer_trim_exceeds_max() -> None:
     from core.events.buffer import MAX_EVENTS_PER_THREAD, ThreadEventBuffer
 
     buf = ThreadEventBuffer()
-    many = [OssiaEvent(seq=i, type="message_delta", data={"text": str(i)}) for i in range(MAX_EVENTS_PER_THREAD + 50)]
+    many = [
+        OssiaEvent(seq=i, type="message_delta", data={"text": str(i)})
+        for i in range(MAX_EVENTS_PER_THREAD + 50)
+    ]
     buf.store("t1", many)
 
     retrieved = buf.get("t1")

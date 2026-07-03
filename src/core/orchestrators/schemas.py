@@ -6,6 +6,7 @@ structured data between stages.
 
 Schemas here define the input/output shapes for each pipeline stage.
 """
+
 from __future__ import annotations
 
 import json
@@ -14,6 +15,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 # ── Bug Diagnosis ────────────────────────────────────────────────────────────
+
 
 class BugReport(BaseModel):
     """Structured output from the bug-diagnostician subagent."""
@@ -66,6 +68,7 @@ class TestResult(BaseModel):
 
 # ── Code Audit ───────────────────────────────────────────────────────────────
 
+
 class AuditFinding(BaseModel):
     """One finding from a code audit pipeline stage."""
 
@@ -90,6 +93,7 @@ class AuditReport(BaseModel):
 
 
 # ── Refactoring ──────────────────────────────────────────────────────────────
+
 
 class RefactorPlan(BaseModel):
     """Structured output from the refactor-planner stage."""
@@ -120,6 +124,7 @@ class ValidationResult(BaseModel):
 
 # ── Refactor Research ────────────────────────────────────────────────────────
 
+
 class RefactorResearchResult(BaseModel):
     """Structured output from the code-researcher subagent (refactor pipeline)."""
 
@@ -138,6 +143,7 @@ class RefactorResearchResult(BaseModel):
 
 # ── Audit Research ───────────────────────────────────────────────────────────
 
+
 class AuditResearchResult(BaseModel):
     """Structured output from the code-researcher subagent (audit pipeline)."""
 
@@ -152,6 +158,7 @@ class AuditResearchResult(BaseModel):
 
 
 # ── Patch Set ────────────────────────────────────────────────────────────────
+
 
 class Patch(BaseModel):
     """A single code patch within a ``PatchSet``."""
@@ -231,6 +238,7 @@ def _resolve_refs_in_place(node: Any, definitions: dict[str, Any]) -> None:
             if resolved is not None:
                 # Deep copy to avoid mutating the shared definition
                 import copy as _copy_module
+
                 replacement = _copy_module.deepcopy(resolved)
                 # Remove ref, merge resolved definition into node
                 del node["$ref"]

@@ -35,9 +35,7 @@ STATUS_RE_ALT = re.compile(r"^-\s*Status:\s*(\S+)", re.MULTILINE)
 WHAT_IT_DOES_RE = re.compile(
     r"^##\s*What it does\s*\n+(.+?)(?=\n##\s|\Z)", re.MULTILINE | re.DOTALL
 )
-ENDPOINT_RE = re.compile(
-    r"^##\s*Endpoint impact\s*\n+(.+?)(?=\n##\s|\Z)", re.MULTILINE | re.DOTALL
-)
+ENDPOINT_RE = re.compile(r"^##\s*Endpoint impact\s*\n+(.+?)(?=\n##\s|\Z)", re.MULTILINE | re.DOTALL)
 FEATURE_NAME_RE = re.compile(r"^#\s*Feature:\s*(.+)$", re.MULTILINE)
 SCOPE_RE = re.compile(r"^-\s*\*\*Scope:\*\*\s*(\S+)", re.MULTILINE)
 SCOPE_RE_ALT = re.compile(r"^-\s*Scope:\s*(\S+)", re.MULTILINE)

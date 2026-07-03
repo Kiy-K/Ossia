@@ -32,6 +32,8 @@ Key targets for development:
 make install      # Install dependencies (auto-creates .venv)
 make env          # Create .env from .env.example
 make dev          # Start dev server with hot reload
+make dev-web      # Start the Web UI (Vite dev server)
+make dev-all-web  # Start backend + Web UI with one command
 make test         # Run test suite
 make format       # Format + lint with ruff
 make typecheck    # mypy + pyright
@@ -42,6 +44,13 @@ Key targets for Docker:
 make docker-up    # Start full stack (ossia + postgres + caddy)
 make monitor-up   # Add Prometheus + Loki + Grafana
 make docker-logs  # Tail all container logs
+```
+
+Key targets for the Web UI:
+```
+make dev-web      # Start Web UI dev server on port 5173
+make dev-all-web  # Start backend (background) + Web UI (foreground)
+make webui-e2e    # Run Playwright e2e tests
 ```
 
 ---
@@ -226,6 +235,7 @@ HTTPS and security headers. Set `DOMAIN=your.domain` in `.env` for certs.
 - **ADR** — architecture decision record (in `docs/adr/`)
 - **spec-driven** — pinned OpenAPI contract + drift test workflow
 - **TUI** — terminal UI (OpenTUI/React client at `src/tui/`)
+- **Web UI** — browser-based UI (React + Vite + Tailwind v4 client at `src/webui/`)
 - **episodic memory** — per-thread recall via `recall_thread_turns`
 - **semantic memory** — agent-scoped long-term store at `/memories/AGENTS.md`
 - **orchestrator pipeline** — programmatic multi-step automations (bugfix, audit, refactor)

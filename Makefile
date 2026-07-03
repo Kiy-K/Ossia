@@ -56,13 +56,112 @@ endif
 # Development — local server (no Docker)
 # ──────────────────────────────────────────────────────────────────────────────
 
-.PHONY: dev dev-live format lint typecheck check
+.PHONY: dev dev-live dev-all dev-web dev-all-web format lint typecheck check
 
 dev: ## Start the dev server with hot reload (requires .env with OSSIA_API_KEY + provider key)
-	$(PYTHON) -m uvicorn core.api:app --host 127.0.0.1 --port 8000 --reload
+	@if grep -qE '^POSTGRES_URL=.*@postgres:' .env 2>/dev/null; then \
+		bash -c 'set -e; \
+			was_running=$$(docker compose ps --status running --services postgres 2>/dev/null || true); \
+			cleanup() { \
+				if [ -z "$$was_running" ]; then \
+					echo ""; \
+					echo "==> Stopping postgres container (was auto-started by \`make dev\`)..."; \
+					docker compose stop postgres >/dev/null 2>&1 || true; \
+				else \
+					echo ""; \
+					echo "==> Leaving postgres container running (it was already up before \`make dev\`)."; \
+				fi; \
+			}; \
+			trap cleanup EXIT INT TERM; \
+			echo "==> Starting postgres container (will be stopped on Ctrl+C unless it was already running)..."; \
+			docker compose up -d postgres; \
+			echo "==> Waiting for postgres to be ready..."; \
+			for i in $$(seq 1 30); do \
+				docker compose exec -T postgres pg_isready -U ossia -d ossia >/dev/null 2>&1 && break; \
+				sleep 1; \
+			done; \
+			echo "==> Starting uvicorn (POSTGRES_URL=127.0.0.1)..."; \
+			POSTGRES_URL=postgresql://ossia:ossia@127.0.0.1:5432/ossia $(PYTHON) -m uvicorn core.api:app --host 127.0.0.1 --port 8000 --reload'; \
+	else \
+		echo "==> POSTGRES_URL does not point at the Docker host; running uvicorn as-is."; \
+		$(PYTHON) -m uvicorn core.api:app --host 127.0.0.1 --port 8000 --reload; \
+	fi
 
 dev-live: ## Start the dev server without hot reload
 	$(PYTHON) -m uvicorn core.api:app --host 0.0.0.0 --port 8000
+
+dev-all: ## Start backend (background) + TUI (foreground); Ctrl+C tears down both
+	@bash -c 'set -e; \
+		set -m; \
+		$(MAKE) dev > /tmp/ossia-backend.log 2>&1 & \
+		BACKEND_PID=$$!; \
+		BACKEND_PGID=$$(ps -o pgid= -p $$BACKEND_PID 2>/dev/null | tr -d " "); \
+		cleanup() { \
+			echo ""; \
+			echo "==> Cleaning up (backend pgid $$BACKEND_PGID)..."; \
+			if [ -n "$$BACKEND_PGID" ]; then \
+				kill -TERM -$$BACKEND_PGID 2>/dev/null || true; \
+				for i in $$(seq 1 5); do \
+					kill -0 $$BACKEND_PID 2>/dev/null || break; \
+					sleep 1; \
+				done; \
+				kill -KILL -$$BACKEND_PGID 2>/dev/null || true; \
+			fi; \
+			wait $$BACKEND_PID 2>/dev/null || true; \
+		}; \
+		trap "cleanup; exit 130" INT TERM; \
+		trap cleanup EXIT; \
+		echo "==> Waiting for backend health (http://127.0.0.1:8000/health)..."; \
+		for i in $$(seq 1 60); do \
+			curl -sf http://127.0.0.1:8000/health >/dev/null 2>&1 && { echo "    ready."; break; }; \
+			sleep 1; \
+		done; \
+		if ! curl -sf http://127.0.0.1:8000/health >/dev/null 2>&1; then \
+			echo "==> Backend did not become ready in 60s. Tail of /tmp/ossia-backend.log:"; \
+			tail -20 /tmp/ossia-backend.log; \
+			exit 1; \
+		fi; \
+		echo "==> Starting TUI..."; \
+		$(MAKE) tui; \
+		echo "==> TUI exited."'
+
+dev-web: ## Start the Web UI dev server only (requires backend running separately)
+	cd src/webui && npm run dev
+
+dev-all-web: ## Start backend (background) + Web UI (foreground); Ctrl+C tears down both
+	@bash -c 'set -e; \
+		set -m; \
+		$(MAKE) dev > /tmp/ossia-backend.log 2>&1 & \
+		BACKEND_PID=$$!; \
+		BACKEND_PGID=$$(ps -o pgid= -p $$BACKEND_PID 2>/dev/null | tr -d " "); \
+		cleanup() { \
+			echo ""; \
+			echo "==> Cleaning up (backend pgid $$BACKEND_PGID)..."; \
+			if [ -n "$$BACKEND_PGID" ]; then \
+				kill -TERM -$$BACKEND_PGID 2>/dev/null || true; \
+				for i in $$(seq 1 5); do \
+					kill -0 $$BACKEND_PID 2>/dev/null || break; \
+					sleep 1; \
+				done; \
+				kill -KILL -$$BACKEND_PGID 2>/dev/null || true; \
+			fi; \
+			wait $$BACKEND_PID 2>/dev/null || true; \
+		}; \
+		trap "cleanup; exit 130" INT TERM; \
+		trap cleanup EXIT; \
+		echo "==> Waiting for backend health (http://127.0.0.1:8000/health)..."; \
+		for i in $$(seq 1 60); do \
+			curl -sf http://127.0.0.1:8000/health >/dev/null 2>&1 && { echo "    ready."; break; }; \
+			sleep 1; \
+		done; \
+		if ! curl -sf http://127.0.0.1:8000/health >/dev/null 2>&1; then \
+			echo "==> Backend did not become ready in 60s. Tail of /tmp/ossia-backend.log:"; \
+			tail -20 /tmp/ossia-backend.log; \
+			exit 1; \
+		fi; \
+		echo "==> Starting Web UI (http://127.0.0.1:5173)..."; \
+		cd src/webui && npx vite --host 127.0.0.1 --port 5173; \
+		echo "==> Web UI exited."'
 
 format: ## Format code with ruff
 	$(RUFF) check --fix src tests scripts
@@ -83,7 +182,7 @@ check: lint typecheck ## Run all static checks (lint + typecheck)
 # Testing
 # ──────────────────────────────────────────────────────────────────────────────
 
-.PHONY: test test-focused test-all test-coverage
+.PHONY: test test-focused test-all test-coverage webui-e2e
 
 test: ## Run the full test suite (skips flaky HITL tests)
 	$(PYTEST) tests/ -v
@@ -99,6 +198,9 @@ test-all: ## Run all tests (no exclusions)
 
 test-coverage: ## Run tests with coverage report
 	$(PYTEST) tests/ --cov=src/core --cov-report=term-missing --cov-report=html
+
+webui-e2e: ## Run Web UI Playwright e2e tests
+	cd src/webui && npm run test:e2e
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Spec & validation
@@ -239,7 +341,7 @@ openapi-drift: ## Check for OpenAPI drift against the pinned spec
 # TUI (terminal UI — separate Bun project)
 # ──────────────────────────────────────────────────────────────────────────────
 
-.PHONY: tui tui-install tui-dev tui-test tui-test-watch tui-test-coverage ossia ossia-setup
+.PHONY: tui tui-install tui-dev tui-test tui-test-watch tui-test-coverage webui webui-e2e ossia ossia-setup
 
 tui-install: ## Install TUI dependencies
 	cd src/tui && bun install
@@ -260,6 +362,24 @@ tui-test-coverage: ## Run TUI tests with coverage report
 
 ossia-setup: install tui-install env ## One-time setup: Python deps + TUI deps + .env
 	@echo "Setup complete. Run 'make ossia' to start."
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Web UI (React + Vite + Tailwind — separate npm project)
+# ──────────────────────────────────────────────────────────────────────────────
+
+.PHONY: webui webui-install webui-dev webui-build webui-typecheck
+
+webui-install: ## Install Web UI dependencies
+	cd src/webui && npm install
+
+webui-dev: ## Start Web UI dev server
+	cd src/webui && npm run dev
+
+webui-build: ## TypeScript check + production build Web UI
+	cd src/webui && npm run build
+
+webui-typecheck: ## TypeScript type-check Web UI only
+	cd src/webui && npm run typecheck
 
 ossia: ## Start backend + TUI (unified) — use --server-only or --tui-only for single-mode
 	$(PYTHON) -m core

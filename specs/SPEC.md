@@ -24,7 +24,7 @@ Ossia exposes **one** HTTP API for everything the runtime does: chat, streaming,
 - **Error contract.** Every non-2xx response is `{"error": {"code", "message", "request_id"}}`. Clients branch on `code`, not `detail`.
 - **Request tracing.** Every request gets an `X-Request-ID` (echoed on the response, included in error envelopes). If the client supplies one, we honor it.
 - **Thread isolation.** Server-side thread ids are prefixed with the caller's hash so authenticated callers cannot see each other's threads.
-- **Event replay.** Every streaming invocation's normalized events are buffered in-memory and available via `GET /v1/threads/{id}/events` for replay, debugging, and late-joining TUI sessions.
+- **Event replay.** Every streaming invocation's normalized events are buffered in-memory and available via `GET /v1/threads/{id}/events` for replay, debugging, and late-joining sessions.
 - **Backwards compatibility.** We do not maintain deprecated aliases. Breaking changes bump the URL prefix (e.g. `/v2/...`) and update `specs/changelog.md`.
 - **No live LLM in tests.** Routes that would call the model are tested with `TestClient` against a graph built with no API key. Streaming and resume have dedicated unit tests that do not depend on a live LLM.
 - **Observability.** `/metrics` is exposed via `prometheus_fastapi_instrumentator` for Prometheus scraping. No auth on `/metrics` (internal network access only). A monitoring stack (Prometheus + Loki + Grafana) is available via `docker compose --profile monitoring up`.
@@ -64,4 +64,3 @@ The drift test makes the contract of record *executable*. Reviewers can see exac
 - Client SDK generation (Speakeasy / Fern / NSwag). Add later if needed.
 - Webhooks for thread events. Use `GET /v1/threads/{id}/state` and `GET /v1/threads/{id}/events` to poll.
 - Multi-tenant scoping beyond per-caller thread prefixing.
-- A web UI. The API is for clients to build on.

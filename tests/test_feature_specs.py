@@ -37,9 +37,7 @@ _REQUIRED_SECTIONS: set[str] = {
 SECTION_RE = re.compile(r"^##\s+(.+)$", re.MULTILINE)
 STATUS_RE = re.compile(r"^-\s*(?:\*\*)?Status(?:\*\*)?:\s*(\S+)", re.MULTILINE)
 SCOPE_RE = re.compile(r"^-\s*(?:\*\*)?Scope(?:\*\*)?:\s*(\S+)", re.MULTILINE)
-ADR_RE = re.compile(
-    r"^-\s*(?:\*\*)?ADR(?:\*\*)?:\s*(docs/adr/\S+)", re.MULTILINE
-)
+ADR_RE = re.compile(r"^-\s*(?:\*\*)?ADR(?:\*\*)?:\s*(docs/adr/\S+)", re.MULTILINE)
 ENDPOINT_ROW_RE = re.compile(
     r"^\|\s*(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\s*\|\s*`([^`]+)`\s*\|",
     re.IGNORECASE | re.MULTILINE,
@@ -66,8 +64,7 @@ def test_template_exists() -> None:
     """TEMPLATE.md must exist as the canonical starting point for new specs."""
     tmpl = FEATURES_DIR / "TEMPLATE.md"
     assert tmpl.exists(), (
-        f"TEMPLATE.md not found at {tmpl}. Create it to define the canonical "
-        "feature spec format."
+        f"TEMPLATE.md not found at {tmpl}. Create it to define the canonical feature spec format."
     )
 
 
@@ -78,8 +75,7 @@ def test_required_sections_present(spec_path: Path) -> None:
     sections = set(SECTION_RE.findall(text))
     missing = _REQUIRED_SECTIONS - sections
     assert not missing, (
-        f"{spec_path.name} is missing required section(s): "
-        f"{', '.join(sorted(missing))}"
+        f"{spec_path.name} is missing required section(s): {', '.join(sorted(missing))}"
     )
 
 
@@ -168,7 +164,5 @@ def test_endpoint_impact_matches_known_routes() -> None:
 
     assert not invalid_refs, (
         "The following feature specs reference non-existent routes:\n"
-        + "\n".join(
-            f"  - {name}: `{route}`" for name, route in invalid_refs
-        )
+        + "\n".join(f"  - {name}: `{route}`" for name, route in invalid_refs)
     )

@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "my-opentui-project",
+      "name": "ossia-tui",
       "dependencies": {
         "@opentui/core": "^0.4.2",
         "@opentui/react": "^0.4.2",

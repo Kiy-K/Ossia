@@ -119,9 +119,7 @@ async def test_memory_persists_across_threads() -> None:
     # Simulate two threads both writing to the same key.
     body1 = read_memory_item(await store.aget(AGENT_NAMESPACE, AGENTS_MEMORY_KEY))
     body2 = body1 + "\n\n## From thread-2\nMore notes."
-    await store.aput(
-        AGENT_NAMESPACE, AGENTS_MEMORY_KEY, create_file_data(body2)
-    )
+    await store.aput(AGENT_NAMESPACE, AGENTS_MEMORY_KEY, create_file_data(body2))
     final = read_memory_item(await store.aget(AGENT_NAMESPACE, AGENTS_MEMORY_KEY))
     assert "From thread-2" in final
 
@@ -172,6 +170,71 @@ async def test_seed_policy_writes_to_policy_namespace() -> None:
     assert created_again is False
     item2 = await store.aget(POLICY_NAMESPACE, "/policies/compliance.md")
     assert read_memory_item(item2) == "no PII logging"
+
+
+# ---------------------------------------------------------------------------
+# /scratch/ working-memory route (hybrid Redis-for-hot/Postgres-for-cold)
+# ---------------------------------------------------------------------------
+
+
+def test_scratch_namespace_is_per_caller() -> None:
+    """The /scratch/ route uses the caller's hash so working state
+    does not bleed between authenticated users.
+    """
+    from core.agent import _make_scratch_namespace
+    from core.request_context import caller_var
+
+    caller_var.set("alice")
+    assert _make_scratch_namespace() == ("ossia", "alice")
+    caller_var.set("bob")
+    assert _make_scratch_namespace() == ("ossia", "bob")
+    caller_var.set(None)
+    assert _make_scratch_namespace() == ("ossia", "scratch")
+
+
+def test_make_backend_routes_scratch_to_scratch_store() -> None:
+    """When a scratch_store is provided, the /scratch/ route goes there.
+    The main /memories/ and /policies/ routes continue to use the
+    primary store.
+    """
+    from core.agent import _make_backend
+    from core.request_context import caller_var
+
+    main_store = InMemoryStore()
+    scratch_store = InMemoryStore()
+    backend = _make_backend(main_store, scratch_store)
+
+    routes = backend.routes  # type: ignore[attr-defined]
+    assert "/scratch/" in routes
+    assert "/memories/" in routes
+    assert "/policies/" in routes
+
+    # /memories/ and /policies/ are on the main store.
+    assert routes["/memories/"]._store is main_store  # type: ignore[attr-defined]
+    assert routes["/policies/"]._store is main_store  # type: ignore[attr-defined]
+    # /scratch/ is on the scratch store.
+    assert routes["/scratch/"]._store is scratch_store  # type: ignore[attr-defined]
+
+    # Per-caller namespace for scratch.
+    caller_var.set("alice")
+    ns = routes["/scratch/"]._namespace(None)  # type: ignore[misc]
+    assert ns == ("ossia", "alice")
+    caller_var.set(None)
+
+
+def test_make_backend_omits_scratch_route_when_scratch_store_is_none() -> None:
+    """Without a scratch_store, the /scratch/ route is not mounted.
+    Postgres-only and in-memory deployments get a clean CompositeBackend
+    with only /memories/ and /policies/.
+    """
+    from core.agent import _make_backend
+
+    main_store = InMemoryStore()
+    backend = _make_backend(main_store, scratch_store=None)
+    routes = backend.routes  # type: ignore[attr-defined]
+    assert "/scratch/" not in routes
+    assert "/memories/" in routes
+    assert "/policies/" in routes
 
 
 if __name__ == "__main__":

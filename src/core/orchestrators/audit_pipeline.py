@@ -65,6 +65,7 @@ def get_audit_pipeline_js(target: str = ".", focus: str = "general") -> str:
         pydantic_to_js_response_schema,
         serialize_schema_js,
     )
+
     escaped_target = target.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
     escaped_focus = focus.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
     js = AUDIT_PIPELINE_JS
@@ -75,4 +76,3 @@ def get_audit_pipeline_js(target: str = ".", focus: str = "general") -> str:
         f"const AUDIT_FINDING_SCHEMA = {serialize_schema_js(pydantic_to_js_response_schema(AuditReport))};\n\n"
         f"{js}"
     )
-

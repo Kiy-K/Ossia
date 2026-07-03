@@ -71,18 +71,35 @@ class JSONFormatter(logging.Formatter):
 
         # Include exception info when present (from logger.exception)
         if record.exc_info and record.exc_info[0] is not None:
-            payload["exception"] = "".join(
-                traceback.format_exception(*record.exc_info)
-            ).rstrip()
+            payload["exception"] = "".join(traceback.format_exception(*record.exc_info)).rstrip()
 
         # Include any extra fields set by the caller
         for key, value in record.__dict__.items():
             if key not in (
-                "args", "asctime", "created", "exc_info", "exc_text",
-                "filename", "funcName", "levelname", "levelno", "lineno",
-                "message", "module", "msecs", "msg", "name", "pathname",
-                "process", "processName", "relativeCreated", "stack_info",
-                "thread", "threadName", "request_id", "caller",
+                "args",
+                "asctime",
+                "created",
+                "exc_info",
+                "exc_text",
+                "filename",
+                "funcName",
+                "levelname",
+                "levelno",
+                "lineno",
+                "message",
+                "module",
+                "msecs",
+                "msg",
+                "name",
+                "pathname",
+                "process",
+                "processName",
+                "relativeCreated",
+                "stack_info",
+                "thread",
+                "threadName",
+                "request_id",
+                "caller",
             ):
                 payload[key] = value
 
@@ -122,9 +139,7 @@ def setup_logging(
     if json_output:
         handler.setFormatter(JSONFormatter())
     else:
-        handler.setFormatter(
-            logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-        )
+        handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
 
     # Attach the request-context filter so every log record automatically
     # inherits the current request_id and caller from the contextvars.

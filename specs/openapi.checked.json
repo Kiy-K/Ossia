@@ -495,6 +495,118 @@
         "title": "HealthResponse",
         "type": "object"
       },
+      "MemoryFile": {
+        "additionalProperties": false,
+        "description": "A single file in the agent's ``/memories/`` or ``/policies/`` filesystem.\n\nReturned by ``GET /v1/memories/{path}`` and ``GET /v1/policies/{path}``.\nRead-only debug surface for inspecting the agent-scoped memory\nfile (e.g. ``AGENTS.md``) and the shared policy files. The\n``content`` field is the raw FileData content \u2014 multi-line string\nfor plain text files, JSON-encoded blob for binary.",
+        "properties": {
+          "content": {
+            "description": "File body as UTF-8 string. Empty string when the file is missing or unreadable.",
+            "title": "Content",
+            "type": "string"
+          },
+          "exists": {
+            "description": "True when the file was found in the store.",
+            "title": "Exists",
+            "type": "boolean"
+          },
+          "namespace": {
+            "description": "Resolved LangGraph store namespace for this read. Per-caller for ``/v1/memories/*`` (matches the agent's view), shared ``ossia/policies`` for ``/v1/policies/*``.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Namespace",
+            "type": "array"
+          },
+          "path": {
+            "description": "Path relative to the route root, e.g. ``AGENTS.md`` for ``/v1/memories/AGENTS.md``.",
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "namespace",
+          "content",
+          "exists"
+        ],
+        "title": "MemoryFile",
+        "type": "object"
+      },
+      "PluginInfo": {
+        "additionalProperties": false,
+        "description": "A plugin that the running agent has loaded.\n\nSurface name, source file, and what it contributed. Used by\n``GET /v1/plugins`` for diagnostics. Ponytail: fields mirror\n``core.plugin.LoadedPlugin`` \u2014 no second class to keep in sync.",
+        "properties": {
+          "config": {
+            "additionalProperties": true,
+            "description": "Config dict from ossia.json passed to register(api, config=...).",
+            "title": "Config",
+            "type": "object"
+          },
+          "middleware_types": {
+            "description": "Middleware class names this plugin registered.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Middleware Types",
+            "type": "array"
+          },
+          "module": {
+            "description": "Import alias used to load the plugin (e.g. ossia_plugin_ponytail).",
+            "title": "Module",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "path": {
+            "description": "Filesystem path of the plugin entry file.",
+            "title": "Path",
+            "type": "string"
+          },
+          "subagent_names": {
+            "description": "Subagent specs this plugin registered.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Subagent Names",
+            "type": "array"
+          },
+          "tool_names": {
+            "description": "Tools this plugin registered.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Tool Names",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "module",
+          "path"
+        ],
+        "title": "PluginInfo",
+        "type": "object"
+      },
+      "PluginListResponse": {
+        "additionalProperties": false,
+        "description": "Response payload for GET /v1/plugins.",
+        "properties": {
+          "plugins": {
+            "items": {
+              "$ref": "#/components/schemas/PluginInfo"
+            },
+            "title": "Plugins",
+            "type": "array"
+          }
+        },
+        "required": [
+          "plugins"
+        ],
+        "title": "PluginListResponse",
+        "type": "object"
+      },
       "ResumeDecision": {
         "additionalProperties": false,
         "description": "A single reviewer's decision on a pending action request.\n\nMirrors the DeepAgents HITL ``Command(resume={\"decisions\": [...]})`` shape;\none decision per ``action_request`` surfaced via ``result.interrupts``.\n\nDecision types:\n    - ``approve``: execute the tool call as-is.\n    - ``edit``:    replace the action with ``edited_action`` (must include\n      ``name`` and ``args``) and execute that instead.\n    - ``reject``:  do not execute; the optional ``message`` is forwarded\n      to the agent as feedback.\n    - ``respond``: do not execute; the optional ``message`` is returned\n      to the agent as a successful tool result (use only when the tool\n      is intentionally a placeholder for human input).",
@@ -812,6 +924,150 @@
         ],
         "title": "ValidationError",
         "type": "object"
+      },
+      "WebhookCreate": {
+        "additionalProperties": false,
+        "description": "Request payload for POST /v1/webhooks.\n\n``events`` is a list of event kinds (e.g. ``[\"message\", \"tool_call\"]``)\nor ``[\"*\"]`` to subscribe to everything. ``secret`` is optional;\nwhen omitted the server generates one and returns it once in the\nresponse. The receiver should store the secret and verify the\n``X-Ossia-Signature`` header on every delivery.",
+        "properties": {
+          "events": {
+            "description": "Event kinds to subscribe to. '*' matches all.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "secret": {
+            "default": "",
+            "description": "Optional HMAC secret. Server generates one when empty.",
+            "title": "Secret",
+            "type": "string"
+          },
+          "url": {
+            "description": "HTTP(S) URL the server POSTs events to.",
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "WebhookCreate",
+        "type": "object"
+      },
+      "WebhookCreated": {
+        "additionalProperties": false,
+        "description": "Response to POST /v1/webhooks.\n\nIncludes the secret once. The secret is the only chance the\ncaller has to copy it \u2014 subsequent GETs redact it. Ponytail:\nno Redis / DB persistence in v0.1, so a server restart drops\nthe secret; the webhook still works, but the receiver cannot\nverify signatures. The endpoint returns 200 with the secret\ninline so a fresh install can capture it.",
+        "properties": {
+          "created_at": {
+            "description": "Unix timestamp.",
+            "title": "Created At",
+            "type": "number"
+          },
+          "events": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "secret": {
+            "description": "HMAC secret used to sign deliveries. Returned once.",
+            "title": "Secret",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "url",
+          "events",
+          "created_at",
+          "secret"
+        ],
+        "title": "WebhookCreated",
+        "type": "object"
+      },
+      "WebhookInfo": {
+        "additionalProperties": false,
+        "description": "A registered webhook (public view, no secret).",
+        "properties": {
+          "created_at": {
+            "description": "Unix timestamp.",
+            "title": "Created At",
+            "type": "number"
+          },
+          "events": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "url",
+          "events",
+          "created_at"
+        ],
+        "title": "WebhookInfo",
+        "type": "object"
+      },
+      "WebhookListResponse": {
+        "additionalProperties": false,
+        "description": "Response payload for GET /v1/webhooks.",
+        "properties": {
+          "webhooks": {
+            "items": {
+              "$ref": "#/components/schemas/WebhookInfo"
+            },
+            "title": "Webhooks",
+            "type": "array"
+          }
+        },
+        "required": [
+          "webhooks"
+        ],
+        "title": "WebhookListResponse",
+        "type": "object"
+      },
+      "WhoAmIResponse": {
+        "additionalProperties": false,
+        "description": "Response payload for GET /v1/whoami.\n\nReturns the stable caller id derived from the presented API\nkey. Useful for clients to confirm which credential the\nserver saw and to debug multi-tenant setups. The ``key_fpr``\nfield is the first 8 chars of the Argon2id of the key \u2014 a\nfingerprint the caller can use to label which key they sent\nwithout revealing the secret.",
+        "properties": {
+          "caller": {
+            "description": "Stable caller id used for thread scoping and audit logs.",
+            "title": "Caller",
+            "type": "string"
+          },
+          "key_fpr": {
+            "description": "Short fingerprint of the presented key (first 8 hex chars).",
+            "title": "Key Fpr",
+            "type": "string"
+          }
+        },
+        "required": [
+          "caller",
+          "key_fpr"
+        ],
+        "title": "WhoAmIResponse",
+        "type": "object"
       }
     }
   },
@@ -973,6 +1229,105 @@
           }
         },
         "summary": "Run Eval Endpoint"
+      }
+    },
+    "/v1/memories/{path}": {
+      "get": {
+        "description": "Read a file from the agent's ``/memories/`` filesystem.\n\nRead-only debug surface for inspecting the agent's memory\n(e.g. ``GET /v1/memories/AGENTS.md``). Returns the file body as\na UTF-8 string with ``exists=false`` when the key is absent.\nThe namespace mirrors the agent's: per-caller by default, agent\nscope when ``Settings.memory_scope='agent'``.",
+        "operationId": "get_memory_file_v1_memories__path__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "title": "Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryFile"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Memory File"
+      }
+    },
+    "/v1/plugins": {
+      "get": {
+        "description": "List plugins the running agent has loaded, with provenance and config.\n\nPlugin discovery is idempotent (modules cached in ``sys.modules``),\nso calling ``discover_plugins`` on every request is cheap. The\nresult reflects whatever ``ossia.json`` and the bundled + user\nplugin dirs look like at request time.",
+        "operationId": "list_plugins_v1_plugins_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Plugins"
+      }
+    },
+    "/v1/policies/{path}": {
+      "get": {
+        "description": "Read a file from the shared ``/policies/`` filesystem.\n\nPolicy files are populated by application code at startup via\n``seed_policy`` and protected by a write-deny permission. This\nroute is the read-only inspection surface (e.g. for verifying\nthat compliance content reached the agent). All callers see the\nsame namespace ``(\"ossia\", \"policies\")``.",
+        "operationId": "get_policy_file_v1_policies__path__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "title": "Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryFile"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Policy File"
       }
     },
     "/v1/threads/{thread_id}/events": {
@@ -1198,6 +1553,123 @@
           }
         },
         "summary": "List Tools"
+      }
+    },
+    "/v1/webhooks": {
+      "get": {
+        "description": "List registered webhooks (secrets redacted).",
+        "operationId": "list_webhooks_v1_webhooks_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Webhooks"
+      },
+      "post": {
+        "description": "Register a webhook to receive thread events.\n\nDelivery is best-effort: 3 attempts with exponential backoff,\nHMAC-SHA256 signature on the ``X-Ossia-Signature`` header.\nThe secret is returned once in this response \u2014 store it\nserver-side; subsequent GETs redact it.",
+        "operationId": "create_webhook_v1_webhooks_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookCreated"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Webhook"
+      }
+    },
+    "/v1/webhooks/{webhook_id}": {
+      "delete": {
+        "description": "Delete a webhook. Returns ``{\"deleted\": true/false}``.",
+        "operationId": "delete_webhook_v1_webhooks__webhook_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "webhook_id",
+            "required": true,
+            "schema": {
+              "title": "Webhook Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Delete Webhook V1 Webhooks  Webhook Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Webhook"
+      }
+    },
+    "/v1/whoami": {
+      "get": {
+        "description": "Identify the caller.\n\nReturns the stable ``caller`` id the server uses to scope\nthreads and audit logs, plus a short fingerprint of the\npresented key so the caller can verify which key the server\nsaw (handy in multi-key deployments).",
+        "operationId": "whoami_v1_whoami_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WhoAmIResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Whoami"
       }
     }
   }

@@ -58,9 +58,7 @@ def _grade(query: dict[str, Any], final_text: str, routed_intents: list[str]) ->
         id=query["id"],
         expected_intent=query["expected_intent"],
         routed_intents=routed_intents,
-        intent_match=(
-            query["expected_intent"] in routed_intents if routed_intents else False
-        ),
+        intent_match=(query["expected_intent"] in routed_intents if routed_intents else False),
         passed=passed,
         missing_terms=missing,
         answer_preview=final_text[:160],

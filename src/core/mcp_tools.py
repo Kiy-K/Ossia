@@ -156,9 +156,7 @@ class _ServerWorker:
                     # out. Genuine process-level signals still propagate.
                     if isinstance(exc, (KeyboardInterrupt, SystemExit)):
                         raise
-                    logger.debug(
-                        "MCP server %r: suppressed teardown error: %r", self.name, exc
-                    )
+                    logger.debug("MCP server %r: suppressed teardown error: %r", self.name, exc)
             if not self.ready.done():
                 self.ready.set_exception(
                     McpServerConnectionError(
@@ -290,17 +288,11 @@ class MCPToolkit:
                     )
                     continue
                 worker = _ServerWorker(name, server)
-                worker.task = asyncio.create_task(
-                    worker.run(), name=f"mcp-connect-{name}"
-                )
-                ready_task = asyncio.ensure_future(
-                    asyncio.wait_for(worker.ready, timeout)
-                )
+                worker.task = asyncio.create_task(worker.run(), name=f"mcp-connect-{name}")
+                ready_task = asyncio.ensure_future(asyncio.wait_for(worker.ready, timeout))
                 pending.append((worker, ready_task))
 
-            results = await asyncio.gather(
-                *(rt for _, rt in pending), return_exceptions=True
-            )
+            results = await asyncio.gather(*(rt for _, rt in pending), return_exceptions=True)
 
             for (worker, _rt), result in zip(pending, results, strict=True):
                 if isinstance(result, TimeoutError):

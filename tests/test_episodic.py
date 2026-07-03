@@ -22,7 +22,11 @@ Tests cover:
 
 from __future__ import annotations
 
-from langchain_core.messages import AIMessage, HumanMessage
+from typing import Any
+
+import pytest
+from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import START, MessagesState, StateGraph
 
@@ -75,9 +79,7 @@ async def test_recall_returns_recent_turns_in_chronological_order() -> None:
     saver = InMemorySaver()
     graph = _build_echo_graph(saver)
     cfg = {"configurable": {"thread_id": "alpha"}}
-    await graph.ainvoke(
-        {"messages": [HumanMessage(content="first message")]}, config=cfg
-    )
+    await graph.ainvoke({"messages": [HumanMessage(content="first message")]}, config=cfg)
     tool = make_episodic_recall_tool(saver)
     assert tool is not None
     result = await tool.ainvoke({"thread_id": "alpha", "limit": 5})
@@ -97,12 +99,8 @@ async def test_recall_does_not_leak_across_threads() -> None:
     graph = _build_echo_graph(saver)
     cfg_a = {"configurable": {"thread_id": "alpha"}}
     cfg_b = {"configurable": {"thread_id": "beta"}}
-    await graph.ainvoke(
-        {"messages": [HumanMessage(content="alpha only")]}, config=cfg_a
-    )
-    await graph.ainvoke(
-        {"messages": [HumanMessage(content="beta only")]}, config=cfg_b
-    )
+    await graph.ainvoke({"messages": [HumanMessage(content="alpha only")]}, config=cfg_a)
+    await graph.ainvoke({"messages": [HumanMessage(content="beta only")]}, config=cfg_b)
 
     tool = make_episodic_recall_tool(saver)
     assert tool is not None
@@ -114,6 +112,148 @@ async def test_recall_does_not_leak_across_threads() -> None:
     assert "beta only" not in a_contents
     assert "beta only" in b_contents
     assert "alpha only" not in b_contents
+
+
+# ── E2E agent integration test ────────────────────────────────────────────
+# Tests that ``recall_thread_turns`` works correctly when invoked through the
+# Deep Agents runtime (not just via direct ``tool.ainvoke()``). This exercises
+# the ``anyio.to_thread.run_sync()`` fix — the ``InvalidStateError`` bug only
+# manifested when the tool was called through the agent's tool executor.
+
+
+class _FakeToolModel(GenericFakeChatModel):
+    """A fake chat model that advertises bind_tools so Deep Agents can bind schemas.
+
+    The model emits a pre-scripted sequence of AIMessages; tool calls are already
+    shaped with name/id/args so the harness routes them to the real tools.
+
+    Pydantic copies the model during agent construction (create_deep_agent and
+    the langchain 1.x middleware stack both call model_validate / model_copy),
+    which would drain a plain ``iter(...)`` and leave subsequent invocations
+    with no scripted response. We use a deque-backed list as the source so the
+    model survives copies and each ``_generate`` call pops from the front
+    without consuming the underlying iterator.
+    """
+
+    def __init__(self, scripted: list[AIMessage]) -> None:
+        super().__init__(messages=iter([]))
+        self._scripted = list(scripted)
+
+    def _generate(  # type: ignore[override]
+        self,
+        messages: list,  # noqa: ARG002
+        stop: list[str] | None = None,  # noqa: ARG002
+        run_manager: Any = None,  # noqa: ARG002
+        **kwargs: Any,
+    ) -> Any:
+        from langchain_core.outputs import ChatGeneration, ChatResult
+
+        if not self._scripted:
+            raise RuntimeError("_FakeToolModel ran out of scripted responses")
+        message = self._scripted.pop(0)
+        return ChatResult(generations=[ChatGeneration(message=message)])
+
+    def bind_tools(self, tools: object, **kwargs: object) -> _FakeToolModel:  # noqa: ARG002
+        return self
+
+
+@pytest.mark.asyncio
+async def test_recall_through_agent_with_checkpointer() -> None:
+    """``recall_thread_turns`` returns populated turns when called through the
+    Deep Agents runtime.
+
+    This is the E2E test for the ``anyio.to_thread.run_sync()`` fix. The
+    ``InvalidStateError`` (``AsyncPostgresSaver`` sync call from event-loop
+    thread) only manifested when the tool was invoked through the agent's
+    tool executor — direct ``tool.ainvoke()`` calls always worked. We build
+    a real agent with an ``InMemorySaver`` checkpointer, populate checkpoints
+    via a real graph run, then have the agent invoke the recall tool and
+    verify the result.
+    """
+    from deepagents import create_deep_agent
+
+    from core.agent import _build_middlewares
+    from core.config import Provider, Settings
+
+    # 1. Populate the checkpointer with a real graph run.
+    saver = InMemorySaver()
+    echo = _build_echo_graph(saver)
+    pop_cfg = {"configurable": {"thread_id": "e2e-populate"}}
+    await echo.ainvoke(
+        {"messages": [HumanMessage(content="hello from e2e test")]},
+        config=pop_cfg,
+    )
+    await echo.ainvoke(
+        {"messages": [HumanMessage(content="second message")]},
+        config=pop_cfg,
+    )
+
+    # 2. Build the episodic recall tool on the same checkpointer.
+    episodic_tool = make_episodic_recall_tool(saver)
+    assert episodic_tool is not None, "recall tool must be built with checkpointer"
+
+    # 3. Build a Deep Agents agent with the recall tool.
+    settings = Settings(
+        provider=Provider.OPENROUTER,
+        model="openai/gpt-4o-mini",
+        openrouter_api_key="sk-test",
+        enable_human_review=False,
+        max_revision_loops=3,
+    )
+
+    model = _FakeToolModel(
+        scripted=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "recall_thread_turns",
+                        "id": "call-recall-1",
+                        "args": {"thread_id": "e2e-populate", "limit": 5},
+                    }
+                ],
+            ),
+            AIMessage(content="I found the turns from the previous conversation."),
+        ]
+    )
+
+    agent = create_deep_agent(
+        name="ossia-e2e-test",
+        model=model,
+        tools=[episodic_tool],
+        system_prompt=(
+            "You are a test agent. Use recall_thread_turns to recall "
+            "past conversations when the user asks."
+        ),
+        middleware=_build_middlewares(settings),
+        checkpointer=saver,
+    )
+
+    # 4. Invoke the agent — it should call recall_thread_turns through the runtime.
+    config = {"configurable": {"thread_id": "e2e-test-run"}}
+    result = await agent.ainvoke(
+        {"messages": [HumanMessage(content="Recall what I said earlier.")]},
+        config,
+    )
+
+    messages = result["messages"]
+
+    # 5. Verify the tool was called and returned the correct content.
+    tool_msgs = [m for m in messages if isinstance(m, ToolMessage)]
+    assert len(tool_msgs) >= 1, (
+        "recall_thread_turns should have been executed and produced a ToolMessage"
+    )
+
+    recall_content = str(tool_msgs[-1].content)
+    assert "hello from e2e test" in recall_content, (
+        f"recall content should include the first message, got: {recall_content[:200]}"
+    )
+    assert "second message" in recall_content, (
+        f"recall content should include the second message, got: {recall_content[:200]}"
+    )
+    assert "error" not in recall_content.lower(), (
+        "recall should not contain an error field"
+    )
 
 
 # ── search_threads tests ──────────────────────────────────────────────────
@@ -165,10 +305,7 @@ async def test_search_threads_respects_limit() -> None:
     """The ``limit`` argument caps the number of returned threads."""
 
     async def fake_search_fn(query: str, limit: int) -> list[dict]:
-        return [
-            {"thread_id": f"user-a:t{i}", "snippet": f"hit {i}"}
-            for i in range(limit)
-        ]
+        return [{"thread_id": f"user-a:t{i}", "snippet": f"hit {i}"} for i in range(limit)]
 
     tool = make_search_threads_tool(fake_search_fn)
     assert tool is not None
@@ -178,4 +315,3 @@ async def test_search_threads_respects_limit() -> None:
         assert len(result["threads"]) == 2
     finally:
         caller_var.set(None)
-

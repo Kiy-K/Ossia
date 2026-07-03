@@ -63,9 +63,7 @@ def _load_feature_specs() -> list[tuple[str, list[str]]]:
     return specs
 
 
-def _build_matrix(
-    routes: list[str], specs: list[tuple[str, list[str]]]
-) -> str:
+def _build_matrix(routes: list[str], specs: list[tuple[str, list[str]]]) -> str:
     """Build a markdown coverage matrix.
 
     Columns are feature spec names, rows are API routes. A ✓ means
@@ -105,17 +103,13 @@ def _build_matrix(
     # Rows
     for route in routes:
         covered = route_features.get(route, set())
-        cells = [
-            "✓" if name in covered else "—"
-            for name, _ in specs
-        ]
+        cells = ["✓" if name in covered else "—" for name, _ in specs]
         count = len(covered)
         lines.append(f"| `{route}` | {' | '.join(cells)} | {count} |")
 
     # Totals row
     total_cols = [
-        sum(1 for r in routes if name in route_features.get(r, set()))
-        for name, _ in specs
+        sum(1 for r in routes if name in route_features.get(r, set())) for name, _ in specs
     ]
     totals = " | ".join(str(t) for t in total_cols)
     lines.append(f"| **Totals** | {totals} | **{len(routes)}** |")

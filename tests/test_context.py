@@ -234,8 +234,7 @@ def test_grade_response_reads_runtime_context() -> None:
         result = grade_response.func(
             query="what is X?",
             response=(
-                "X is a placeholder concept; the answer to what you "
-                "asked is short but on point."
+                "X is a placeholder concept; the answer to what you asked is short but on point."
             ),
             context="ctx",
             runtime=fake_runtime,

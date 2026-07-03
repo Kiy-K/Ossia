@@ -66,11 +66,13 @@ logger = logging.getLogger(__name__)
 _SENTINEL: OssiaEvent | None = None
 
 # Pipeline orchestrator tool names.
-_PIPELINE_TOOLS: frozenset[str] = frozenset({
-    "run_bugfix_pipeline",
-    "run_audit_pipeline",
-    "run_refactor_pipeline",
-})
+_PIPELINE_TOOLS: frozenset[str] = frozenset(
+    {
+        "run_bugfix_pipeline",
+        "run_audit_pipeline",
+        "run_refactor_pipeline",
+    }
+)
 
 # Known pipeline types and their subagent step sequences in order.
 _PIPELINE_STEPS: dict[str, list[str]] = {
@@ -204,16 +206,14 @@ class EventNormalizer:
         """
         if isinstance(raw_text, str):
             return raw_text
-        if hasattr(raw_text, '__await__'):
+        if hasattr(raw_text, "__await__"):
             resolved = await raw_text
             return str(resolved) if not isinstance(resolved, str) else resolved
-        if hasattr(raw_text, '__iter__'):
+        if hasattr(raw_text, "__iter__"):
             return str(raw_text)
         return str(raw_text)
 
-    async def _relay_messages(
-        self, stream: Any, queue: asyncio.Queue[OssiaEvent | None]
-    ) -> None:
+    async def _relay_messages(self, stream: Any, queue: asyncio.Queue[OssiaEvent | None]) -> None:
         """Convert ``stream.messages`` to ``message_started/delta/completed``.
 
         Emits ``message_started`` on the first token of a new message (detected
@@ -245,8 +245,8 @@ class EventNormalizer:
                 # (from AsyncChatModelStream) or SyncTextProjection
                 # (from ChatModelStream), both of which require
                 # special handling beyond simple str() conversion.
-                is_projection = hasattr(raw_text, '__await__') or (
-                    hasattr(raw_text, '__iter__') and not isinstance(raw_text, str)
+                is_projection = hasattr(raw_text, "__await__") or (
+                    hasattr(raw_text, "__iter__") and not isinstance(raw_text, str)
                 )
 
                 if is_projection:
@@ -263,7 +263,10 @@ class EventNormalizer:
                 # Detect message completion: new msg_id != previous
                 if msg_id is not None and msg_id != last_msg_id and last_msg_id is not None:
                     await queue.put(
-                        self._event("message_completed", message_completed_data(last_role, accumulated, last_msg_id))
+                        self._event(
+                            "message_completed",
+                            message_completed_data(last_role, accumulated, last_msg_id),
+                        )
                     )
                     accumulated = ""
 
@@ -283,7 +286,10 @@ class EventNormalizer:
             # Emit final message_completed for the last message
             if accumulated:
                 await queue.put(
-                    self._event("message_completed", message_completed_data(last_role, accumulated, last_msg_id))
+                    self._event(
+                        "message_completed",
+                        message_completed_data(last_role, accumulated, last_msg_id),
+                    )
                 )
         except Exception as exc:  # noqa: BLE001
             logger.debug("messages relay failed: %r", exc)
@@ -292,9 +298,7 @@ class EventNormalizer:
 
     # ── Tool call relay ──────────────────────────────────────────────────────
 
-    async def _relay_tool_calls(
-        self, stream: Any, queue: asyncio.Queue[OssiaEvent | None]
-    ) -> None:
+    async def _relay_tool_calls(self, stream: Any, queue: asyncio.Queue[OssiaEvent | None]) -> None:
         """Convert ``stream.tool_calls`` to ``tool_started/progress/completed/failed``.
 
         Also detects pipeline orchestrator tool completions and emits
@@ -310,7 +314,11 @@ class EventNormalizer:
                 source = self._source_for_active_subagent()
 
                 await queue.put(
-                    self._event("tool_started", tool_started_data(tool_name, _safe(tool_input)), source=source)
+                    self._event(
+                        "tool_started",
+                        tool_started_data(tool_name, _safe(tool_input)),
+                        source=source,
+                    )
                 )
 
                 # Drain output deltas
@@ -318,7 +326,9 @@ class EventNormalizer:
                     async for d in c.output_deltas:
                         delta = str(d)
                         await queue.put(
-                            self._event("tool_progress", tool_progress_data(tool_name, delta), source=source)
+                            self._event(
+                                "tool_progress", tool_progress_data(tool_name, delta), source=source
+                            )
                         )
                 except Exception as exc:  # noqa: BLE001
                     logger.debug("output_deltas failed: %r", exc)
@@ -327,12 +337,20 @@ class EventNormalizer:
                 error = getattr(c, "error", None)
                 if error is not None:
                     await queue.put(
-                        self._event("tool_failed", tool_failed_data(tool_name, str(error), source), source=source)
+                        self._event(
+                            "tool_failed",
+                            tool_failed_data(tool_name, str(error), source),
+                            source=source,
+                        )
                     )
                 else:
                     output = getattr(c, "output", None)
                     await queue.put(
-                        self._event("tool_completed", tool_completed_data(tool_name, _safe(output), source), source=source)
+                        self._event(
+                            "tool_completed",
+                            tool_completed_data(tool_name, _safe(output), source),
+                            source=source,
+                        )
                     )
 
                     # Detect pipeline orchestrator tool completion and start
@@ -386,9 +404,7 @@ class EventNormalizer:
             return "coordinator"
         return f"coordinator.{'.'.join(parts)}"
 
-    async def _relay_subagents(
-        self, stream: Any, queue: asyncio.Queue[OssiaEvent | None]
-    ) -> None:
+    async def _relay_subagents(self, stream: Any, queue: asyncio.Queue[OssiaEvent | None]) -> None:
         """Convert ``stream.subagents`` to ``subagent_spawned/*/completed/failed``,
         annotating pipeline lifecycle events when ``self._active_pipeline`` is set.
 
@@ -408,7 +424,10 @@ class EventNormalizer:
                 if status == "started":
                     # If a pipeline is active and this subagent matches
                     # the current expected step, emit a step_started event.
-                    if self._active_pipeline is not None and self._active_pipeline.state == "running":
+                    if (
+                        self._active_pipeline is not None
+                        and self._active_pipeline.state == "running"
+                    ):
                         expected = self._active_pipeline.current_step_name
                         if expected == name:
                             await queue.put(
@@ -425,19 +444,28 @@ class EventNormalizer:
 
                     self._active_subagents[source] = name
                     await queue.put(
-                        self._event("subagent_spawned", subagent_spawned_data(name, raw_path), source=source)
+                        self._event(
+                            "subagent_spawned", subagent_spawned_data(name, raw_path), source=source
+                        )
                     )
 
                 elif status in ("completed", "success"):
                     self._active_subagents.pop(source, None)
                     await queue.put(
-                        self._event("subagent_completed", subagent_completed_data(name, path=raw_path), source=source)
+                        self._event(
+                            "subagent_completed",
+                            subagent_completed_data(name, path=raw_path),
+                            source=source,
+                        )
                     )
 
                     # Advance the active pipeline if this subagent was the
                     # expected step. Always emit pipeline_step_completed first,
                     # then pipeline_completed if this was the last step.
-                    if self._active_pipeline is not None and self._active_pipeline.state == "running":
+                    if (
+                        self._active_pipeline is not None
+                        and self._active_pipeline.state == "running"
+                    ):
                         expected = self._active_pipeline.current_step_name
                         if expected == name:
                             # Emit step completion before advancing so step_index
@@ -468,12 +496,19 @@ class EventNormalizer:
                 elif status == "error":
                     self._active_subagents.pop(source, None)
                     await queue.put(
-                        self._event("subagent_failed", subagent_failed_data(name, error=status, path=raw_path), source=source)
+                        self._event(
+                            "subagent_failed",
+                            subagent_failed_data(name, error=status, path=raw_path),
+                            source=source,
+                        )
                     )
 
                     # Mark the pipeline as failed if this subagent was the
                     # expected step.
-                    if self._active_pipeline is not None and self._active_pipeline.state == "running":
+                    if (
+                        self._active_pipeline is not None
+                        and self._active_pipeline.state == "running"
+                    ):
                         expected = self._active_pipeline.current_step_name
                         if expected == name:
                             await queue.put(
@@ -500,12 +535,20 @@ class EventNormalizer:
 
                 elif status == "interrupted":
                     await queue.put(
-                        self._event("subagent_interrupted", subagent_interrupted_data(name, path=raw_path), source=source)
+                        self._event(
+                            "subagent_interrupted",
+                            subagent_interrupted_data(name, path=raw_path),
+                            source=source,
+                        )
                     )
                 else:
                     # Unknown status — treat as general message delta
                     await queue.put(
-                        self._event("subagent_message_delta", subagent_message_delta_data(name, status, raw_path), source=source)
+                        self._event(
+                            "subagent_message_delta",
+                            subagent_message_delta_data(name, status, raw_path),
+                            source=source,
+                        )
                     )
         except Exception as exc:  # noqa: BLE001
             logger.debug("subagents relay failed: %r", exc)
@@ -514,9 +557,7 @@ class EventNormalizer:
 
     # ── Value / async task relay ─────────────────────────────────────────────
 
-    async def _relay_values(
-        self, stream: Any, queue: asyncio.Queue[OssiaEvent | None]
-    ) -> None:
+    async def _relay_values(self, stream: Any, queue: asyncio.Queue[OssiaEvent | None]) -> None:
         """Extract async task events from ``stream.values``.
 
         This is the only relay that iterates ``stream.values`` (an async
@@ -570,7 +611,9 @@ class EventNormalizer:
                         await queue.put(
                             self._event(
                                 evt_type,
-                                async_task_data(evt_type, tid, agent_name, status, tasks, t.get("error", None)),
+                                async_task_data(
+                                    evt_type, tid, agent_name, status, tasks, t.get("error", None)
+                                ),
                             )
                         )
                 self._prev_async_tasks = tasks
@@ -596,11 +639,13 @@ class EventNormalizer:
 
                 # Track image artifact metadata for post-stream completion events
                 if art_type == "image":
-                    self._image_artifact_metadata.append({
-                        "artifact_id": f"art-{i}",
-                        "art_type": art_type,
-                        "filename": filename,
-                    })
+                    self._image_artifact_metadata.append(
+                        {
+                            "artifact_id": f"art-{i}",
+                            "art_type": art_type,
+                            "filename": filename,
+                        }
+                    )
 
                 await queue.put(
                     self._event(
@@ -660,9 +705,7 @@ class EventNormalizer:
             asyncio.create_task(self._relay_values(stream, queue)),
         ]
         if artifacts:
-            tasks.append(
-                asyncio.create_task(self._relay_artifacts(artifacts, queue))
-            )
+            tasks.append(asyncio.create_task(self._relay_artifacts(artifacts, queue)))
 
         num_producers = len(tasks)
 

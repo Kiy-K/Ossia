@@ -24,7 +24,7 @@ _WHEN_PATTERN = re.compile(r"Use this (?:when|for|after|before|whenever)\b")
 def _collect_subagents() -> list[tuple[str, str]]:
     """Collect every subagent as ``(name, description)`` pairs.
 
-    Combines all 7 sync subagents (from ``_DEV_CONCIERGE_SUBAGENTS``)
+    Combines all 8 sync subagents (from ``_DEV_CONCIERGE_SUBAGENTS``)
     with all 3 async subagents (from ``_build_async_subagents``).
     """
     collected: list[tuple[str, str]] = []
@@ -84,7 +84,7 @@ def test_subagent_count_is_stable() -> None:
 
     Update this assertion when subagents are intentionally added or removed.
     """
-    assert len(_COLLECTED) == 10, (
-        f"Expected 10 subagents (7 sync + 3 async), got {len(_COLLECTED)}.\n"
+    assert len(_COLLECTED) == 11, (
+        f"Expected 11 subagents (8 sync + 3 async), got {len(_COLLECTED)}.\n"
         f"Subagent names: {[n for n, _ in _COLLECTED]}"
     )

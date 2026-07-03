@@ -5,6 +5,127 @@ Ossia HTTP contract. The machine-readable record is the git history of
 
 ## Unreleased
 
+### New: webhooks for thread events
+
+Register a URL to receive POST deliveries of every
+``OssiaEvent`` the server emits. HMAC-SHA256 signature on
+``X-Ossia-Signature``, 3-attempt exponential backoff
+(1s / 2s / 4s), per-webhook event-kind filter or wildcard ``*``.
+
+- `POST /v1/webhooks` — register. Response includes the secret
+  once; store it server-side to verify signatures.
+- `GET /v1/webhooks` — list (secrets redacted).
+- `DELETE /v1/webhooks/{id}` — remove.
+- Ponytail: in-memory store only. Restart drops the registry;
+  add Postgres/Redis persistence when someone needs cross-process
+  delivery.
+
+### New: multi-tenant API keys
+
+- `OSSIA_API_KEYS` — comma-separated list of accepted keys.
+- `OSSIA_API_KEYS_FILE` — newline-delimited file path (use
+  ``#`` for comments).
+- `OSSIA_API_KEY` — single key, back-compat.
+- `GET /v1/whoami` — returns the stable caller id the server
+  used for the request, plus a short fingerprint of the
+  presented key. Useful for clients to confirm which credential
+  the server saw in multi-key deployments.
+- Ponytail: same Argon2id caller-id derivation as v0.4;
+  thread scoping already used the per-key id, so existing
+  conversation isolation is unchanged.
+
+### New: plugin diagnostics + CLI subcommands
+
+- `GET /v1/plugins` — list loaded plugins with provenance,
+  config dict, contributed tools / subagents / middlewares.
+- ``ossia doctor`` — env + plugin + (optional) server health
+  check. Returns 0 (healthy), 1 (required fail), 2 (warning
+  only). Never starts a server.
+- ``ossia plugins list`` — table or ``--json`` view of loaded
+  plugins. Same data as ``GET /v1/plugins``.
+- ``ossia server`` / ``ossia tui`` — subcommand forms of the
+  default ``ossia`` launcher. Back-compat: no subcommand still
+  starts backend + TUI.
+
+### New: per-request LLM cost tracking
+
+Prometheus counters under ``/metrics``:
+- ``llm_requests_total{provider, model}`` — chat invocations.
+- ``llm_tokens_total{provider, model, kind}`` — ``kind`` is
+  ``prompt`` / ``completion`` / ``total``.
+- ``llm_cost_usd_total{provider, model}`` — approximate USD
+  (1e-6 cent precision), sourced from a small built-in price
+  table. Unknown models report zero (better to under-report
+  than to invent a price).
+- Ponytail: only `/v1/chat` records today; streaming hooks
+  in v0.11. The price table is a v0.1 hand-curated list of
+  the most common models; add when a real user asks.
+
+### New: rate-limit bucketing moved to per-API-key
+
+`/v1/chat` (and friends) bucket by SHA-256 of the presented
+``X-API-Key`` instead of the remote IP. Multiple clients
+behind one NAT get independent buckets; a single key abuse
+cannot be diluted by sharing an IP. The bucket id is a 16-char
+hex digest — the secret never lands in the limiter's storage.
+
+### Changed: dev-concierge tools no longer stubbed
+
+Five tools that previously returned ``[STUB]`` placeholders
+now have real implementations:
+- ``search_codebase`` — `rg --json`, 30s timeout, 50-match cap.
+- ``fetch_issue`` — `httpx` GitHub REST, `GITHUB_TOKEN`/`GH_TOKEN` auth.
+- ``run_tests`` — `subprocess` test runner, 300s timeout, 50KB output cap.
+- ``create_pr`` — `httpx` GitHub REST PR open.
+- ``propose_fix`` — context-gatherer (reads target file, hands
+  the bundle to the calling agent; the LLM proposes the patch
+  inline rather than paying a second model call).
+
+### OpenAPI
+
+Spec regenerated; 14 → 15 ``/v1`` routes, three new
+schemas (WebhookCreate/Info/Created, WhoAmIResponse,
+PluginInfo/PluginListResponse).
+
+### New: memory audit + hybrid /scratch/ working memory
+
+Three memory surfaces now documented and split into independent
+backends:
+
+- ``/memories/`` — durable, per-caller, agent-scoped opt-in via
+  ``Settings.memory_scope`` (default ``"user"``). Backed by the
+  primary store (Postgres or Redis or in-memory).
+- ``/policies/`` — read-only, shared across all callers, populated
+  by ``seed_policy``. Backed by the primary store.
+- ``/scratch/`` — *new*, transient working memory. Per-caller
+  always (no agent-scoped opt-in). Mounted on Redis when
+  ``REDIS_URL`` is set (the same Redis store backs both
+  ``/memories/`` and ``/scratch/``); not mounted on Postgres-only
+  deployments.
+
+ADR-0007 rewritten to document all three surfaces, the per-caller
+default, and the hybrid Redis-for-hot/Postgres-for-cold
+trade-off.
+
+### New: GET /v1/memories/{path} and GET /v1/policies/{path}
+
+Read-only debug endpoints for inspecting the agent's
+``/memories/AGENTS.md`` and the shared policy files. Returns
+``MemoryFile{path, namespace, content, exists}``. Namespace
+mirrors the agent's view (per-caller for memories, shared
+``ossia/policies`` for policies). 503 when the agent hasn't
+booted a store yet (in-process test builds).
+
+### New: semantic_recall tool tests (8 new tests)
+
+The third memory surface (vector similarity search across
+threads) was untested. New ``tests/test_semantic_recall.py``
+covers the factory's gating on ``AsyncRedisStore`` and
+``Settings.enable_vector_index``, the per-caller namespace, the
+error-swallowing contract, and the hit-shape normalization.
+
+
+
 ## v0.9.0-rc1 - 2026-07-01 - package-runner installer + Redis-backed memory
 
 **Test release** to verify the release workflow on a real version

@@ -115,7 +115,7 @@ async def test_cached_fetch_miss_then_hit(fake_redis: tuple[FakeAsyncRedis, Fake
 
 
 async def test_cached_fetch_distinct_keys_dont_collide(
-    fake_redis: tuple[FakeAsyncRedis, FakeSyncRedis]
+    fake_redis: tuple[FakeAsyncRedis, FakeSyncRedis],
 ) -> None:
     """Different key_parts produce different cache keys."""
     calls = {"n": 0}
@@ -146,9 +146,7 @@ async def test_cached_fetch_degrades_without_redis(no_redis: None) -> None:
 # ── cached_fetch_sync ───────────────────────────────────────────────────────
 
 
-def test_cached_fetch_sync_miss_then_hit(
-    fake_redis: tuple[FakeAsyncRedis, FakeSyncRedis]
-) -> None:
+def test_cached_fetch_sync_miss_then_hit(fake_redis: tuple[FakeAsyncRedis, FakeSyncRedis]) -> None:
     """Sync twin of ``cached_fetch``."""
     _, sync_fake = fake_redis
     calls = {"n": 0}
@@ -181,7 +179,7 @@ def test_cached_fetch_sync_degrades_without_redis(no_redis: None) -> None:
 
 
 async def test_redis_lock_acquired_on_first_caller(
-    fake_redis: tuple[FakeAsyncRedis, FakeSyncRedis]
+    fake_redis: tuple[FakeAsyncRedis, FakeSyncRedis],
 ) -> None:
     """First holder gets acquired=True; lock key is set in Redis."""
     async_fake, _ = fake_redis
@@ -193,7 +191,7 @@ async def test_redis_lock_acquired_on_first_caller(
 
 
 async def test_redis_lock_blocked_for_second_caller(
-    fake_redis: tuple[FakeAsyncRedis, FakeSyncRedis]
+    fake_redis: tuple[FakeAsyncRedis, FakeSyncRedis],
 ) -> None:
     """While holder A owns the lock, holder B sees acquired=False."""
     async_fake, _ = fake_redis
@@ -207,7 +205,7 @@ async def test_redis_lock_blocked_for_second_caller(
 
 
 async def test_redis_lock_released_after_crash_via_ttl(
-    fake_redis: tuple[FakeAsyncRedis, FakeSyncRedis]
+    fake_redis: tuple[FakeAsyncRedis, FakeSyncRedis],
 ) -> None:
     """The lock has a TTL so a crashed holder doesn't deadlock forever.
 
@@ -235,7 +233,7 @@ async def test_redis_lock_degrades_without_redis(no_redis: None) -> None:
 
 
 async def test_seed_memory_uses_lock_when_redis_available(
-    fake_redis: tuple[FakeAsyncRedis, FakeSyncRedis]
+    fake_redis: tuple[FakeAsyncRedis, FakeSyncRedis],
 ) -> None:
     """``seed_memory`` wraps its critical section in ``redis_lock``."""
     from langgraph.store.memory import InMemoryStore
@@ -251,7 +249,7 @@ async def test_seed_memory_uses_lock_when_redis_available(
 
 
 async def test_seed_memory_still_idempotent_with_lock(
-    fake_redis: tuple[FakeAsyncRedis, FakeSyncRedis]
+    fake_redis: tuple[FakeAsyncRedis, FakeSyncRedis],
 ) -> None:
     """Two sequential ``seed_memory`` calls: first creates, second is a no-op."""
     from langgraph.store.memory import InMemoryStore

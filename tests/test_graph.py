@@ -132,7 +132,11 @@ def _send_response_ai() -> AIMessage:
     return AIMessage(
         content="",
         tool_calls=[
-            {"name": "send_response", "id": "call-send-1", "args": {"response": "final draft", "channel": "chat"}}
+            {
+                "name": "send_response",
+                "id": "call-send-1",
+                "args": {"response": "final draft", "channel": "chat"},
+            }
         ],
     )
 
@@ -188,12 +192,11 @@ async def test_human_review_blocks_until_approved() -> None:
     assert any(task.interrupts for task in state.tasks), "agent should be paused for human review"
 
     # Resume with an approve decision -> the gated tool runs and the turn completes.
-    result = await graph.ainvoke(
-        Command(resume={"decisions": [{"type": "approve"}]}), config
-    )
+    result = await graph.ainvoke(Command(resume={"decisions": [{"type": "approve"}]}), config)
     messages = result["messages"]
-    assert any(getattr(m, "name", None) == "send_response" for m in messages), \
+    assert any(getattr(m, "name", None) == "send_response" for m in messages), (
         "send_response should execute after approval"
+    )
     assert isinstance(messages[-1], AIMessage), "agent should produce a final assistant message"
     assert messages[-1].content.strip(), "final message should be non-empty"
 
@@ -215,15 +218,18 @@ async def test_human_review_reject_blocks_send() -> None:
     # middleware injects an error ToolMessage carrying the rejection reason, and
     # the model gets it back so it can revise.
     result = await graph.ainvoke(
-        Command(resume={"decisions": [{"type": "reject", "message": "Tone too aggressive. Revise."}]}),
+        Command(
+            resume={"decisions": [{"type": "reject", "message": "Tone too aggressive. Revise."}]}
+        ),
         config,
     )
     messages = result["messages"]
     send_msgs = [m for m in messages if getattr(m, "name", None) == "send_response"]
     # The only send_response message is the rejection stub, never a real success.
     assert send_msgs, "expected the rejection stub ToolMessage"
-    assert all(getattr(m, "status", None) == "error" for m in send_msgs), \
+    assert all(getattr(m, "status", None) == "error" for m in send_msgs), (
         "send_response must not execute successfully after rejection"
+    )
     assert isinstance(messages[-1], AIMessage), "agent should respond after rejection"
     assert messages[-1].content.strip(), "agent should produce a revision message"
 
@@ -238,9 +244,7 @@ def test_interpreter_middleware_in_middleware_stack() -> None:
     settings = _test_settings()
     middlewares = _build_middlewares(settings)
 
-    interpreter_middlewares = [
-        m for m in middlewares if isinstance(m, CodeInterpreterMiddleware)
-    ]
+    interpreter_middlewares = [m for m in middlewares if isinstance(m, CodeInterpreterMiddleware)]
     assert len(interpreter_middlewares) == 1
 
     middleware = interpreter_middlewares[0]
@@ -271,26 +275,32 @@ async def test_interpreter_state_persists_across_turns() -> None:
 
     settings = _test_settings()
     saver = InMemorySaver()
-    model = _FakeToolModel(scripted=[
-        AIMessage(
-            content="",
-            tool_calls=[{
-                "name": "eval",
-                "id": "call-eval-1",
-                "args": {"code": "const myValue = 42; myValue;"},
-            }],
-        ),
-        AIMessage(content="Stored value."),
-        AIMessage(
-            content="",
-            tool_calls=[{
-                "name": "eval",
-                "id": "call-eval-2",
-                "args": {"code": "myValue * 2;"},
-            }],
-        ),
-        AIMessage(content="Result: 84"),
-    ])
+    model = _FakeToolModel(
+        scripted=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "eval",
+                        "id": "call-eval-1",
+                        "args": {"code": "const myValue = 42; myValue;"},
+                    }
+                ],
+            ),
+            AIMessage(content="Stored value."),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "eval",
+                        "id": "call-eval-2",
+                        "args": {"code": "myValue * 2;"},
+                    }
+                ],
+            ),
+            AIMessage(content="Result: 84"),
+        ]
+    )
 
     graph = create_deep_agent(
         name="ossia-test",
@@ -308,7 +318,9 @@ async def test_interpreter_state_persists_across_turns() -> None:
         config,
     )
     # First eval result should be captured as a ToolMessage
-    tool_msgs_1 = [m for m in graph.get_state(config).values.get("messages", []) if isinstance(m, ToolMessage)]
+    tool_msgs_1 = [
+        m for m in graph.get_state(config).values.get("messages", []) if isinstance(m, ToolMessage)
+    ]
     assert len(tool_msgs_1) >= 1
 
     result2 = await graph.ainvoke(
@@ -329,23 +341,27 @@ async def test_ptc_tools_available_in_interpreter() -> None:
     settings = _test_settings()
     saver = InMemorySaver()
 
-    model = _FakeToolModel(scripted=[
-        AIMessage(
-            content="",
-            tool_calls=[{
-                "name": "eval",
-                "id": "call-eval-ptc-1",
-                "args": {
-                    "code": (
-                        "const result = await tools.searchCodebase({"
-                        " query: 'test', path: '.'"
-                        "}); result;"
-                    )
-                },
-            }],
-        ),
-        AIMessage(content="PTC search completed."),
-    ])
+    model = _FakeToolModel(
+        scripted=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "eval",
+                        "id": "call-eval-ptc-1",
+                        "args": {
+                            "code": (
+                                "const result = await tools.searchCodebase({"
+                                " query: 'test', path: '.'"
+                                "}); result;"
+                            )
+                        },
+                    }
+                ],
+            ),
+            AIMessage(content="PTC search completed."),
+        ]
+    )
 
     graph = create_deep_agent(
         name="ossia-test",
@@ -381,9 +397,7 @@ def test_async_subagent_middleware_wired_when_enabled() -> None:
     settings.enable_async_subagents = True
     middlewares = _build_middlewares(settings)
 
-    async_middlewares = [
-        m for m in middlewares if isinstance(m, AsyncSubAgentMiddleware)
-    ]
+    async_middlewares = [m for m in middlewares if isinstance(m, AsyncSubAgentMiddleware)]
     assert len(async_middlewares) == 1
     middleware = async_middlewares[0]
     # Verify the middleware exposes the async agent tools
@@ -403,9 +417,7 @@ def test_async_subagent_middleware_not_wired_when_disabled() -> None:
     settings.enable_async_subagents = False
     middlewares = _build_middlewares(settings)
 
-    async_middlewares = [
-        m for m in middlewares if isinstance(m, AsyncSubAgentMiddleware)
-    ]
+    async_middlewares = [m for m in middlewares if isinstance(m, AsyncSubAgentMiddleware)]
     assert len(async_middlewares) == 0
 
 
@@ -543,12 +555,9 @@ def test_orchestrator_tools_are_loaded() -> None:
     if tools_node and hasattr(tools_node, "bound"):
         bound = tools_node.bound
         tool_names = set(getattr(bound, "_tools_by_name", {}).keys())
-    assert "run_bugfix_pipeline" in tool_names, \
-        f"bugfix tool not found in {tool_names}"
-    assert "run_audit_pipeline" in tool_names, \
-        f"audit tool not found in {tool_names}"
-    assert "run_refactor_pipeline" in tool_names, \
-        f"refactor tool not found in {tool_names}"
+    assert "run_bugfix_pipeline" in tool_names, f"bugfix tool not found in {tool_names}"
+    assert "run_audit_pipeline" in tool_names, f"audit tool not found in {tool_names}"
+    assert "run_refactor_pipeline" in tool_names, f"refactor tool not found in {tool_names}"
 
 
 def test_orchestrator_schemas_validate() -> None:
@@ -668,7 +677,9 @@ def test_orchestrator_bugfix_pipeline_js_uses_correct_api() -> None:
 
     js = get_bugfix_pipeline_js("Test bug: login fails")
     # Must use the new API fields
-    assert '"bug-diagnostician"' in js or "bug-diagnostician" in js, "should reference bug-diagnostician subagent"
+    assert '"bug-diagnostician"' in js or "bug-diagnostician" in js, (
+        "should reference bug-diagnostician subagent"
+    )
     assert "subagentType" in js, "should use subagentType, not agent"
     assert "description" in js, "should use description, not instruction"
     assert "responseSchema" in js, "should use responseSchema"
@@ -909,18 +920,22 @@ def test_graph_module_variable_exists() -> None:
 
     try:
         import core.graphs.supervisor as sup
+
         assert "graph" in dir(sup), "graph should be in dir()"
         assert sup.graph is not None, "graph should be built"
 
         import core.graphs.researcher as res
+
         assert "graph" in dir(res)
         assert res.graph is not None
 
         import core.graphs.tester as tes
+
         assert "graph" in dir(tes)
         assert tes.graph is not None
 
         import core.graphs.auditor as aud
+
         assert "graph" in dir(aud)
         assert aud.graph is not None
     finally:

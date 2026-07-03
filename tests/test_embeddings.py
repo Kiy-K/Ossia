@@ -53,9 +53,7 @@ class _FakeAsyncClient:
 async def test_embed_sends_correct_url_and_body(monkeypatch: pytest.MonkeyPatch) -> None:
     """The embedder POSTs to ``{ollama_base_url}/api/embeddings`` with
     the configured model and the input text as ``prompt``."""
-    fake = _FakeAsyncClient(
-        responses=[{"embedding": [0.1] * 768}, {"embedding": [0.2] * 768}]
-    )
+    fake = _FakeAsyncClient(responses=[{"embedding": [0.1] * 768}, {"embedding": [0.2] * 768}])
     monkeypatch.setattr(httpx, "AsyncClient", lambda: fake)
 
     embed = make_ollama_embedder(_settings())
@@ -107,9 +105,7 @@ async def test_embed_propagates_http_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An HTTP error from Ollama raises; the caller sees the failure."""
-    fake = _FakeAsyncClient(
-        responses=[{"error": "model not loaded"}], status=500
-    )
+    fake = _FakeAsyncClient(responses=[{"error": "model not loaded"}], status=500)
     monkeypatch.setattr(httpx, "AsyncClient", lambda: fake)
     embed = make_ollama_embedder(_settings())
     with pytest.raises(httpx.HTTPStatusError):
@@ -121,12 +117,9 @@ async def test_embed_returns_one_vector_per_text(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A list of N texts produces a list of N vectors (same order)."""
-    fake = _FakeAsyncClient(
-        responses=[{"embedding": [float(i)] * 768} for i in range(3)]
-    )
+    fake = _FakeAsyncClient(responses=[{"embedding": [float(i)] * 768} for i in range(3)])
     monkeypatch.setattr(httpx, "AsyncClient", lambda: fake)
 
     embed = make_ollama_embedder(_settings())
     result = await embed(["a", "b", "c"])
     assert [v[0] for v in result] == [0.0, 1.0, 2.0]
-

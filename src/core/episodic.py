@@ -24,6 +24,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+import anyio
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool, tool
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -111,6 +112,7 @@ def make_episodic_recall_tool(
     async def recall_thread_turns(
         thread_id: str,
         limit: int = _DEFAULT_LIMIT,
+        runtime: Any = None,
     ) -> dict[str, Any]:
         """Return the most recent turns of a thread.
 
@@ -120,6 +122,10 @@ def make_episodic_recall_tool(
                 previously-used thread_id to recall across sessions.
             limit: Maximum number of past checkpoints to surface
                 (most recent first).
+            runtime: Injected by deepagents; not part of the model's
+                argument schema. Carries ``runtime.store`` (the agent's
+                ``BaseStore``) and ``runtime.context`` (the
+                ``OssiaContext``).
 
         Returns:
             A dict ``{"thread_id": str, "turns": [{role, content}, ...]}``.
@@ -128,7 +134,15 @@ def make_episodic_recall_tool(
         """
         config: RunnableConfig = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
         try:
-            raw = list(checkpointer.list(config, limit=limit))
+            # Use ``anyio.to_thread.run_sync`` to run the checkpointer's
+            # sync ``list()`` method on a thread-pool worker. This
+            # avoids the ``InvalidStateError`` that ``AsyncPostgresSaver``
+            # raises when its sync methods are called from the event-loop
+            # thread. It also works with purely sync checkpointers like
+            # ``InMemorySaver`` — they simply run on the thread pool.
+            raw = await anyio.to_thread.run_sync(  # pyright: ignore[reportAttributeAccessIssue]
+                lambda: list(checkpointer.list(config, limit=limit))  # type: ignore[union-attr]
+            )
         except Exception as exc:  # noqa: BLE001
             return {
                 "thread_id": thread_id,
@@ -178,10 +192,7 @@ async def _postgres_search_threads(
             rows = await cur.fetchall()
     finally:
         await conn.close()
-    return [
-        {"thread_id": r[0], "snippet": _extract_snippet(r[1], query)}
-        for r in rows[:limit]
-    ]
+    return [{"thread_id": r[0], "snippet": _extract_snippet(r[1], query)} for r in rows[:limit]]
 
 
 def make_postgres_search_fn(settings: Settings) -> SearchFn | None:
@@ -213,6 +224,7 @@ def make_search_threads_tool(search_fn: SearchFn | None) -> BaseTool | None:
     async def search_threads(
         query: str,
         limit: int = _DEFAULT_LIMIT,
+        runtime: Any = None,
     ) -> dict[str, Any]:
         """Search past threads by content keyword.
 
@@ -225,6 +237,10 @@ def make_search_threads_tool(search_fn: SearchFn | None) -> BaseTool | None:
             query: Keyword or phrase to search for (case-insensitive
                 substring match).
             limit: Maximum number of matching threads to return.
+            runtime: Injected by deepagents; not part of the model's
+                argument schema. Carries ``runtime.store`` (the agent's
+                ``BaseStore``) and ``runtime.context`` (the
+                ``OssiaContext``).
 
         Returns:
             A dict ``{"threads": [{"thread_id": str, "snippet": str}, ...]}``.
@@ -234,9 +250,7 @@ def make_search_threads_tool(search_fn: SearchFn | None) -> BaseTool | None:
         if not caller:
             return {"threads": []}
         results = await search_fn(query, limit)
-        scoped = [
-            r for r in results if str(r.get("thread_id", "")).startswith(f"{caller}:")
-        ]
+        scoped = [r for r in results if str(r.get("thread_id", "")).startswith(f"{caller}:")]
         return {"threads": scoped[:limit]}
 
     return search_threads
@@ -288,7 +302,11 @@ def make_semantic_recall_tool(
         return None
 
     @tool
-    async def semantic_recall(query: str, top_k: int = 5) -> dict[str, Any]:
+    async def semantic_recall(
+        query: str,
+        top_k: int = 5,
+        runtime: Any = None,
+    ) -> dict[str, Any]:
         """Semantically search cross-thread memory for similar content.
 
         Use this when the user asks a question that might have been
@@ -300,6 +318,10 @@ def make_semantic_recall_tool(
         Args:
             query: Natural-language query to search for.
             top_k: Maximum number of similar items to return.
+            runtime: Injected by deepagents; not part of the model's
+                argument schema. Carries ``runtime.store`` (the agent's
+                ``BaseStore``) and ``runtime.context`` (the
+                ``OssiaContext``).
 
         Returns:
             A dict ``{"matches": [{"key": str, "namespace": list, "value": dict, "score": float}, ...]}``.
@@ -307,13 +329,19 @@ def make_semantic_recall_tool(
             matches are found above the index threshold.
         """
         caller = caller_var.get() or "default"
+        # Read the store from the injected runtime, falling back to
+        # the closure for backward compatibility (tests that call
+        # ``tool.ainvoke`` directly without a runtime).
+        _store = getattr(runtime, "store", None) if runtime is not None else None
+        if _store is None:
+            _store = store
         try:
             # The store embeds the query internally using the
             # IndexConfig's embedder (Ollama via the integration).
             # We do NOT embed here — passing the raw text lets
             # the library cache the embedding per-query and use
             # the same backend the index was built with.
-            results = await store.asearch(
+            results = await _store.asearch(
                 ("ossia", caller),
                 query=query,
                 limit=top_k,

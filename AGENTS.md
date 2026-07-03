@@ -4,7 +4,7 @@ Repo-specific guidance for OpenCode and other coding sessions in `/home/khoi/oss
 
 ## What this repo is
 
-Ossia — a portable, model-agnostic support agent built on LangChain Deep Agents. The unified HTTP API at `/v1/*` is the only runtime entry point; CLI scripts, the notebook, and the TUI are thin HTTP clients. Spec-driven: `specs/openapi.checked.json` is the pinned contract, `tests/test_openapi_drift.py` fails the suite on drift.
+Ossia — a portable, model-agnostic support agent built on LangChain Deep Agents. The unified HTTP API at `/v1/*` is the only runtime entry point; CLI scripts, the notebook, the TUI, and the **Web UI** are thin HTTP clients. Spec-driven: `specs/openapi.checked.json` is the pinned contract, `tests/test_openapi_drift.py` fails the suite on drift.
 
 Architecture and intent: `README.md` (overview), `specs/SPEC.md` (narrative spec), `docs/adr/0001..0012.md` (twelve design decisions). Read those before changing behavior.
 
@@ -47,6 +47,12 @@ OSSIA_API_KEY=dev .venv/bin/python -m uvicorn core.api:app --host 127.0.0.1 --po
 
 # Terminal UI (separate bun + OpenTUI/React project)
 cd src/tui && bun install && bun dev
+
+# Web UI (separate npm + Vite + React project)
+cd src/webui && npm install && npm run dev
+
+# Or start both backend + Web UI with one command:
+make dev-all-web
 ```
 
 ## Using the Makefile
@@ -95,6 +101,9 @@ Run `make help` to see all targets with descriptions.
 | `audit` | Run `scripts/audit_ossia.py` |
 | `eval` | Run `scripts/eval_ossia.py` |
 | `tui` | Start TUI (bun dev in src/tui) |
+| `dev-web` | Start Web UI (npm dev in src/webui) |
+| `dev-all-web` | Start backend + Web UI with one command |
+| `webui-e2e` | Run Web UI Playwright e2e tests (npm run test:e2e in src/webui) |
 | `clean` | Stop Docker + remove Python caches |
 | `clean-all` | Nuclear: removes `.venv`, `.env` too |
 
@@ -195,6 +204,7 @@ src/core/            # Library: agent, memory, tools, mcp_tools, middleware,
                      # graphs (supervisor, researcher, tester, auditor),
                      # orchestrators (bugfix, audit, refactor pipelines)
 src/tui/             # OpenTUI/React terminal client (bun)
+src/webui/           # Web UI (React + Vite + Tailwind v4)
 tests/               # test_api, test_graph, test_mcp_tools, test_openapi_drift,
                      # test_context, test_episodic, test_memory, test_tools,
                      # test_feature_specs, test_events, test_graph_id_consistency,
@@ -217,6 +227,7 @@ The real entrypoints:
 - CLI helpers: `core.cli_helper` (subprocess, health-check, require_api_key).
 - MCP: `core.mcp_tools.MCPToolkit` — worker-per-task, graceful degradation.
 - TUI: `src/tui/` — separate package; consumes `/v1/chat/stream` over SSE.
+- Web UI: `src/webui/` — separate npm package; consumes `/v1/chat/stream` over SSE.
 
 ## DeepAgents / LangGraph specifics
 
@@ -273,6 +284,29 @@ the run as a multi-pane terminal app.
 
 - **Do not import from `src/tui/`** in Python.
 - Default `API_URL=http://localhost:8000`, `API_KEY="dev"`.
+
+## Web UI (src/webui)
+
+`src/webui/` is a separate React 19 + Vite + Tailwind v4 project (npm
+runtime). It consumes `/v1/chat/stream` over SSE and renders the agent
+run as a browser-based multi-panel interface.
+
+- **Do not import from `src/webui/`** in Python.
+- Default API URL can be configured via the gear icon in the UI header.
+- Dark/light mode, panel persistence, and API credentials persist to localStorage.
+
+### Quick start
+
+```bash
+# Start both backend + Web UI
+make dev-all-web
+
+# Or start just the Web UI (backend must be running separately)
+make dev-web
+
+# Run e2e tests (Playwright)
+make webui-e2e
+```
 
 ## Docker compose
 

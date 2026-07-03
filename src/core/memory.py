@@ -33,17 +33,23 @@ from psycopg.rows import dict_row
 
 from core.config import Settings, get_settings
 
-AGENT_NAMESPACE: tuple[str, ...] = ("ossia", "default")
-"""Default agent-scoped memory namespace.
+AGENT_NAMESPACE: tuple[str, ...] = ("ossia",)
+"""Default memory namespace.
 
-Single-tenant fallback used when no caller context is available (e.g.,
-tests, one-off scripts). In production the ``_make_backend`` namespace
-factory prepends the ``user_id`` (caller hash) to create a per-user
-namespace like ``("ossia", "abc123def456")`` so memory files never bleed
-between authenticated callers. Set ``Settings.memory_scope = "agent"``
-to share one namespace across all callers instead.
+Used as the *base* for :func:`core.agent._make_memory_namespace`,
+which prepends the caller hash to it for per-caller isolation
+(``("ossia", "abc123def456")``) or returns it unchanged for
+agent-scoped mode (``Settings.memory_scope == "agent"``).
 
-See :func:`agent._make_memory_namespace` for the production path.
+In tests and one-off scripts where no caller is available, the
+factory returns this base unchanged. Two test runs sharing the
+same in-process ``InMemoryStore`` would collide on the key — tests
+should construct a fresh store per test.
+
+Changed from ``("ossia", "default")`` to ``("ossia",)`` so that
+``seed_memory()`` (which writes to this namespace) is visible to
+both the agent-scoped read path AND per-caller reads that fall
+back to the base namespace.
 """
 
 POLICY_NAMESPACE: tuple[str, ...] = ("ossia", "policies")
@@ -54,6 +60,19 @@ The ``/policies/`` route in :func:`agent._make_backend` is mounted on
 this namespace AND protected by a write-deny ``FilesystemPermission``,
 so application code populates it and the agent can read but never
 rewrite.
+"""
+
+SCRATCH_NAMESPACE: tuple[str, ...] = ("ossia", "scratch")
+"""Working-memory namespace.
+
+Backed by a *fast* store (Redis when ``REDIS_URL`` is set, else the
+in-process StateBackend) per the hybrid Redis-for-hot/Postgres-for-cold
+recommendation in the memory audit. The agent uses ``/scratch/`` for
+transient artifacts: last tool output, in-flight search results,
+anything the agent wants to keep around for a few turns without
+polluting the durable ``/memories/AGENTS.md``.
+
+Per-caller via :func:`core.agent._make_scratch_namespace`.
 """
 
 AGENTS_MEMORY_KEY: str = "/memories/AGENTS.md"
@@ -238,9 +257,7 @@ async def get_redis_store(
         }
     else:
         resolved_index = index
-    async with AsyncRedisStore.from_conn_string(
-        settings.redis_url, index=resolved_index
-    ) as store:
+    async with AsyncRedisStore.from_conn_string(settings.redis_url, index=resolved_index) as store:
         await store.setup()
         yield store
 
@@ -312,6 +329,32 @@ async def seed_policy(
         return False
     await store.aput(POLICY_NAMESPACE, key, create_file_data(content))  # type: ignore[arg-type]
     return True
+
+
+async def ensure_caller_memory_seeded(
+    store: BaseStore | None,
+    caller: str,
+) -> None:
+    """Ensure the caller's per-caller memory namespace is seeded.
+
+    Called on each authenticated request before the agent runs. Seeds
+    the caller's namespace ``("ossia", caller)`` with the initial
+    ``/memories/AGENTS.md`` if and only if the key does not already
+    exist (idempotent). When the store is ``None`` (in-process test
+    builds) this is a no-op.
+
+    The startup ``seed_memory()`` call seeds the base namespace
+    ``("ossia",)``; this function seeds the per-caller namespace so
+    the agent's user-scoped backend finds the memory file on the
+    first request from each caller.
+
+    Args:
+        store: The agent's ``BaseStore``. ``None`` is a no-op.
+        caller: The current caller's hash.
+    """
+    if store is None:
+        return
+    await seed_memory(store, namespace=("ossia", caller))
 
 
 def read_memory_item(item: Any) -> str:

@@ -93,6 +93,5 @@ def test_core_tool_count_is_stable() -> None:
     """
     tools = _get_tools()
     assert len(tools) == 14, (
-        f"Expected 14 tools, got {len(tools)}.\n"
-        f"Tool names: {[t[0] for t in tools]}"
+        f"Expected 14 tools, got {len(tools)}.\nTool names: {[t[0] for t in tools]}"
     )

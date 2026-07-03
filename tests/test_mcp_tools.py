@@ -110,9 +110,7 @@ async def test_mcp_toolkit_external_cancel_propagates() -> None:
     # reliably hangs (and does not self-timeout before we cancel).
     settings = _bad_settings(url, headers={"X-Test": "1"})
     try:
-        task = asyncio.create_task(
-            MCPToolkit(settings).__aenter__(), name="mcp-cancel-test"
-        )
+        task = asyncio.create_task(MCPToolkit(settings).__aenter__(), name="mcp-cancel-test")
         # Give the worker time to connect and block on initialize.
         await asyncio.sleep(0.4)
         assert not task.done(), "worker should still be hanging on initialize"

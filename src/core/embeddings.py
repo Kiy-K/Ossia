@@ -55,15 +55,17 @@ def make_ollama_embedder(settings: Settings | None = None) -> Embedder:
 
     async def embed(texts: list[str]) -> list[list[float]]:
         async with httpx.AsyncClient() as client:
-            vectors = await asyncio.gather(*[
-                _ollama_embed_one(
-                    client,
-                    settings.ollama_base_url,
-                    settings.embedding_model,
-                    text,
-                )
-                for text in texts
-            ])
+            vectors = await asyncio.gather(
+                *[
+                    _ollama_embed_one(
+                        client,
+                        settings.ollama_base_url,
+                        settings.embedding_model,
+                        text,
+                    )
+                    for text in texts
+                ]
+            )
         return vectors
 
     return embed

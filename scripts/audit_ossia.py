@@ -66,8 +66,7 @@ def main() -> int:
             timeout=args.audit_timeout,
         )
         if r.status_code != 200:
-            print(f"AUDIT ABORTED: server returned {r.status_code}: {r.text}",
-                  file=sys.stderr)
+            print(f"AUDIT ABORTED: server returned {r.status_code}: {r.text}", file=sys.stderr)
             return 1
         return _print_report(r.json())
     except Exception as exc:  # noqa: BLE001

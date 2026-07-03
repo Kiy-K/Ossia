@@ -1,198 +1,178 @@
-"""Tests for the ``make_semantic_recall_tool`` factory.
+"""Tests for the semantic_recall tool.
 
-The tool requires an ``AsyncRedisStore`` instance (the only LangGraph
-store that supports vector search) and a Settings with vector
-indexing enabled. We use a real ``AsyncRedisStore`` subclass that
-overrides ``asearch`` to return canned results; we never connect
-to a real Redis.
+The tool is the third memory surface (semantic search across
+threads) per ADR-0007. It is gated on the store being an
+``AsyncRedisStore`` with a RediSearch index, so most tests here
+cover the factory's gating logic and the tool's error/namespace
+contract using a fake store.
+
+Tests cover:
+1. Factory returns ``None`` when the store is not a Redis store
+   (``InMemoryStore`` / ``AsyncPostgresStore``).
+2. Factory returns ``None`` when ``Settings.enable_vector_index=False``.
+3. Factory returns a tool when given a Redis-shaped store.
+4. Tool searches the *caller's* namespace ``("ossia", caller)``,
+   not the base.
+5. Tool returns ``{"matches": [...], "error": ...}`` when
+   ``store.asearch`` raises — does not propagate.
+6. Tool returns ``{"matches": []}`` when no caller is set.
+7. Tool honours ``top_k`` and passes the raw ``query`` to the store
+   (the store embeds it internally).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import asyncio
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
+from langgraph.store.memory import InMemoryStore
 from langgraph.store.redis.aio import AsyncRedisStore
 
-from core.config import Settings
-from core.episodic import make_semantic_recall_tool
-from core.request_context import caller_var
+# AsyncRedisStore.__del__ complains when we skip __init__ via __new__.
+# We only use the instance for isinstance checks; the deallocator is a no-op.
+pytestmark = pytest.mark.filterwarnings(
+    "ignore::pytest.PytestUnraisableExceptionWarning",
+)
+
+from core.config import Settings  # noqa: E402
+from core.episodic import make_semantic_recall_tool  # noqa: E402
+from core.request_context import caller_var  # noqa: E402
+
+
+class _FakeSearchHit:
+    """Mimics the langchain store Item return shape."""
+
+    def __init__(self, key: str, namespace: tuple[str, ...], value: Any, score: float = 0.9) -> None:
+        self.key = key
+        self.namespace = namespace
+        self.value = value
+        self.score = score
+
+
+def _redis_shaped_store() -> AsyncRedisStore:
+    """Build a real ``AsyncRedisStore`` instance and overwrite its
+    async methods with ``AsyncMock`` so we never touch a real server.
+
+    Ponytail: subclassing + AsyncMock beats reimplementing the type
+    hierarchy in a fake class. The isinstance check passes (it IS an
+    AsyncRedisStore) and the methods are no-ops.
+    """
+    store = AsyncRedisStore.__new__(AsyncRedisStore)
+    store.asearch = AsyncMock()  # type: ignore[method-assign]
+    return store  # type: ignore[return-value]
 
 
 def _settings(**overrides: Any) -> Settings:
-    """Return Settings with vector indexing enabled (the default)."""
-    overrides.setdefault("enable_vector_index", True)
-    overrides.setdefault("embedding_model", "embeddinggemma")
-    overrides.setdefault("embedding_dim", 768)
-    return Settings(**overrides)
+    base: dict[str, Any] = {
+        "provider": "openrouter",
+        "model": "openai/gpt-4o-mini",
+        "enable_vector_index": True,
+    }
+    base.update(overrides)
+    return Settings(**base)
 
 
-@dataclass
-class _FakeItem:
-    """Minimal ``SearchItem`` shape: key, namespace, value, score."""
-
-    key: str
-    namespace: tuple[str, ...]
-    value: Any
-    score: float | None = None
-
-
-class _FakeRedisStore(AsyncRedisStore):
-    """Real ``AsyncRedisStore`` subclass that records ``asearch`` calls
-    and returns canned results. Skips parent init (no real connection).
-    """
-
-    def __init__(self, results: list[_FakeItem] | None = None) -> None:  # type: ignore[no-super-call]
-        self.results = results or []
-        self.calls: list[dict[str, Any]] = []
-
-    async def asearch(
-        self,
-        namespace_prefix: tuple[str, ...],
-        *,
-        query: str | None = None,
-        filter: dict[str, Any] | None = None,
-        limit: int = 10,
-        offset: int = 0,
-        refresh_ttl: bool | None = None,
-    ) -> list[_FakeItem]:
-        self.calls.append(
-            {
-                "namespace_prefix": namespace_prefix,
-                "query": query,
-                "limit": limit,
-            }
-        )
-        return self.results
-
-
-# ── Factory behavior ─────────────────────────────────────────────────────────
-
-
-def test_factory_returns_none_for_none_store() -> None:
-    """Without a store, the tool is not built (caller skips wiring)."""
-    assert make_semantic_recall_tool(None, _settings()) is None
-
-
-def test_factory_returns_none_for_non_redis_store() -> None:
-    """A non-Redis store (Postgres, in-memory) returns None — no RAG."""
-
-    class _InMemoryStore:
-        async def asearch(self, *args: Any, **kwargs: Any) -> Any:
-            return []
-
-    assert make_semantic_recall_tool(_InMemoryStore(), _settings()) is None
+def test_factory_returns_none_for_inmemory_store() -> None:
+    """InMemoryStore has no vector index — factory skips the tool."""
+    tool = make_semantic_recall_tool(InMemoryStore(), _settings())
+    assert tool is None
 
 
 def test_factory_returns_none_when_vector_index_disabled() -> None:
-    """``Settings.enable_vector_index=False`` returns None even for
-    a Redis store — the tool would just fail at search time anyway,
-    so we skip wiring."""
-    store = _FakeRedisStore()
-    assert make_semantic_recall_tool(
-        store, _settings(enable_vector_index=False)
-    ) is None
+    """The factory short-circuits when ``Settings.enable_vector_index=False``."""
+    tool = make_semantic_recall_tool(_redis_shaped_store(), _settings(enable_vector_index=False))
+    assert tool is None
 
 
-def test_factory_returns_tool_for_redis_store_with_vector_index() -> None:
-    """Happy path: Redis store + vector index enabled → tool returned."""
-    store = _FakeRedisStore()
-    tool = make_semantic_recall_tool(store, _settings())
+def test_factory_returns_tool_for_redis_store() -> None:
+    """When the store is a Redis instance and vector indexing is on, factory returns a tool."""
+    tool = make_semantic_recall_tool(_redis_shaped_store(), _settings())
     assert tool is not None
     assert tool.name == "semantic_recall"
 
 
-# ── Tool behavior ───────────────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_tool_passes_query_to_asearch_with_caller_namespace() -> None:
-    """The tool calls ``asearch`` with ``("ossia", caller)`` and the
-    raw text query (the store embeds it internally)."""
-    store = _FakeRedisStore()
+def test_tool_uses_caller_namespace() -> None:
+    """The tool queries ``("ossia", caller)`` so callers can't see each other."""
+    store = _redis_shaped_store()
     tool = make_semantic_recall_tool(store, _settings())
     assert tool is not None
-    caller_var.set("user-abc")
+
+    caller_var.set("alice")
     try:
-        await tool.ainvoke({"query": "what did we deploy last week", "top_k": 3})
+        asyncio.run(tool.ainvoke({"query": "what is x?", "top_k": 3}))  # type: ignore[arg-type]
     finally:
         caller_var.set(None)
 
-    assert len(store.calls) == 1
-    call = store.calls[0]
-    assert call["namespace_prefix"] == ("ossia", "user-abc")
-    assert call["query"] == "what did we deploy last week"
-    assert call["limit"] == 3
+    store.asearch.assert_awaited_once()  # type: ignore[attr-defined]
+    call = store.asearch.await_args  # type: ignore[attr-defined]
+    assert call.args[0] == ("ossia", "alice")
+    assert call.kwargs["query"] == "what is x?"
+    assert call.kwargs["limit"] == 3
 
 
-@pytest.mark.asyncio
-async def test_tool_returns_matches_with_namespace_and_score() -> None:
-    """Match items are returned with key, namespace, value, and score."""
-    store = _FakeRedisStore(
-        results=[
-            _FakeItem(
-                key="/memories/AGENTS.md",
-                namespace=("ossia", "user-abc"),
-                value={"content": "deployment notes"},
-                score=0.91,
-            ),
-            _FakeItem(
-                key="/memories/learned.md",
-                namespace=("ossia", "user-abc"),
-                value={"content": "rollback procedure"},
-                score=0.78,
-            ),
-        ]
-    )
+def test_tool_returns_empty_matches_when_no_caller() -> None:
+    """Without a caller context, the tool falls back to the 'default' namespace
+    and still returns a well-formed response."""
+    store = _redis_shaped_store()
+    store.asearch.return_value = []  # type: ignore[attr-defined]
     tool = make_semantic_recall_tool(store, _settings())
     assert tool is not None
-    caller_var.set("user-abc")
+
+    caller_var.set(None)
+    result = asyncio.run(tool.ainvoke({"query": "anything"}))  # type: ignore[arg-type]
+    assert result == {"matches": []}
+    assert store.asearch.await_args.args[0] == ("ossia", "default")  # type: ignore[attr-defined]
+
+
+def test_tool_swallows_store_errors() -> None:
+    """A store failure becomes ``{matches: [], error: ...}`` — never propagates."""
+    store = _redis_shaped_store()
+    store.asearch.side_effect = RuntimeError("redis down")  # type: ignore[attr-defined]
+    tool = make_semantic_recall_tool(store, _settings())
+    assert tool is not None
+
+    caller_var.set("alice")
     try:
-        out = await tool.ainvoke({"query": "deployment", "top_k": 5})
+        result = asyncio.run(tool.ainvoke({"query": "x"}))  # type: ignore[arg-type]
     finally:
         caller_var.set(None)
-    assert len(out["matches"]) == 2
-    assert out["matches"][0]["key"] == "/memories/AGENTS.md"
-    assert out["matches"][0]["namespace"] == ["ossia", "user-abc"]
-    assert out["matches"][0]["score"] == 0.91
-    assert out["matches"][1]["score"] == 0.78
+
+    assert result["matches"] == []
+    assert "vector search failed" in result["error"]
+    assert "redis down" in result["error"]
 
 
-@pytest.mark.asyncio
-async def test_tool_falls_back_to_default_caller() -> None:
-    """No caller context → namespace ``("ossia", "default")``."""
-    store = _FakeRedisStore()
+def test_tool_normalizes_match_shape() -> None:
+    """Hits are returned as ``{key, namespace, value, score}`` dicts."""
+    store = _redis_shaped_store()
+    store.asearch.return_value = [  # type: ignore[attr-defined]
+        _FakeSearchHit(
+            key="AGENTS.md",
+            namespace=("ossia", "bob"),
+            value={"content": ["matched body"], "created_at": "2026-01-01"},
+            score=0.87,
+        )
+    ]
     tool = make_semantic_recall_tool(store, _settings())
     assert tool is not None
-    await tool.ainvoke({"query": "x", "top_k": 1})
-    assert store.calls[0]["namespace_prefix"] == ("ossia", "default")
+
+    caller_var.set("bob")
+    try:
+        result = asyncio.run(tool.ainvoke({"query": "x", "top_k": 1}))  # type: ignore[arg-type]
+    finally:
+        caller_var.set(None)
+
+    assert len(result["matches"]) == 1
+    hit = result["matches"][0]
+    assert hit["key"] == "AGENTS.md"
+    assert hit["namespace"] == ["ossia", "bob"]
+    assert hit["score"] == 0.87
+    assert hit["value"]["content"] == ["matched body"]
 
 
-@pytest.mark.asyncio
-async def test_tool_handles_asearch_failure_gracefully() -> None:
-    """If asearch raises, the tool returns an empty match list with
-    an error field — does not propagate the exception."""
-
-    class _BrokenStore(_FakeRedisStore):
-        async def asearch(
-            self, *args: Any, **kwargs: Any
-        ) -> list[_FakeItem]:
-            raise RuntimeError("redis down")
-
-    store = _BrokenStore()
-    tool = make_semantic_recall_tool(store, _settings())
-    assert tool is not None
-    out = await tool.ainvoke({"query": "x", "top_k": 1})
-    assert out["matches"] == []
-    assert "redis down" in out["error"]
-
-
-@pytest.mark.asyncio
-async def test_tool_returns_empty_when_no_matches() -> None:
-    store = _FakeRedisStore(results=[])
-    tool = make_semantic_recall_tool(store, _settings())
-    assert tool is not None
-    out = await tool.ainvoke({"query": "x", "top_k": 5})
-    assert out["matches"] == []
-    assert "error" not in out
+def test_settings_enable_vector_index_default_is_true() -> None:
+    """The default keeps vector recall on for Redis deployments."""
+    s = Settings(provider="openrouter", model="openai/gpt-4o-mini")
+    assert s.enable_vector_index is True

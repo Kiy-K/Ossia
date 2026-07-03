@@ -90,6 +90,14 @@ ollama = [
     "langchain-ollama>=0.3.0",
 ]
 
+# Optional: browser-use (https://browser-use.com) — the web-reviewer subagent
+# imports this lazily. Install only when you want the web-reviewer to
+# actually drive a browser. Without it, the tool returns a clear
+# "browser-use not installed" error so the rest of the agent keeps working.
+browseruse = [
+    "browser-use>=0.11.0",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/core"]
 

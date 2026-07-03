@@ -317,9 +317,7 @@ async def test_tool_call_limit_enforces_cap() -> None:
         assert getattr(result, "name", None) != "unknown"
 
     # 4th call is capped
-    result = await mw.awrap_tool_call(
-        _Req("internet_search", {"query": "test-4"}), _ok_handler
-    )
+    result = await mw.awrap_tool_call(_Req("internet_search", {"query": "test-4"}), _ok_handler)
     assert "Maximum tool call limit" in str(result.content)
     # The capped result is a ToolMessage, not a handler response
     assert "send_response" in str(result.content)
@@ -336,9 +334,7 @@ async def test_tool_call_limit_grade_response_not_counted() -> None:
     await mw.awrap_tool_call(_Req("grade_response"), _ok_handler)
 
     # Another tool call should still be under the limit (only 1 counted)
-    result = await mw.awrap_tool_call(
-        _Req("search_codebase", {"query": "test"}), _ok_handler
-    )
+    result = await mw.awrap_tool_call(_Req("search_codebase", {"query": "test"}), _ok_handler)
     assert result.content == "ok"
 
 
@@ -351,21 +347,15 @@ async def test_tool_call_limit_send_response_not_counted() -> None:
     await mw.awrap_tool_call(_Req("send_response"), _ok_handler)
 
     # First counted call passes
-    result = await mw.awrap_tool_call(
-        _Req("search_codebase", {"query": "test"}), _ok_handler
-    )
+    result = await mw.awrap_tool_call(_Req("search_codebase", {"query": "test"}), _ok_handler)
     assert result.content == "ok"
 
     # Second counted call passes (under limit)
-    result = await mw.awrap_tool_call(
-        _Req("fetch_url", {"url": "http://example.com"}), _ok_handler
-    )
+    result = await mw.awrap_tool_call(_Req("fetch_url", {"url": "http://example.com"}), _ok_handler)
     assert result.content == "ok"
 
     # Third counted call exceeds limit
-    result = await mw.awrap_tool_call(
-        _Req("internet_search", {"query": "test-3"}), _ok_handler
-    )
+    result = await mw.awrap_tool_call(_Req("internet_search", {"query": "test-3"}), _ok_handler)
     assert "Maximum tool call limit" in str(result.content)
 
 
@@ -382,9 +372,7 @@ async def test_tool_call_limit_lifecycle_reset() -> None:
     await mw.awrap_tool_call(_Req("search_codebase", {"q": "b"}), _ok_handler)
 
     # 3rd should be capped
-    result = await mw.awrap_tool_call(
-        _Req("internet_search", {"q": "c"}), _ok_handler
-    )
+    result = await mw.awrap_tool_call(_Req("internet_search", {"q": "c"}), _ok_handler)
     assert "Maximum tool call limit" in str(result.content)
 
     # Simulate run end and new run start
@@ -392,9 +380,7 @@ async def test_tool_call_limit_lifecycle_reset() -> None:
     await mw.abefore_agent({}, None)
 
     # Counter should reset
-    result = await mw.awrap_tool_call(
-        _Req("search_codebase", {"q": "new-run"}), _ok_handler
-    )
+    result = await mw.awrap_tool_call(_Req("search_codebase", {"q": "new-run"}), _ok_handler)
     assert result.content == "ok"
 
 
@@ -417,14 +403,10 @@ async def test_tool_call_limit_configurable() -> None:
     """Middleware accepts a configurable max_calls parameter."""
     mw = ToolCallLimitMiddleware(max_calls=1)
 
-    result = await mw.awrap_tool_call(
-        _Req("search_codebase", {"query": "first"}), _ok_handler
-    )
+    result = await mw.awrap_tool_call(_Req("search_codebase", {"query": "first"}), _ok_handler)
     assert result.content == "ok"
 
-    result = await mw.awrap_tool_call(
-        _Req("internet_search", {"query": "second"}), _ok_handler
-    )
+    result = await mw.awrap_tool_call(_Req("internet_search", {"query": "second"}), _ok_handler)
     assert "Maximum tool call limit" in str(result.content)
 
 
@@ -448,9 +430,7 @@ async def test_tool_call_limit_returns_tool_message_on_cap() -> None:
 
     await mw.awrap_tool_call(_Req("search_codebase", {"q": "a"}), _ok_handler)
 
-    result = await mw.awrap_tool_call(
-        _Req("internet_search", {"q": "b"}), _ok_handler
-    )
+    result = await mw.awrap_tool_call(_Req("internet_search", {"q": "b"}), _ok_handler)
     assert isinstance(result, ToolMessage)
     assert "Maximum tool call limit" in str(result.content)
     assert result.tool_call_id == "t-req-1"
@@ -470,9 +450,7 @@ async def _fail_handler(_request: Any) -> ToolMessage:
 async def test_circuit_breaker_pass_through_closed() -> None:
     """CLOSED circuit passes calls through to the handler."""
     mw = CircuitBreakerMiddleware(failure_threshold=3, recovery_timeout=60.0)
-    result = await mw.awrap_tool_call(
-        _Req("internet_search", {"q": "hello"}), _ok_handler
-    )
+    result = await mw.awrap_tool_call(_Req("internet_search", {"q": "hello"}), _ok_handler)
     assert result.content == "ok"
 
 
@@ -496,14 +474,10 @@ async def test_circuit_breaker_opens_after_threshold() -> None:
     # First 3 failures: circuit stays closed (but transitions to OPEN on the 3rd)
     for i in range(3):
         with pytest.raises(RuntimeError, match="Connection refused"):
-            await mw.awrap_tool_call(
-                _Req("internet_search", {"q": f"test-{i}"}), _fail_handler
-            )
+            await mw.awrap_tool_call(_Req("internet_search", {"q": f"test-{i}"}), _fail_handler)
 
     # 4th call: circuit is OPEN → fail fast
-    result = await mw.awrap_tool_call(
-        _Req("internet_search", {"q": "test-4"}), _fail_handler
-    )
+    result = await mw.awrap_tool_call(_Req("internet_search", {"q": "test-4"}), _fail_handler)
     assert isinstance(result, ToolMessage)
     assert "currently unavailable" in str(result.content)
     assert result.name == "internet_search"
@@ -516,14 +490,10 @@ async def test_circuit_breaker_threshold_configurable() -> None:
 
     # First failure opens circuit immediately
     with pytest.raises(RuntimeError):
-        await mw.awrap_tool_call(
-            _Req("internet_search", {"q": "test-0"}), _fail_handler
-        )
+        await mw.awrap_tool_call(_Req("internet_search", {"q": "test-0"}), _fail_handler)
 
     # Second call blocked
-    result = await mw.awrap_tool_call(
-        _Req("internet_search", {"q": "test-1"}), _fail_handler
-    )
+    result = await mw.awrap_tool_call(_Req("internet_search", {"q": "test-1"}), _fail_handler)
     assert "currently unavailable" in str(result.content)
 
 
@@ -535,29 +505,21 @@ async def test_circuit_breaker_half_open_allows_probe() -> None:
     # Open the circuit
     for _i in range(2):
         with pytest.raises(RuntimeError):
-            await mw.awrap_tool_call(
-                _Req("internet_search", {"q": "boom"}), _fail_handler
-            )
+            await mw.awrap_tool_call(_Req("internet_search", {"q": "boom"}), _fail_handler)
 
     # Circuit is OPEN, call blocked
-    result = await mw.awrap_tool_call(
-        _Req("internet_search", {"q": "blocked"}), _fail_handler
-    )
+    result = await mw.awrap_tool_call(_Req("internet_search", {"q": "blocked"}), _fail_handler)
     assert "currently unavailable" in str(result.content)
 
     # Wait for recovery timeout
     time.sleep(0.06)
 
     # Probe succeeds → circuit closes
-    result = await mw.awrap_tool_call(
-        _Req("internet_search", {"q": "probe"}), _ok_handler
-    )
+    result = await mw.awrap_tool_call(_Req("internet_search", {"q": "probe"}), _ok_handler)
     assert result.content == "ok"
 
     # Circuit closed — calls pass through again
-    result = await mw.awrap_tool_call(
-        _Req("internet_search", {"q": "after-recovery"}), _ok_handler
-    )
+    result = await mw.awrap_tool_call(_Req("internet_search", {"q": "after-recovery"}), _ok_handler)
     assert result.content == "ok"
 
 
@@ -569,18 +531,14 @@ async def test_circuit_breaker_half_open_failure_stays_open() -> None:
     # Open the circuit
     for _i in range(2):
         with pytest.raises(RuntimeError):
-            await mw.awrap_tool_call(
-                _Req("internet_search", {"q": "boom"}), _fail_handler
-            )
+            await mw.awrap_tool_call(_Req("internet_search", {"q": "boom"}), _fail_handler)
 
     # Wait for recovery timeout
     time.sleep(0.06)
 
     # HALF_OPEN probe is attempted but fails → back to OPEN with new timeout
     with pytest.raises(RuntimeError):
-        await mw.awrap_tool_call(
-            _Req("internet_search", {"q": "probe-fails"}), _fail_handler
-        )
+        await mw.awrap_tool_call(_Req("internet_search", {"q": "probe-fails"}), _fail_handler)
 
     # Still OPEN (not enough time since the HALF_OPEN probe failure)
     result = await mw.awrap_tool_call(
@@ -597,20 +555,14 @@ async def test_circuit_breaker_per_tool_isolation() -> None:
     # Open circuit for internet_search
     for _i in range(2):
         with pytest.raises(RuntimeError):
-            await mw.awrap_tool_call(
-                _Req("internet_search", {"q": "boom"}), _fail_handler
-            )
+            await mw.awrap_tool_call(_Req("internet_search", {"q": "boom"}), _fail_handler)
 
     # fetch_url should still be CLOSED (separate tool)
-    result = await mw.awrap_tool_call(
-        _Req("fetch_url", {"url": "http://example.com"}), _ok_handler
-    )
+    result = await mw.awrap_tool_call(_Req("fetch_url", {"url": "http://example.com"}), _ok_handler)
     assert result.content == "ok"
 
     # internet_search is still blocked
-    result = await mw.awrap_tool_call(
-        _Req("internet_search", {"q": "blocked"}), _fail_handler
-    )
+    result = await mw.awrap_tool_call(_Req("internet_search", {"q": "blocked"}), _fail_handler)
     assert "currently unavailable" in str(result.content)
 
 
@@ -621,39 +573,25 @@ async def test_circuit_breaker_recovery_on_success() -> None:
 
     # 2 failures, then success — circuit should still be CLOSED
     with pytest.raises(RuntimeError):
-        await mw.awrap_tool_call(
-            _Req("internet_search", {"q": "fail-1"}), _fail_handler
-        )
+        await mw.awrap_tool_call(_Req("internet_search", {"q": "fail-1"}), _fail_handler)
     with pytest.raises(RuntimeError):
-        await mw.awrap_tool_call(
-            _Req("internet_search", {"q": "fail-2"}), _fail_handler
-        )
+        await mw.awrap_tool_call(_Req("internet_search", {"q": "fail-2"}), _fail_handler)
 
     # Success resets failure count
-    result = await mw.awrap_tool_call(
-        _Req("internet_search", {"q": "success"}), _ok_handler
-    )
+    result = await mw.awrap_tool_call(_Req("internet_search", {"q": "success"}), _ok_handler)
     assert result.content == "ok"
 
     # Counter was reset, so 2 more failures don't open circuit yet
     with pytest.raises(RuntimeError):
-        await mw.awrap_tool_call(
-            _Req("internet_search", {"q": "fail-3"}), _fail_handler
-        )
+        await mw.awrap_tool_call(_Req("internet_search", {"q": "fail-3"}), _fail_handler)
     with pytest.raises(RuntimeError):
-        await mw.awrap_tool_call(
-            _Req("internet_search", {"q": "fail-4"}), _fail_handler
-        )
+        await mw.awrap_tool_call(_Req("internet_search", {"q": "fail-4"}), _fail_handler)
 
     # Need one more failure to open circuit (3rd consecutive after reset)
     with pytest.raises(RuntimeError):
-        await mw.awrap_tool_call(
-            _Req("internet_search", {"q": "fail-5"}), _fail_handler
-        )
+        await mw.awrap_tool_call(_Req("internet_search", {"q": "fail-5"}), _fail_handler)
 
-    result = await mw.awrap_tool_call(
-        _Req("internet_search", {"q": "blocked"}), _fail_handler
-    )
+    result = await mw.awrap_tool_call(_Req("internet_search", {"q": "blocked"}), _fail_handler)
     assert "currently unavailable" in str(result.content)
 
 
@@ -667,18 +605,14 @@ async def test_circuit_breaker_lifecycle_reset() -> None:
 
     # Open circuit
     with pytest.raises(RuntimeError):
-        await mw.awrap_tool_call(
-            _Req("internet_search", {"q": "boom"}), _fail_handler
-        )
+        await mw.awrap_tool_call(_Req("internet_search", {"q": "boom"}), _fail_handler)
 
     # Simulate run end and new run start
     await mw.aafter_agent({}, None)
     await mw.abefore_agent({}, None)
 
     # State should be reset — calls go through again
-    result = await mw.awrap_tool_call(
-        _Req("internet_search", {"q": "new-run"}), _ok_handler
-    )
+    result = await mw.awrap_tool_call(_Req("internet_search", {"q": "new-run"}), _ok_handler)
     assert result.content == "ok"
 
 
@@ -689,9 +623,7 @@ async def test_circuit_breaker_lifecycle_cleanup() -> None:
 
     await mw.abefore_agent({}, None)
     with pytest.raises(RuntimeError):
-        await mw.awrap_tool_call(
-            _Req("internet_search", {"q": "boom"}), _fail_handler
-        )
+        await mw.awrap_tool_call(_Req("internet_search", {"q": "boom"}), _fail_handler)
     tid = mw._thread_id()
     assert tid in mw._breakers
     assert "internet_search" in mw._breakers[tid]
@@ -720,13 +652,9 @@ async def test_circuit_breaker_tool_message_attributes() -> None:
 
     # Open the circuit
     with pytest.raises(RuntimeError):
-        await mw.awrap_tool_call(
-            _Req("internet_search", {"q": "boom"}), _fail_handler
-        )
+        await mw.awrap_tool_call(_Req("internet_search", {"q": "boom"}), _fail_handler)
 
-    result = await mw.awrap_tool_call(
-        _Req("internet_search", {"q": "blocked"}), _fail_handler
-    )
+    result = await mw.awrap_tool_call(_Req("internet_search", {"q": "blocked"}), _fail_handler)
     assert isinstance(result, ToolMessage)
     assert "currently unavailable" in str(result.content)
     assert result.tool_call_id == "t-req-1"

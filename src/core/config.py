@@ -71,6 +71,61 @@ class Settings(BaseSettings):
             "or fail loudly for URL fetches."
         ),
     )
+    browser_use_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("BROWSER_USE_API_KEY", "OSSIA_BROWSER_USE_API_KEY"),
+        description=(
+            "browser-use API key for the web-reviewer subagent. Read from "
+            "BROWSER_USE_API_KEY (preferred) or OSSIA_BROWSER_USE_API_KEY. "
+            "REQUIRED only when browser_use_local=False (uses the browser-use "
+            "cloud browser, which needs the key) OR browser_use_llm="
+            '"browser-use" (uses their LLM gateway). NOT required for the '
+            "common path: local Chromium + the main provider's LLM. The "
+            "web-reviewer subagent is only wired when (browser-use installed) "
+            "AND (BROWSER_USE_API_KEY set OR browser_use_local=True)."
+        ),
+    )
+    browser_use_llm: str = Field(
+        default="main",
+        description=(
+            'Which LLM to use for the browser-use agent. ``"main"`` (default) '
+            "uses the same provider/model as the main agent (e.g. openrouter/"
+            'gpt-4o-mini). ``"browser-use"`` uses ``ChatBrowserUse()`` from the '
+            "browser-use SDK, which routes through their LLM gateway — requires "
+            "a paid browser-use account (the free tier returns 403 from the "
+            "gateway). Set via env: BROWSER_USE_LLM=main|browser-use."
+        ),
+    )
+    browser_use_local: bool = Field(
+        default=False,
+        description=(
+            "Run the browser-use agent against a LOCAL Chromium instead of "
+            "the browser-use cloud browser. Local mode is FREE (no "
+            "BROWSER_USE_API_KEY needed for the browser itself; you only pay "
+            "for the LLM calls) and works against sites the cloud browser's "
+            "free tier can't reach due to anti-bot. One-time setup: "
+            "``uvx browser-use install`` downloads Chromium (~200MB). "
+            "Set via env: BROWSER_USE_LOCAL=true."
+        ),
+    )
+    browser_use_chromium_sandbox: bool = Field(
+        default=True,
+        description=(
+            "Enable Chromium's process sandbox for the local browser. Set to "
+            "False when running inside Docker or as root, where the kernel "
+            "sandbox can't be set up. Set via env: "
+            "BROWSER_USE_CHROMIUM_SANDBOX=true|false."
+        ),
+    )
+    browser_use_user_data_dir: str | None = Field(
+        default=None,
+        description=(
+            "Persistent profile directory for the local Chromium. Cookies, "
+            "localStorage, and session data survive across runs so the agent "
+            "stays logged in. Default: a per-process temp dir (no "
+            "persistence). Set via env: BROWSER_USE_USER_DATA_DIR=/path/to/dir."
+        ),
+    )
 
     # LangSmith tracing
     langsmith_tracing: bool = Field(default=False)
@@ -98,6 +153,21 @@ class Settings(BaseSettings):
     enable_async_subagents: bool = Field(
         default=True,
         description="Enable background async subagents for long-running tasks.",
+    )
+
+    # Plugin system
+    ossia_plugins_dir: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("OSSIA_PLUGINS_DIR", "OSSIA_OSSIA_PLUGINS_DIR"),
+        description=(
+            "Directory for user-installed plugins. Each ``.py`` file and "
+            "each subpackage with ``__init__.py`` is treated as a plugin "
+            "if it defines a top-level ``register(api)`` function. The "
+            "bundled ``plugins/`` dir at the repo root is always "
+            "scanned; this setting adds an additional location. Defaults "
+            "to ``<repo>/plugins_local/`` (created on first load). Set "
+            "via env: OSSIA_PLUGINS_DIR=/path/to/dir."
+        ),
     )
 
     # Agent behavior

@@ -28,6 +28,7 @@ import secrets
 import uuid
 from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack, asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from argon2 import low_level as argon2_low_level
@@ -61,7 +62,6 @@ from langgraph.types import Command  # noqa: E402
 from prometheus_fastapi_instrumentator import Instrumentator  # noqa: E402
 from slowapi import Limiter, _rate_limit_exceeded_handler  # noqa: E402
 from slowapi.errors import RateLimitExceeded  # noqa: E402
-from slowapi.util import get_remote_address  # noqa: E402
 
 from core.agent import build_agent_async  # noqa: E402
 from core.audit import run_audit  # noqa: E402
@@ -69,9 +69,15 @@ from core.config import get_settings  # noqa: E402
 from core.context import OssiaContext  # noqa: E402
 from core.eval import run_eval  # noqa: E402
 from core.events import EventNormalizer, get_thread_event_buffer, serialize_sse  # noqa: E402
-from core.memory import get_checkpointer  # noqa: E402
+from core.memory import (  # noqa: E402
+    ensure_caller_memory_seeded,
+    get_checkpointer,
+)
 from core.redis_client import close_redis  # noqa: E402
-from core.request_context import clear_request_context, set_request_context  # noqa: E402
+from core.request_context import (  # noqa: E402
+    clear_request_context,
+    set_request_context,
+)
 from core.schemas import (  # noqa: E402
     Artifact,
     AuditReport,
@@ -83,6 +89,9 @@ from core.schemas import (  # noqa: E402
     EvalReport,
     EvalRequest,
     HealthResponse,
+    MemoryFile,
+    PluginInfo,
+    PluginListResponse,
     ResumeRequest,
     ResumeResponse,
     ThreadEventsResponse,
@@ -90,69 +99,137 @@ from core.schemas import (  # noqa: E402
     ThreadStateResponse,
     ToolInfo,
     ToolListResponse,
+    WebhookCreate,
+    WebhookCreated,
+    WebhookInfo,
+    WebhookListResponse,
+    WhoAmIResponse,
 )
 
 logger = logging.getLogger(__name__)
 
 # ── Rate limiter ─────────────────────────────────────────────────────────────
-# In-memory rate limiter backed by slowapi. Limits are applied per remote IP.
-# Chat endpoints get a stricter limit than the read-only endpoints.
-# The /health and /metrics endpoints are excluded from rate limiting.
-# In production behind a reverse proxy, slowapi reads X-Forwarded-For
-# headers to identify the real client IP (see TrustedHost middleware).
+# In-memory rate limiter backed by slowapi. The bucket key is the
+# caller's API key (hashed) so multiple clients behind one NAT get
+# independent buckets, and a single key abuse cannot be diluted by
+# sharing an IP. The fallback for unauthenticated / non-billable
+# paths is the remote IP.
+# Ponytail: hashing the key keeps the in-memory map small and means
+# the bucket does not leak the secret into logs.
 
-_RATE_LIMIT_CHAT = "30/minute"       # POST /v1/chat*
-_RATE_LIMIT_DEFAULT = "60/minute"    # all other authenticated endpoints
-_RATE_LIMIT_HEALTH = "120/minute"    # /health is cheap
+import hashlib as _hashlib  # noqa: E402
 
-limiter = Limiter(key_func=get_remote_address, default_limits=[_RATE_LIMIT_DEFAULT])
+
+def _rate_limit_key(request) -> str:  # type: ignore[no-untyped-def]
+    """Identify the caller for rate-limit bucketing.
+
+    Prefer the ``X-API-Key`` header (hashed) so the limit tracks the
+    credential, not the network. Fall back to ``request.client.host``
+    for ``/health`` and ``/metrics``, which the limiter does not
+    require auth for. Ponytail: SHA-256 truncated to 16 chars is
+    enough for collision-free bucketing; the full key never lands
+    in the limiter's storage.
+    """
+    api_key = request.headers.get("X-API-Key") or request.headers.get("x-api-key")
+    if api_key:
+        digest = _hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:16]
+        return f"key:{digest}"
+    client = request.client
+    return f"ip:{client.host if client else 'unknown'}"
+
+
+_RATE_LIMIT_CHAT = "30/minute"  # POST /v1/chat*
+_RATE_LIMIT_DEFAULT = "60/minute"  # all other authenticated endpoints
+_RATE_LIMIT_HEALTH = "120/minute"  # /health is cheap
+
+limiter = Limiter(key_func=_rate_limit_key, default_limits=[_RATE_LIMIT_DEFAULT])
+
+
+def _expected_api_keys() -> list[str]:
+    """Return the list of accepted API keys.
+
+    Resolution order (first non-empty wins):
+      1. ``$OSSIA_API_KEYS`` — comma-separated.
+      2. ``$OSSIA_API_KEYS_FILE`` — newline-delimited file path.
+      3. ``$OSSIA_API_KEY`` — single key (back-compat).
+
+    Empty strings and ``#``-prefixed lines (when reading a file) are
+    skipped. Returns an empty list when nothing is configured; the
+    lifespan fails fast in that case.
+    """
+    raw = os.environ.get("OSSIA_API_KEYS", "").strip()
+    if raw:
+        return [k.strip() for k in raw.split(",") if k.strip()]
+    path = os.environ.get("OSSIA_API_KEYS_FILE", "").strip()
+    if path:
+        try:
+            text = Path(path).read_text(encoding="utf-8")
+        except OSError:
+            return []
+        keys: list[str] = []
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            keys.append(line)
+        return keys
+    single = os.environ.get("OSSIA_API_KEY", "").strip()
+    return [single] if single else []
 
 
 def _expected_api_key() -> str | None:
-    """Return the expected API key from the OSSIA_API_KEY env var."""
-    return os.environ.get("OSSIA_API_KEY")
+    """Back-compat: return the first configured key, or None."""
+    keys = _expected_api_keys()
+    return keys[0] if keys else None
 
 
 def _require_api_key_at_startup() -> str:
-    """Validate the API key is configured at startup, failing fast otherwise."""
-    expected = _expected_api_key()
-    if not expected:
+    """Validate at least one API key is configured, failing fast otherwise."""
+    keys = _expected_api_keys()
+    if not keys:
         raise RuntimeError(
-            "OSSIA_API_KEY is not configured. Set it in the environment or .env "
-            "before starting the server."
+            "No API key configured. Set OSSIA_API_KEY (single), "
+            "OSSIA_API_KEYS (comma-separated), or OSSIA_API_KEYS_FILE "
+            "(newline-delimited) in the environment or .env before "
+            "starting the server."
         )
-    return expected
+    return keys[0]
 
 
 async def verify_api_key(request: Request) -> str:
     """Validate the X-API-Key header and return a caller identifier.
 
-    Returns:
-        A short, stable caller identifier (sha256[:16] of the provided key)
-        used to scope thread ids so authenticated callers cannot access each
-        other's conversation state.
+    The provided key is matched against the list of accepted keys
+    (see ``_expected_api_keys``). On success returns a stable
+    caller id (Argon2id of the key) used to scope thread ids and
+    per-tenant state. The same key always returns the same caller
+    id.
 
     Raises:
         HTTPException: 401 when the API key is missing or invalid; 500 when the
-        server is misconfigured (no OSSIA_API_KEY in the environment).
+        server is misconfigured (no API keys in the environment).
     """
-    expected = _expected_api_key()
+    expected = _expected_api_keys()
     provided = request.headers.get("x-api-key", "")
     if not expected:
         raise HTTPException(
             status_code=500,
-            detail="OSSIA_API_KEY is not configured on the server.",
+            detail="No API key is configured on the server.",
         )
     # Reject obviously oversized keys up front. ``compare_digest`` is
     # constant-time but its cost is linear in input length; bounding the
     # header here prevents an attacker from forcing a multi-MB compare on
     # every request to a protected route.
-    if (
-        not provided
-        or len(provided) > 256
-        or len(provided) != len(expected)
-        or not secrets.compare_digest(provided, expected)
-    ):
+    if not provided or len(provided) > 256:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key.")
+    matched = False
+    for candidate in expected:
+        if len(candidate) != len(provided):
+            continue
+        if secrets.compare_digest(provided, candidate):
+            matched = True
+            break
+    if not matched:
         raise HTTPException(status_code=401, detail="Invalid or missing API key.")
     # Use Argon2id (not sha256/blake2b) for caller-id derivation because
     # the input is the API key itself — a sensitive credential. Argon2 is
@@ -204,9 +281,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         if settings.redis_url:
             from core.memory import get_redis_checkpointer
 
-            checkpointer = await stack.enter_async_context(
-                get_redis_checkpointer(settings)
-            )
+            checkpointer = await stack.enter_async_context(get_redis_checkpointer(settings))
         elif settings.postgres_url:
             checkpointer = await stack.enter_async_context(get_checkpointer(settings))
         # Load the knowledge base from KB_SOURCE_URLS into Redis
@@ -232,6 +307,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.agent = agent
         app.state.settings = settings
         app.state.checkpointer = checkpointer
+        # Expose the store for the /v1/memories/* and /v1/policies/*
+        # debug routes. Falls back to the module-level handle in
+        # ``core.agent`` for cases where the compiled graph rejected
+        # attribute assignment.
+        from core.agent import _runtime_store
+
+        app.state.store = getattr(agent, "store", None) or _runtime_store
         # Pull the MCP tool -> server registry off the toolkit (it lives
         # on the MCPToolkit instance created inside build_agent_async and
         # is exposed via the agent's tool node). We rebuild the map from
@@ -404,30 +486,42 @@ def _msg_to_chat_message(msg: BaseMessage) -> ChatMessage:
                     text_parts.append(p.get("text", ""))
                 elif ptype == "image_url":
                     # Extract image artifact metadata
-                    artifact_refs.append(ArtifactInfo(
-                        id=f"img-{i}",
-                        type="image",
-                        filename=f"image-{i}.png",
-                        mime_type="image/png",
-                        analysis_state="pending",
-                    ))
+                    artifact_refs.append(
+                        ArtifactInfo(
+                            id=f"img-{i}",
+                            type="image",
+                            filename=f"image-{i}.png",
+                            mime_type="image/png",
+                            analysis_state="pending",
+                        )
+                    )
                 elif ptype == "file":
                     source = p.get("source", {})
-                    mime = source.get("mime_type", "application/octet-stream") if isinstance(source, dict) else "application/octet-stream"
-                    ftype = (
-                        "document" if mime.startswith("application/") else
-                        "image" if mime.startswith("image/") else
-                        "audio" if mime.startswith("audio/") else
-                        "video" if mime.startswith("video/") else
-                        "document"
+                    mime = (
+                        source.get("mime_type", "application/octet-stream")
+                        if isinstance(source, dict)
+                        else "application/octet-stream"
                     )
-                    artifact_refs.append(ArtifactInfo(
-                        id=f"file-{i}",
-                        type=ftype,  # type: ignore[arg-type]
-                        filename=p.get("filename", f"file-{i}"),
-                        mime_type=mime,
-                        analysis_state="pending",
-                    ))
+                    ftype = (
+                        "document"
+                        if mime.startswith("application/")
+                        else "image"
+                        if mime.startswith("image/")
+                        else "audio"
+                        if mime.startswith("audio/")
+                        else "video"
+                        if mime.startswith("video/")
+                        else "document"
+                    )
+                    artifact_refs.append(
+                        ArtifactInfo(
+                            id=f"file-{i}",
+                            type=ftype,  # type: ignore[arg-type]
+                            filename=p.get("filename", f"file-{i}"),
+                            mime_type=mime,
+                            analysis_state="pending",
+                        )
+                    )
         content = "".join(text_parts)
     if not isinstance(content, str):
         content = str(content)
@@ -512,12 +606,61 @@ def _build_invocation(
     agent = app.state.agent
     config = {"configurable": {"thread_id": thread_id}}
     content: list[dict[str, Any]] = [{"type": "text", "text": payload.message}]
-    for art in (payload.artifacts or []):
+    for art in payload.artifacts or []:
         block = _normalize_artifact(art)
         if block is not None:
             content.append(block)
     input_dict = {"messages": [HumanMessage(content=content)]}  # type: ignore[arg-type]
     return agent, input_dict, config
+
+
+def _record_llm_usage(messages: list[Any], provider: str, model: str) -> None:
+    """Walk messages and bump LLM usage / cost counters.
+
+    LangChain ``AIMessage`` carries ``usage_metadata`` (the modern
+    path) or ``response_metadata.token_usage`` (legacy / some
+    providers). We sum both, de-duping on the message id so a
+    message that exposes both is counted once. Ponytail: one
+    counter family per request — Prometheus rate() handles the
+    per-second view.
+    """
+    from core.metrics import (
+        LLM_COST_USD,
+        LLM_REQUESTS,
+        LLM_TOKENS,
+        estimate_cost_usd_micros,
+    )
+
+    LLM_REQUESTS.labels(provider=provider, model=model).inc()
+    total_prompt = 0
+    total_completion = 0
+    seen: set[int] = set()
+    for m in messages:
+        mid = id(m)
+        if mid in seen:
+            continue
+        seen.add(mid)
+        usage = getattr(m, "usage_metadata", None)
+        if usage:
+            # Modern path: usage_metadata is {input_tokens, output_tokens, ...}
+            total_prompt += int(usage.get("input_tokens", 0) or 0)
+            total_completion += int(usage.get("output_tokens", 0) or 0)
+            continue
+        # Legacy path: response_metadata.token_usage
+        response = getattr(m, "response_metadata", None) or {}
+        token_usage = response.get("token_usage") or {}
+        if token_usage:
+            total_prompt += int(token_usage.get("prompt_tokens", 0) or 0)
+            total_completion += int(token_usage.get("completion_tokens", 0) or 0)
+    if total_prompt or total_completion:
+        LLM_TOKENS.labels(provider=provider, model=model, kind="prompt").inc(total_prompt)
+        LLM_TOKENS.labels(provider=provider, model=model, kind="completion").inc(total_completion)
+        LLM_TOKENS.labels(provider=provider, model=model, kind="total").inc(
+            total_prompt + total_completion
+        )
+        cost = estimate_cost_usd_micros(model, total_prompt, total_completion)
+        if cost:
+            LLM_COST_USD.labels(provider=provider, model=model).inc(cost)
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -551,13 +694,22 @@ async def chat(
 ) -> ChatResponse:
     """Run a single chat turn against the agent."""
     thread_id = _thread_id_for(caller, payload.thread_id)
+    # Seed the caller's memory namespace on first request so the
+    # agent's user-scoped backend finds the seed.
+    await ensure_caller_memory_seeded(app.state.store, caller)
     agent, input_dict, config = _build_invocation(payload, thread_id)
     context = OssiaContext(
         caller=caller,
         request_id=getattr(request.state, "request_id", None),
     )
     result = await agent.ainvoke(input_dict, config, context=context)
-    messages = [_msg_to_chat_message(m) for m in result.get("messages", [])]
+    raw_messages = list(result.get("messages", []))
+    _record_llm_usage(
+        raw_messages,
+        provider=app.state.settings.provider,
+        model=app.state.settings.model,
+    )
+    messages = [_msg_to_chat_message(m) for m in raw_messages]
     return ChatResponse(thread_id=thread_id, messages=messages)
 
 
@@ -588,6 +740,9 @@ async def chat_stream(
     is the part we promise to clients.
     """
     thread_id = _thread_id_for(caller, payload.thread_id)
+    # Seed the caller's memory namespace on first request so the
+    # agent's user-scoped backend finds the seed.
+    await ensure_caller_memory_seeded(app.state.store, caller)
     agent, input_dict, config = _build_invocation(payload, thread_id)
     context = OssiaContext(
         caller=caller,
@@ -595,17 +750,13 @@ async def chat_stream(
     )
 
     async def event_stream() -> AsyncGenerator[str, None]:
-        stream = await agent.astream_events(
-            input_dict, config, version="v3", context=context
-        )
+        stream = await agent.astream_events(input_dict, config, version="v3", context=context)
         # Use the EventNormalizer to convert the DeepAgent v3 stream
         # into normalized OssiaEvent objects, then serialize each to SSE.
         normalizer = EventNormalizer(thread_id=thread_id)
         buffer = get_thread_event_buffer()
         collected: list[Any] = []
-        async for event in normalizer.normalize(
-            stream, artifacts=payload.artifacts or []
-        ):
+        async for event in normalizer.normalize(stream, artifacts=payload.artifacts or []):
             collected.append(event)
             yield serialize_sse(event)
         # Store all events in the buffer for later replay after the
@@ -648,6 +799,232 @@ async def list_tools(caller: str = Depends(verify_api_key)) -> ToolListResponse:
     return ToolListResponse(tools=tool_infos)
 
 
+@app.get("/v1/plugins", response_model=PluginListResponse)
+async def list_plugins(caller: str = Depends(verify_api_key)) -> PluginListResponse:
+    """List plugins the running agent has loaded, with provenance and config.
+
+    Plugin discovery is idempotent (modules cached in ``sys.modules``),
+    so calling ``discover_plugins`` on every request is cheap. The
+    result reflects whatever ``ossia.json`` and the bundled + user
+    plugin dirs look like at request time.
+    """
+    del caller
+    from core.plugin import discover_plugins
+
+    plugins = discover_plugins()
+    return PluginListResponse(
+        plugins=[
+            PluginInfo(
+                name=p.name,
+                module=p.module,
+                path=str(p.path),
+                config=p.config,
+                tool_names=[t.name for t in p.tools],
+                subagent_names=[s["name"] for s in p.subagents],
+                middleware_types=[type(m).__name__ for m in p.middlewares],
+            )
+            for p in plugins
+        ]
+    )
+
+
+@app.post("/v1/webhooks", response_model=WebhookCreated, status_code=201)
+@limiter.exempt  # type: ignore[untyped-decorator]
+async def create_webhook(
+    payload: WebhookCreate,
+    caller: str = Depends(verify_api_key),
+) -> WebhookCreated:
+    """Register a webhook to receive thread events.
+
+    Delivery is best-effort: 3 attempts with exponential backoff,
+    HMAC-SHA256 signature on the ``X-Ossia-Signature`` header.
+    The secret is returned once in this response — store it
+    server-side; subsequent GETs redact it.
+    """
+    from core.webhooks import get_webhook_store
+
+    del caller
+    store = get_webhook_store()
+    cfg = await store.add(url=payload.url, events=payload.events, secret=payload.secret)
+    return WebhookCreated(
+        id=cfg.id,
+        url=cfg.url,
+        events=cfg.events,
+        created_at=cfg.created_at,
+        secret=cfg.secret,
+    )
+
+
+@app.get("/v1/webhooks", response_model=WebhookListResponse)
+async def list_webhooks(caller: str = Depends(verify_api_key)) -> WebhookListResponse:
+    """List registered webhooks (secrets redacted)."""
+    from core.webhooks import get_webhook_store
+
+    del caller
+    store = get_webhook_store()
+    items = await store.list()
+    return WebhookListResponse(
+        webhooks=[
+            WebhookInfo(
+                id=w.id,
+                url=w.url,
+                events=w.events,
+                created_at=w.created_at,
+            )
+            for w in items
+        ]
+    )
+
+
+@app.delete("/v1/webhooks/{webhook_id}")
+@limiter.exempt  # type: ignore[untyped-decorator]
+async def delete_webhook(
+    webhook_id: str,
+    caller: str = Depends(verify_api_key),
+) -> dict[str, Any]:
+    """Delete a webhook. Returns ``{"deleted": true/false}``."""
+    from core.webhooks import get_webhook_store
+
+    del caller
+    store = get_webhook_store()
+    deleted = await store.delete(webhook_id)
+    return {"deleted": deleted, "id": webhook_id}
+
+
+@app.get("/v1/whoami", response_model=WhoAmIResponse)
+async def whoami(request: Request, caller: str = Depends(verify_api_key)) -> WhoAmIResponse:
+    """Identify the caller.
+
+    Returns the stable ``caller`` id the server uses to scope
+    threads and audit logs, plus a short fingerprint of the
+    presented key so the caller can verify which key the server
+    saw (handy in multi-key deployments).
+    """
+    provided = request.headers.get("x-api-key", "")
+    return WhoAmIResponse(caller=caller, key_fpr=provided[:8])
+
+
+# ---------------------------------------------------------------------------
+# Memory debug surface
+# ---------------------------------------------------------------------------
+# Read-only endpoints for inspecting the agent's memory and policy
+# files. The agent itself writes these via filesystem tools; these
+# routes exist for ops debugging, audit verification, and TUI memory
+# inspection without round-tripping through the LLM.
+#
+# Scoping mirrors the agent's view: ``/v1/memories/*`` is per-caller
+# (the same namespace the agent reads from), ``/v1/policies/*`` is
+# shared across all callers (the org-level policy namespace).
+
+
+def _get_store() -> Any:
+    """Return the agent's BaseStore, or raise 503 if not booted yet.
+
+    The store is attached to the compiled graph by ``build_agent_async``
+    (see ``core/agent.py``) and stashed on ``app.state`` for these
+    debug routes. Returns ``None`` for in-process test builds that
+    never went through the lifespan.
+    """
+    store = getattr(app.state, "store", None)
+    if store is None:
+        from core.agent import _runtime_store
+
+        if _runtime_store is not None:
+            return _runtime_store
+        raise HTTPException(
+            status_code=503,
+            detail="Memory store not available. Agent may not be booted yet, or this deployment uses an in-process agent without a persistent store.",
+        )
+    return store
+
+
+async def _read_memory_file(
+    *,
+    namespace: tuple[str, ...],
+    key: str,
+) -> MemoryFile:
+    """Read a single file from the store and shape it as MemoryFile.
+
+    ``key`` should include the leading slash (e.g. ``/memories/AGENTS.md``).
+    Returns ``exists=False`` and ``content=""`` when the key is
+    missing — never raises 404 here so the route can return a stable
+    200 with ``exists`` for clients that poll.
+    """
+    from core.memory import read_memory_item
+
+    store = _get_store()
+    try:
+        item = await store.aget(namespace, key)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("memory read failed ns=%s key=%s: %r", namespace, key, exc)
+        return MemoryFile(
+            path=key.removeprefix("/").split("/", 1)[-1] if "/" in key.removeprefix("/") else key,
+            namespace=list(namespace),
+            content="",
+            exists=False,
+        )
+    if item is None:
+        return MemoryFile(
+            path=key.removeprefix("/").split("/", 1)[-1] if "/" in key.removeprefix("/") else key,
+            namespace=list(namespace),
+            content="",
+            exists=False,
+        )
+    return MemoryFile(
+        path=key.removeprefix("/").split("/", 1)[-1] if "/" in key.removeprefix("/") else key,
+        namespace=list(namespace),
+        content=read_memory_item(item),
+        exists=True,
+    )
+
+
+def _resolve_memory_namespace() -> tuple[str, ...]:
+    """Build the per-caller (or agent-scoped) memory namespace.
+
+    Mirrors ``_make_memory_namespace`` in ``core/agent.py`` so the
+    debug read sees exactly what the agent sees.
+    """
+    from core.agent import _make_memory_namespace
+
+    return _make_memory_namespace()
+
+
+@app.get("/v1/memories/{path:path}", response_model=MemoryFile)
+async def get_memory_file(
+    path: str,
+    caller: str = Depends(verify_api_key),  # noqa: ARG001
+) -> MemoryFile:
+    """Read a file from the agent's ``/memories/`` filesystem.
+
+    Read-only debug surface for inspecting the agent's memory
+    (e.g. ``GET /v1/memories/AGENTS.md``). Returns the file body as
+    a UTF-8 string with ``exists=false`` when the key is absent.
+    The namespace mirrors the agent's: per-caller by default, agent
+    scope when ``Settings.memory_scope='agent'``.
+    """
+    key = f"/memories/{path}" if not path.startswith("/") else f"/memories/{path.lstrip('/')}"
+    return await _read_memory_file(namespace=_resolve_memory_namespace(), key=key)
+
+
+@app.get("/v1/policies/{path:path}", response_model=MemoryFile)
+async def get_policy_file(
+    path: str,
+    caller: str = Depends(verify_api_key),  # noqa: ARG001
+) -> MemoryFile:
+    """Read a file from the shared ``/policies/`` filesystem.
+
+    Policy files are populated by application code at startup via
+    ``seed_policy`` and protected by a write-deny permission. This
+    route is the read-only inspection surface (e.g. for verifying
+    that compliance content reached the agent). All callers see the
+    same namespace ``("ossia", "policies")``.
+    """
+    from core.memory import POLICY_NAMESPACE
+
+    key = f"/policies/{path}" if not path.startswith("/") else f"/policies/{path.lstrip('/')}"
+    return await _read_memory_file(namespace=POLICY_NAMESPACE, key=key)
+
+
 @app.get("/v1/threads/{thread_id}/state", response_model=ThreadStateResponse)
 async def thread_state(
     thread_id: str,
@@ -656,15 +1033,11 @@ async def thread_state(
     """Return the latest checkpointed state for a thread."""
     scoped = _thread_id_for(caller, thread_id)
     if app.state.checkpointer is None:
-        return ThreadStateResponse(
-            thread_id=scoped, values={}, next=[], config={}
-        )
+        return ThreadStateResponse(thread_id=scoped, values={}, next=[], config={})
     agent = app.state.agent
     snapshot = await agent.aget_state({"configurable": {"thread_id": scoped}})
     if snapshot is None:
-        return ThreadStateResponse(
-            thread_id=scoped, values={}, next=[], config={}
-        )
+        return ThreadStateResponse(thread_id=scoped, values={}, next=[], config={})
     return ThreadStateResponse(
         thread_id=scoped,
         values=dict(snapshot.values or {}),
@@ -718,9 +1091,7 @@ async def thread_events_delete(
     return JSONResponse({"thread_id": scoped, "cleared": True})
 
 
-@app.get(
-    "/v1/threads/{thread_id}/history", response_model=ThreadHistoryResponse
-)
+@app.get("/v1/threads/{thread_id}/history", response_model=ThreadHistoryResponse)
 async def thread_history(
     thread_id: str,
     caller: str = Depends(verify_api_key),
@@ -731,9 +1102,7 @@ async def thread_history(
         return ThreadHistoryResponse(thread_id=scoped, messages=[])
     agent = app.state.agent
     history: list[BaseMessage] = []
-    async for snap in agent.aget_state_history(
-        {"configurable": {"thread_id": scoped}}
-    ):
+    async for snap in agent.aget_state_history({"configurable": {"thread_id": scoped}}):
         for m in snap.values.get("messages", []):
             history.append(m)
     deduped: list[BaseMessage] = []
@@ -773,14 +1142,10 @@ async def thread_resume(
         if d.message is not None:
             entry["message"] = d.message
         decisions.append(entry)
-    result = await agent.ainvoke(
-        Command(resume={"decisions": decisions}), config, version="v2"
-    )
+    result = await agent.ainvoke(Command(resume={"decisions": decisions}), config, version="v2")
     messages = [_msg_to_chat_message(m) for m in result.get("messages", [])]
     interrupted = bool(getattr(result, "interrupts", None))
-    return ResumeResponse(
-        thread_id=scoped, messages=messages, interrupted=interrupted
-    )
+    return ResumeResponse(thread_id=scoped, messages=messages, interrupted=interrupted)
 
 
 @app.post("/v1/eval", response_model=EvalReport)

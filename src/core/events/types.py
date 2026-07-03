@@ -156,7 +156,10 @@ class OssiaEvent(BaseModel):
 # documented dict shapes that each ``type`` maps to. The normalizer in
 # ``normalizer.py`` constructs these dicts.
 
-def message_started_data(role: str, text: str = "", message_id: str | None = None) -> dict[str, Any]:
+
+def message_started_data(
+    role: str, text: str = "", message_id: str | None = None
+) -> dict[str, Any]:
     """Payload for ``message_started``: first token of a coordinator message."""
     return {"role": role, "text": text, "id": message_id}
 
@@ -181,7 +184,9 @@ def subagent_message_delta_data(name: str, text: str, path: list[str]) -> dict[s
     return {"name": name, "text": text, "path": path}
 
 
-def subagent_completed_data(name: str, result: str | None = None, path: list[str] | None = None) -> dict[str, Any]:
+def subagent_completed_data(
+    name: str, result: str | None = None, path: list[str] | None = None
+) -> dict[str, Any]:
     """Payload for ``subagent_completed``: a subagent finished successfully."""
     return {"name": name, "result": result, "path": path or []}
 
@@ -206,7 +211,9 @@ def tool_progress_data(name: str, output_delta: str | None = None) -> dict[str, 
     return {"name": name, "output_delta": output_delta, "source": "coordinator"}
 
 
-def tool_completed_data(name: str, output: Any = None, source: str = "coordinator") -> dict[str, Any]:
+def tool_completed_data(
+    name: str, output: Any = None, source: str = "coordinator"
+) -> dict[str, Any]:
     """Payload for ``tool_completed``: a tool call returned successfully."""
     return {"name": name, "output": output, "source": source}
 
@@ -221,19 +228,40 @@ def pipeline_started_data(pipeline_type: str, total_steps: int, pipeline_id: str
     return {"pipeline_type": pipeline_type, "total_steps": total_steps, "pipeline_id": pipeline_id}
 
 
-def pipeline_step_started_data(pipeline_id: str, step_name: str, step_index: int, total_steps: int) -> dict[str, Any]:
+def pipeline_step_started_data(
+    pipeline_id: str, step_name: str, step_index: int, total_steps: int
+) -> dict[str, Any]:
     """Payload for ``pipeline_step_started``: a pipeline stage began."""
-    return {"pipeline_id": pipeline_id, "step_name": step_name, "step_index": step_index, "total_steps": total_steps}
+    return {
+        "pipeline_id": pipeline_id,
+        "step_name": step_name,
+        "step_index": step_index,
+        "total_steps": total_steps,
+    }
 
 
-def pipeline_step_completed_data(pipeline_id: str, step_name: str, step_index: int, result: str | None = None) -> dict[str, Any]:
+def pipeline_step_completed_data(
+    pipeline_id: str, step_name: str, step_index: int, result: str | None = None
+) -> dict[str, Any]:
     """Payload for ``pipeline_step_completed``: a pipeline stage finished."""
-    return {"pipeline_id": pipeline_id, "step_name": step_name, "step_index": step_index, "result": result}
+    return {
+        "pipeline_id": pipeline_id,
+        "step_name": step_name,
+        "step_index": step_index,
+        "result": result,
+    }
 
 
-def pipeline_step_failed_data(pipeline_id: str, step_name: str, step_index: int, error: str) -> dict[str, Any]:
+def pipeline_step_failed_data(
+    pipeline_id: str, step_name: str, step_index: int, error: str
+) -> dict[str, Any]:
     """Payload for ``pipeline_step_failed``: a pipeline stage errored."""
-    return {"pipeline_id": pipeline_id, "step_name": step_name, "step_index": step_index, "error": error}
+    return {
+        "pipeline_id": pipeline_id,
+        "step_name": step_name,
+        "step_index": step_index,
+        "error": error,
+    }
 
 
 def pipeline_completed_data(pipeline_id: str, result: str | None = None) -> dict[str, Any]:
@@ -247,24 +275,40 @@ def pipeline_failed_data(pipeline_id: str, error: str) -> dict[str, Any]:
 
 
 def async_task_data(
-    event: str, task_id: str, agent_name: str, status: str,
-    tasks: list[dict[str, Any]] | None = None, error: str | None = None,
+    event: str,
+    task_id: str,
+    agent_name: str,
+    status: str,
+    tasks: list[dict[str, Any]] | None = None,
+    error: str | None = None,
 ) -> dict[str, Any]:
     """Payload for async task lifecycle events."""
     return {
-        "event": event, "task_id": task_id, "agent_name": agent_name,
-        "status": status, "tasks": tasks or [], "error": error,
+        "event": event,
+        "task_id": task_id,
+        "agent_name": agent_name,
+        "status": status,
+        "tasks": tasks or [],
+        "error": error,
     }
 
 
 def artifact_data(
-    artifact_id: str, art_type: str, filename: str,
-    event: str, analysis_state: str, summary: str | None = None,
+    artifact_id: str,
+    art_type: str,
+    filename: str,
+    event: str,
+    analysis_state: str,
+    summary: str | None = None,
 ) -> dict[str, Any]:
     """Payload for artifact lifecycle events."""
     return {
-        "artifact_id": artifact_id, "type": art_type, "filename": filename,
-        "event": event, "analysis_state": analysis_state, "summary": summary,
+        "artifact_id": artifact_id,
+        "type": art_type,
+        "filename": filename,
+        "event": event,
+        "analysis_state": analysis_state,
+        "summary": summary,
     }
 
 

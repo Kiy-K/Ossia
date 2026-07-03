@@ -43,8 +43,10 @@ def _print_report(report: dict, threshold: float) -> int:
     routed = sum(1 for q in queries if q.get("routed_intents"))
     intent_matches = sum(1 for q in queries if q.get("intent_match"))
     print(f"\n  correctness: {passed}/{len(queries)} ({rate:.0%})")
-    print(f"  intent routing observed: {routed}/{len(queries)}; "
-          f"matched expected: {intent_matches}/{routed}")
+    print(
+        f"  intent routing observed: {routed}/{len(queries)}; "
+        f"matched expected: {intent_matches}/{routed}"
+    )
     print(f"  threshold: {threshold:.0%}\n")
 
     if not queries:
@@ -85,8 +87,7 @@ def main() -> int:
             timeout=args.eval_timeout,
         )
         if r.status_code != 200:
-            print(f"EVAL ABORTED: server returned {r.status_code}: {r.text}",
-                  file=sys.stderr)
+            print(f"EVAL ABORTED: server returned {r.status_code}: {r.text}", file=sys.stderr)
             return 1
         return _print_report(r.json(), args.min_pass_rate)
     except Exception as exc:  # noqa: BLE001
