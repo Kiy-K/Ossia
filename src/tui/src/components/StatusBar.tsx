@@ -22,7 +22,6 @@ export function StatusBar({ state }: StatusBarProps) {
   const threadDisplay = state.thread_id
     ? `thread: ${state.thread_id.slice(0, 8)}`
     : "disconnected";
-
   const parts: string[] = [threadDisplay];
   if (agents > 0) parts.push(`${agents} agent${agents !== 1 ? "s" : ""}`);
   if (tools > 0) parts.push(`${tools} tool${tools !== 1 ? "s" : ""}`);

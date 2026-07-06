@@ -13,6 +13,9 @@ export interface StreamOptions {
   apiUrl: string;
   apiKey: string;
   threadId?: string;
+  sessionTopic?: string;
+  newSession?: boolean;
+  projectContext?: string;
 }
 
 /**
@@ -98,16 +101,21 @@ export async function* sendMessage(
 ): AsyncGenerator<OssiaEvent> {
   const url = `${options.apiUrl}/v1/chat/stream`;
 
+  const body: Record<string, unknown> = {
+    message,
+    thread_id: options.threadId,
+  };
+  if (options.sessionTopic) body.session_topic = options.sessionTopic;
+  if (options.newSession) body.new_session = true;
+  if (options.projectContext) body.project_context = options.projectContext;
+
   const response = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "X-API-Key": options.apiKey,
     },
-    body: JSON.stringify({
-      message,
-      thread_id: options.threadId,
-    }),
+    body: JSON.stringify(body),
     signal,
   });
 

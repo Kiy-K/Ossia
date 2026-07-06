@@ -13,9 +13,11 @@ interface InputBarProps {
   onSubmit: (message: string) => void;
   /** Whether the backend is currently processing a request. */
   disabled: boolean;
+  /** Active session topic. */
+  sessionTopic: string;
 }
 
-export function InputBar({ onSubmit, disabled }: InputBarProps) {
+export function InputBar({ onSubmit, disabled, sessionTopic }: InputBarProps) {
   const valueRef = useRef("");
 
   const handleSubmit = () => {
@@ -27,13 +29,16 @@ export function InputBar({ onSubmit, disabled }: InputBarProps) {
 
   return (
     <Box height={1} width="100%" flexDirection="row">
+      {/* Session topic badge */}
+      <Text attributes={2}>[{sessionTopic}]</Text>
+      <Text> </Text>
       <Text>{">"}</Text>
       <Text> </Text>
       {disabled ? (
         <Text attributes={2}>Thinking...</Text>
       ) : (
         <Input
-          width={200}
+          width={160}
           placeholder="Type a message"
           aria-label="Type a message"
           onInput={(v: string) => { valueRef.current = v; }}

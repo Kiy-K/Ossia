@@ -18,10 +18,11 @@
  * Components are pure render-only. State mutations happen exclusively
  * in the reducer. Event parsing lives in events/ modules.
  */
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useOnResize } from "@opentui/react";
 import { reduceEvent, initialAppState } from "./events/reducer";
 import { sendMessage } from "./events/stream";
+import { readActiveSession, writeActiveSession, clearActiveSession } from "./session";
 import type { AppState } from "./types";
 import { BackgroundTasksPanel } from "./components/BackgroundTasksPanel";
 import { Box } from "./components/primitives";
@@ -64,6 +65,37 @@ export function App() {
   useOnResize((_width: number, height: number) => {
     setTermHeight(Math.max(height, 12));
   });
+
+  // ── Session initialisation from cache ────────────────────────────────
+  const [sessionTopic, setSessionTopic] = useState<string>("default");
+  const [isNewSession, setIsNewSession] = useState<boolean>(false);
+
+  useEffect(() => {
+    readActiveSession().then((cached) => {
+      if (cached) {
+        threadIdRef.current = cached.session_id;
+        setSessionTopic(cached.topic);
+        setState((prev) => ({
+          ...prev,
+          thread_id: cached.session_id,
+        }));
+      }
+    });
+  }, []);
+
+  // ── Handle New Chat ──────────────────────────────────────────────────
+  const handleNewChat = useCallback(() => {
+    // Cancel any running request
+    abortRef.current?.abort();
+    threadIdRef.current = "";
+    setSessionTopic("default");
+    setIsNewSession(true);
+    setState(initialAppState());
+    // Clear the cache so next launch starts fresh
+    clearActiveSession();
+  }, []);
+
+  // ── Send message ─────────────────────────────────────────────────────
   const handleSubmit = useCallback(
     async (message: string) => {
       // Cancel any previous run
@@ -72,8 +104,11 @@ export function App() {
       }
       const abortController = new AbortController();
       abortRef.current = abortController;
-      // Reset state for new run, preserving thread_id
+
+      // Determine thread ID / session flags
       const existingThreadId = threadIdRef.current;
+      const willNewSession = isNewSession;
+
       setState((prev) => ({
         ...initialAppState(),
         thread_id: existingThreadId || prev.thread_id,
@@ -86,15 +121,28 @@ export function App() {
           {
             apiUrl: API_URL,
             apiKey: API_KEY,
-            threadId: existingThreadId || undefined,
+            threadId: willNewSession ? undefined : (existingThreadId || undefined),
+            sessionTopic: sessionTopic !== "default" ? sessionTopic : undefined,
+            newSession: willNewSession,
           },
           abortController.signal,
         );
+        // Reset the new-session flag now that we've sent the request
+        setIsNewSession(false);
+
         for await (const event of stream) {
           if (abortController.signal.aborted) break;
           // Store thread_id from the first event that carries it
           if (event.thread_id && !threadIdRef.current) {
             threadIdRef.current = event.thread_id;
+            // Persist to .kilocode/active_session.json
+            void writeActiveSession({
+              session_id: event.thread_id,
+              topic: sessionTopic,
+              project_context: "",
+              created_at: new Date().toISOString(),
+              is_random: willNewSession,
+            });
           }
           setState((prev) => {
             try {
@@ -118,7 +166,7 @@ export function App() {
         }));
       }
     },
-    [], // No dependencies — threadIdRef handles closure issues
+    [sessionTopic, isNewSession], // Deps needed to read current values at call time
   );
   // Height available for the timeline — expand only when ReActPanel is visible
   const timelineHeight = computeTimelineHeight(termHeight, state.react_steps?.length ?? 0);
@@ -152,6 +200,7 @@ export function App() {
       <InputBar
         onSubmit={handleSubmit}
         disabled={state.run_state === "running"}
+        sessionTopic={sessionTopic}
       />
     </Box>
   );
