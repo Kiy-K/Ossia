@@ -5,6 +5,31 @@ Ossia HTTP contract. The machine-readable record is the git history of
 
 ## Unreleased
 
+### New: thread metadata endpoints (assistant-ui `RemoteThreadListAdapter` shape)
+
+Companion endpoints for the assistant-ui thread-list runtime. The
+backend's thread list now matches the `RemoteThreadMetadata` shape so a
+client can implement `list / fetch / initialize / rename / archive /
+unarchive / delete / generateTitle` against the existing HTTP contract.
+
+- `POST /v1/threads` — initialize a new thread. Body: `{external_id?,
+  title?}`. Response: `{thread_id, external_id}`. The returned
+  `thread_id` is the caller-scoped `remoteId`; `external_id` is
+  round-tripped for client-side bookkeeping.
+- `GET /v1/threads/{id}` — fetch single thread metadata. Returns the
+  same `ThreadInfo` shape as the list endpoint.
+- `PATCH /v1/threads/{id}` — rename and/or archive. Body:
+  `{title?, status?}` where `status` is `"regular" | "archived"`.
+  Omit a field to leave it unchanged.
+- `POST /v1/threads/{id}/unarchive` — restore an archived thread.
+- `GET /v1/threads` — added `include_archived` (default `false`) and
+  `next_cursor` fields. Each `ThreadInfo` now includes `status`,
+  `title`, `external_id`, `last_message_at` for the assistant-ui
+  shape.
+- Ponytail: archive + title state lives in an in-memory
+  `_thread_meta` dict. Swap for a Postgres table when this needs to
+  survive restarts.
+
 ### New: webhooks for thread events
 
 Register a URL to receive POST deliveries of every

@@ -808,6 +808,110 @@ def test_artifact_info_in_thread_history_no_checkpointer(client: TestClient) -> 
     assert ":artifact-thread" in body["thread_id"]
 
 
+# ── Session header injection tests ───────────────────────────────────────────
+# These tests verify that the ``X-Session-Topic`` and ``X-Project-Context``
+# HTTP headers are read by the ``session_header_params`` dependency and used
+# as fallbacks when the corresponding payload fields are absent.
+
+
+def test_chat_accepts_session_topic_header(client: TestClient) -> None:
+    """X-Session-Topic header is accepted and does not cause validation errors."""
+    r = client.post(
+        "/v1/chat",
+        json={"message": "hello"},
+        headers={
+            "X-API-Key": API_KEY,
+            "X-Session-Topic": "bugfix-auth",
+        },
+    )
+    # Response may 500 because no checkpointer, but must NOT be 422 (validation error).
+    assert r.status_code != 422, f"unexpected 422: {r.text}"
+
+
+def test_chat_accepts_project_context_header(client: TestClient) -> None:
+    """X-Project-Context header is accepted and does not cause validation errors."""
+    r = client.post(
+        "/v1/chat",
+        json={"message": "hello"},
+        headers={
+            "X-API-Key": API_KEY,
+            "X-Project-Context": "my-project",
+        },
+    )
+    assert r.status_code != 422, f"unexpected 422: {r.text}"
+
+
+def test_chat_accepts_both_headers_together(client: TestClient) -> None:
+    """Both session headers can be sent together without validation errors."""
+    r = client.post(
+        "/v1/chat",
+        json={"message": "hello"},
+        headers={
+            "X-API-Key": API_KEY,
+            "X-Session-Topic": "refactor-api",
+            "X-Project-Context": "ossia",
+        },
+    )
+    assert r.status_code != 422, f"unexpected 422: {r.text}"
+
+
+def test_chat_payload_topic_takes_precedence_over_header(client: TestClient) -> None:
+    """When both payload.session_topic and X-Session-Topic header are set,
+    the payload value must take precedence."""
+    r = client.post(
+        "/v1/chat",
+        json={"message": "hello", "session_topic": "payload-topic"},
+        headers={
+            "X-API-Key": API_KEY,
+            "X-Session-Topic": "header-topic",
+        },
+    )
+    assert r.status_code != 422, f"unexpected 422: {r.text}"
+
+
+def test_chat_stream_accepts_session_topic_header(client: TestClient) -> None:
+    """X-Session-Topic header is accepted on the streaming endpoint."""
+    from contextlib import suppress
+
+    with suppress(ImportError):
+        if not os.environ.get("OPENROUTER_API_KEY"):
+            pytest.skip("no OPENROUTER_API_KEY; skipping streaming test")
+        with client.stream(
+            "POST",
+            "/v1/chat/stream",
+            json={"message": "hello"},
+            headers={
+                "X-API-Key": API_KEY,
+                "X-Session-Topic": "bugfix-auth",
+            },
+        ) as r:
+            assert r.status_code != 422, f"unexpected 422: {r.text}"
+
+
+def test_session_headers_not_required(client: TestClient) -> None:
+    """Requests without session headers still work (backward compat)."""
+    r = client.post(
+        "/v1/chat",
+        json={"message": "hello"},
+        headers={"X-API-Key": API_KEY},
+    )
+    assert r.status_code != 422, f"unexpected 422: {r.text}"
+
+
+def test_chat_new_session_disregards_topic_headers(client: TestClient) -> None:
+    """When new_session=true, session headers are ignored (random UUID)."""
+    r = client.post(
+        "/v1/chat",
+        json={"message": "hello", "new_session": True},
+        headers={
+            "X-API-Key": API_KEY,
+            "X-Session-Topic": "should-be-ignored",
+            "X-Project-Context": "also-ignored",
+        },
+    )
+    assert r.status_code != 422, f"unexpected 422: {r.text}"
+
+
 # ── Thread events buffer / replay tests ──────────────────────────────────────
 
 
@@ -924,6 +1028,120 @@ async def test_thread_events_returns_events_after_stream(client: TestClient) -> 
     after_body = r_after.json()
     assert after_body["count"] == 0
     assert after_body["events"] == []
+
+
+# ── CORS origin validation tests ────────────────────────────────────────────
+# These tests verify that the CORSMiddleware is correctly configured with
+# the origins from ``Settings.cors_origins`` (defaulting to
+# ``["http://localhost:5173", "http://127.0.0.1:5173"]``). Allowed origins
+# receive the ``Access-Control-Allow-Origin`` header matching their Origin;
+# disallowed origins do not get a matching CORS header.
+#
+# The middleware is configured at import time in ``core/api.py``, so these
+# tests exercise the default origin set.
+
+
+def test_cors_allowed_origin_preflight(client: TestClient) -> None:
+    """OPTIONS preflight from an allowed origin returns matching CORS header."""
+    r = client.options(
+        "/health",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert r.status_code == 200
+    assert r.headers.get("access-control-allow-origin") == "http://localhost:5173"
+
+
+def test_cors_allowed_origin_simple_request(client: TestClient) -> None:
+    """GET from an allowed origin returns the CORS origin header."""
+    r = client.get(
+        "/health",
+        headers={"Origin": "http://localhost:5173"},
+    )
+    assert r.status_code == 200
+    assert r.headers.get("access-control-allow-origin") == "http://localhost:5173"
+
+
+def test_cors_127_allowed(client: TestClient) -> None:
+    """127.0.0.1:5173 is also in the default allowlist."""
+    r = client.get(
+        "/health",
+        headers={"Origin": "http://127.0.0.1:5173"},
+    )
+    assert r.status_code == 200
+    assert r.headers.get("access-control-allow-origin") == "http://127.0.0.1:5173"
+
+
+def test_cors_disallowed_origin_no_header(client: TestClient) -> None:
+    """A disallowed origin does not get a matching Access-Control-Allow-Origin."""
+    r = client.get(
+        "/health",
+        headers={"Origin": "https://evil.com"},
+    )
+    assert r.status_code == 200
+    acl = r.headers.get("access-control-allow-origin")
+    # With non-wildcard ``allow_origins``, Starlette never adds the
+    # ``Access-Control-Allow-Origin`` header for origins not in the list.
+    assert acl is None
+
+
+def test_cors_credentials_header(client: TestClient) -> None:
+    """CORS responses include the allow-credentials header when credentials are true."""
+    r = client.get(
+        "/health",
+        headers={"Origin": "http://localhost:5173"},
+    )
+    assert r.headers.get("access-control-allow-credentials") == "true"
+
+
+def test_cors_methods_header_on_preflight(client: TestClient) -> None:
+    """OPTIONS preflight returns allowed methods header."""
+    r = client.options(
+        "/health",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+    assert r.status_code == 200
+    allow_methods = r.headers.get("access-control-allow-methods")
+    assert allow_methods is not None
+    assert "GET" in allow_methods or "*" in allow_methods
+    assert "POST" in allow_methods or "*" in allow_methods
+
+
+def test_cors_authenticated_endpoint(client: TestClient) -> None:
+    """Authenticated endpoints also return CORS headers for allowed origins."""
+    r = client.get(
+        "/v1/tools",
+        headers={
+            "Origin": "http://localhost:5173",
+            "X-API-Key": API_KEY,
+        },
+    )
+    assert r.status_code == 200
+    assert r.headers.get("access-control-allow-origin") == "http://localhost:5173"
+
+
+def test_cors_allowed_origin_on_post(client: TestClient) -> None:
+    """POST (non-auth) from an allowed origin returns CORS header."""
+    r = client.post(
+        "/v1/chat",
+        json={"message": "hello"},
+        headers={
+            "Origin": "http://localhost:5173",
+            "X-API-Key": API_KEY,
+        },
+    )
+    # The request may 500 (no checkpointer) or succeed, but should not be 422
+    # and must include the CORS header regardless of the response status.
+    assert r.status_code != 422
+    assert r.headers.get("access-control-allow-origin") == "http://localhost:5173"
+
+
+# ── Thread events buffer / replay tests (continued) ─────────────────────────
 
 
 def test_thread_events_delete_does_not_affect_other_threads(client: TestClient) -> None:

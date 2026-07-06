@@ -279,6 +279,36 @@
             "title": "Message",
             "type": "string"
           },
+          "new_session": {
+            "default": false,
+            "description": "When ``true``, create a fresh random session (UUID v4) instead of resuming the deterministic or provided thread. Use this for \"+ New Chat\" flows. The response always echoes the resolved ``thread_id`` so the client can cache it for later reconnection.",
+            "title": "New Session",
+            "type": "boolean"
+          },
+          "project_context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional project/workspace context override. When unset, the server auto-detects it from the current working directory or git remote. Clients can send this to explicitly scope sessions to a specific repository or project.",
+            "title": "Project Context"
+          },
+          "session_topic": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional session topic slug for deterministic session ID derivation. Topics like ``\"bugfix-auth\"``, ``\"refactor-api\"``, or ``\"general-chat\"`` each produce a distinct, reproducible thread ID via UUID v5. The same topic in the same project always resumes the same session. Mutually exclusive with ``thread_id`` \u2014 when both are set, ``session_topic`` takes precedence. When unset, defaults to ``\"default\"``.",
+            "title": "Session Topic"
+          },
           "thread_id": {
             "anyOf": [
               {
@@ -288,7 +318,7 @@
                 "type": "null"
               }
             ],
-            "description": "Optional thread id. Server scopes it to the authenticated caller.",
+            "description": "Optional thread id. When provided (and new_session=False) the server uses it directly, scoped to the authenticated caller. This is the backward-compatible path \u2014 prefer session_topic for reproducible sessions.",
             "title": "Thread Id"
           }
         },
@@ -767,6 +797,226 @@
         "title": "ThreadHistoryResponse",
         "type": "object"
       },
+      "ThreadInfo": {
+        "additionalProperties": false,
+        "description": "Summary of a single thread for the caller's thread list.\n\nReturned by ``GET /v1/threads``. Each entry represents the latest\ncheckpoint for a thread the caller has participated in. Compatible\nwith assistant-ui's ``RemoteThreadMetadata`` shape.",
+        "properties": {
+          "external_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Raw UUID without caller prefix (assistant-ui's externalId).",
+            "title": "External Id"
+          },
+          "last_message_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "ISO-8601 timestamp of the last message in the thread.",
+            "title": "Last Message At"
+          },
+          "message_count": {
+            "description": "Number of messages in the thread at the latest checkpoint.",
+            "minimum": 0.0,
+            "title": "Message Count",
+            "type": "integer"
+          },
+          "source": {
+            "default": "",
+            "description": "Source of the latest checkpoint (input/loop/update/fork).",
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "default": "regular",
+            "description": "Thread visibility. Archived threads are hidden from the default list.",
+            "enum": [
+              "regular",
+              "archived"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "step": {
+            "default": 0,
+            "description": "Step number of the latest checkpoint.",
+            "title": "Step",
+            "type": "integer"
+          },
+          "thread_id": {
+            "description": "Caller-scoped thread identifier (remoteId in assistant-ui terms).",
+            "title": "Thread Id",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Human-readable title, derived from the first user message.",
+            "title": "Title"
+          },
+          "updated_at": {
+            "description": "ISO-8601 timestamp of the most recent checkpoint.",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "thread_id",
+          "updated_at",
+          "message_count"
+        ],
+        "title": "ThreadInfo",
+        "type": "object"
+      },
+      "ThreadInitializeRequest": {
+        "additionalProperties": false,
+        "description": "Request body for POST /v1/threads (create a new thread).",
+        "properties": {
+          "external_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional client-supplied local ID; returned as externalId for round-tripping.",
+            "title": "External Id"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional initial title.",
+            "title": "Title"
+          }
+        },
+        "title": "ThreadInitializeRequest",
+        "type": "object"
+      },
+      "ThreadInitializeResponse": {
+        "additionalProperties": false,
+        "description": "Response body for POST /v1/threads.",
+        "properties": {
+          "external_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Echo of the client-supplied external_id.",
+            "title": "External Id"
+          },
+          "thread_id": {
+            "description": "Caller-scoped thread identifier (the new thread's remoteId).",
+            "title": "Thread Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "thread_id"
+        ],
+        "title": "ThreadInitializeResponse",
+        "type": "object"
+      },
+      "ThreadListResponse": {
+        "additionalProperties": false,
+        "description": "Response payload for GET /v1/threads.",
+        "properties": {
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Cursor for the next page; null when no more results.",
+            "title": "Next Cursor"
+          },
+          "threads": {
+            "description": "List of threads for the authenticated caller, sorted newest first.",
+            "items": {
+              "$ref": "#/components/schemas/ThreadInfo"
+            },
+            "title": "Threads",
+            "type": "array"
+          },
+          "total": {
+            "description": "Total number of unique threads returned.",
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "threads",
+          "total"
+        ],
+        "title": "ThreadListResponse",
+        "type": "object"
+      },
+      "ThreadPatchRequest": {
+        "additionalProperties": false,
+        "description": "Request body for PATCH /v1/threads/{id} (rename and/or archive).",
+        "properties": {
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "regular",
+                  "archived"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "New status. Omit to leave unchanged.",
+            "title": "Status"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "New title. Omit to leave unchanged.",
+            "title": "Title"
+          }
+        },
+        "title": "ThreadPatchRequest",
+        "type": "object"
+      },
       "ThreadStateResponse": {
         "additionalProperties": false,
         "description": "A thread's current graph state (values + next nodes).",
@@ -1118,7 +1368,7 @@
     },
     "/v1/chat": {
       "post": {
-        "description": "Run a single chat turn against the agent.",
+        "description": "Run a single chat turn against the agent.\n\nSession/thread ID resolution follows this priority:\n  1. ``payload.session_topic`` \u2192 deterministic UUID v5 derived\n     from ``(caller, project_context, topic)``.\n  2. ``payload.new_session`` is ``true`` \u2192 random UUID v4 (\"New Chat\").\n  3. ``payload.thread_id`` (legacy) \u2192 used directly, caller-scoped.\n  4. None of the above \u2192 deterministic UUID v5 with topic ``\"default\"``.\n\nClients can also set ``X-Session-Topic`` and ``X-Project-Context`` HTTP\nheaders which act as fallbacks when the corresponding payload fields are\nabsent. Payload fields always take precedence over headers.",
         "operationId": "chat_v1_chat_post",
         "requestBody": {
           "content": {
@@ -1157,7 +1407,7 @@
     },
     "/v1/chat/stream": {
       "post": {
-        "description": "Stream a chat turn as Server-Sent Events, v3 protocol.\n\nBuilt on ``agent.astream_events(..., version=\"v3\")``. The v3 stream\nis caller-driven: the handler iterates the typed projections\n(``messages``, ``tool_calls``, ``subagents``, ``values``) concurrently\nand yields a :class:`StreamEvent` per projection update. The SSE\n``event:`` field is the ``kind`` discriminator, so clients can\nsubscribe to specific kinds via\n``EventSource.addEventListener(\"message\", ...)``.\n\nA final ``kind=\"complete\"`` event is always sent. ``interrupted=true``\nin that event means the run paused on a human-review interrupt;\nthe client should ``POST /v1/threads/{id}/resume`` to continue.\n\nThe v3 streaming protocol is marked experimental by langgraph; if\nthe upstream shape changes, only the projection adapters below need\nto update \u2014 the wire contract (``kind`` + per-kind ``data`` shape)\nis the part we promise to clients.",
+        "description": "Stream a chat turn as Server-Sent Events, v3 protocol.\n\nBuilt on ``agent.astream_events(..., version=\"v3\")``. The v3 stream\nis caller-driven: the handler iterates the typed projections\n(``messages``, ``tool_calls``, ``subagents``, ``values``) concurrently\nand yields a :class:`StreamEvent` per projection update. The SSE\n``event:`` field is the ``kind`` discriminator, so clients can\nsubscribe to specific kinds via\n``EventSource.addEventListener(\"message\", ...)``.\n\nA final ``kind=\"complete\"`` event is always sent. ``interrupted=true``\nin that event means the run paused on a human-review interrupt;\nthe client should ``POST /v1/threads/{id}/resume`` to continue.\n\nThe v3 streaming protocol is marked experimental by langgraph; if\nthe upstream shape changes, only the projection adapters below need\nto update \u2014 the wire contract (``kind`` + per-kind ``data`` shape)\nis the part we promise to clients.\n\nSession/thread ID resolution follows the same priority as\n``POST /v1/chat``:\n  1. ``payload.session_topic`` \u2192 deterministic UUID v5.\n  2. ``payload.new_session`` is ``true`` \u2192 random UUID v4.\n  3. ``payload.thread_id`` (legacy) \u2192 used directly.\n  4. None of the above \u2192 deterministic UUID v5 with ``\"default\"``.\n\nClients can also set ``X-Session-Topic`` and ``X-Project-Context`` HTTP\nheaders which act as fallbacks when the corresponding payload fields are\nabsent. Payload fields always take precedence over headers.",
         "operationId": "chat_stream_v1_chat_stream_post",
         "requestBody": {
           "content": {
@@ -1328,6 +1578,222 @@
           }
         },
         "summary": "Get Policy File"
+      }
+    },
+    "/v1/threads": {
+      "get": {
+        "description": "List all threads for the authenticated caller.\n\nReturns the latest checkpoint for each unique thread, sorted most\nrecent first. Threads are scoped to the calling API key \u2014 a caller\nonly sees their own threads. Archived threads are excluded by default.\n\nArgs:\n    limit: Maximum number of threads to return (default 50, max 200).\n    include_archived: If true, also include archived threads.\n\nReturns:\n    A ``ThreadListResponse`` containing the thread summaries.",
+        "operationId": "list_threads_v1_threads_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_archived",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Archived",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThreadListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Threads"
+      },
+      "post": {
+        "description": "Initialize a new thread (creates a caller-scoped thread_id).\n\nUsed by the assistant-ui ``RemoteThreadListAdapter.initialize()`` call.\nThe returned ``thread_id`` becomes the new thread's ``remoteId``;\n``external_id`` is round-tripped for client-side bookkeeping.",
+        "operationId": "initialize_thread_v1_threads_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ThreadInitializeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThreadInitializeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Initialize Thread"
+      }
+    },
+    "/v1/threads/{thread_id}": {
+      "delete": {
+        "description": "Delete a thread and all its checkpoint history.\n\nRemoves all checkpoint tuples associated with the thread from the\ncheckpointer (Postgres or Redis). Subsequent ``GET /v1/threads``\nwill not include this thread.\n\nWhen no checkpointer is available (in-memory mode) the endpoint\nreturns 200 with ``deleted=false`` and a message explaining why,\nrather than raising an error, so the client can handle this\ngracefully.\n\nReturns:\n    A response with ``deleted`` (bool), ``thread_id`` (str),\n    and optionally a ``message`` field.",
+        "operationId": "delete_thread_v1_threads__thread_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "thread_id",
+            "required": true,
+            "schema": {
+              "title": "Thread Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Delete Thread V1 Threads  Thread Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Thread"
+      },
+      "get": {
+        "description": "Fetch metadata for a single thread. Used by the adapter's ``fetch()``.",
+        "operationId": "get_thread_v1_threads__thread_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "thread_id",
+            "required": true,
+            "schema": {
+              "title": "Thread Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThreadInfo"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Thread"
+      },
+      "patch": {
+        "description": "Update a thread's title and/or status (archive).",
+        "operationId": "patch_thread_v1_threads__thread_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "thread_id",
+            "required": true,
+            "schema": {
+              "title": "Thread Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ThreadPatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThreadInfo"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Thread"
       }
     },
     "/v1/threads/{thread_id}/events": {
@@ -1534,6 +2000,46 @@
           }
         },
         "summary": "Thread State"
+      }
+    },
+    "/v1/threads/{thread_id}/unarchive": {
+      "post": {
+        "description": "Restore an archived thread to regular status.",
+        "operationId": "unarchive_thread_v1_threads__thread_id__unarchive_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "thread_id",
+            "required": true,
+            "schema": {
+              "title": "Thread Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThreadInfo"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Unarchive Thread"
       }
     },
     "/v1/tools": {

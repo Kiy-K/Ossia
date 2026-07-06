@@ -29,6 +29,7 @@ tool activity under the correct subagent tree.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import uuid
 from collections.abc import AsyncGenerator
@@ -739,9 +740,13 @@ class EventNormalizer:
             )
 
         # Emit the final complete event. Extract output + interrupt info
-        # from the stream object.
+        # from the stream object. v3's AsyncGraphRunStream exposes output,
+        # interrupted, and interrupts as async methods (not properties),
+        # so they must be awaited to get the actual values.
         try:
-            output = stream.output
+            output = stream.output()
+            if inspect.iscoroutine(output):
+                output = await output
             output_dict = _safe(output) if output is not None else {}
             if not isinstance(output_dict, dict):
                 output_dict = {"output": output_dict}
@@ -751,7 +756,10 @@ class EventNormalizer:
 
         interrupted = False
         try:
-            interrupted = bool(stream.interrupted)
+            interrupted_value = stream.interrupted()
+            if inspect.iscoroutine(interrupted_value):
+                interrupted_value = await interrupted_value
+            interrupted = bool(interrupted_value)
         except Exception as exc:  # noqa: BLE001
             logger.debug("stream.interrupted failed: %r", exc)
 
@@ -759,7 +767,10 @@ class EventNormalizer:
         if interrupted:
             interrupt_payload: list[dict[str, Any]] = []
             try:
-                for it in stream.interrupts or ():
+                interrupts = stream.interrupts()
+                if inspect.iscoroutine(interrupts):
+                    interrupts = await interrupts
+                for it in interrupts or ():
                     raw = it.value if hasattr(it, "value") else it
                     interrupt_payload.append(_safe(raw))
             except Exception as exc:  # noqa: BLE001

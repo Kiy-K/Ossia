@@ -1,13 +1,22 @@
-| Route | Spec-Driven Feature Development | Async Subagents | QuickJS Code Interpreter | Thread Event Buffer / Replay | Coverage count |
-| --- | --- | --- | --- | ---  | --- |
-| `/health` | — | — | — | — | 0 |
-| `/v1/audit` | — | — | — | — | 0 |
-| `/v1/chat` | — | — | — | — | 0 |
-| `/v1/chat/stream` | — | — | — | — | 0 |
-| `/v1/eval` | — | — | — | — | 0 |
-| `/v1/threads/{thread_id}/events` | — | — | — | — | 0 |
-| `/v1/threads/{thread_id}/history` | — | — | — | — | 0 |
-| `/v1/threads/{thread_id}/resume` | — | — | — | — | 0 |
-| `/v1/threads/{thread_id}/state` | — | — | — | — | 0 |
-| `/v1/tools` | — | ✓ | ✓ | — | 2 |
-| **Totals** | 0 | 1 | 1 | 0 | **10** |
+| Route | Spec-Driven Feature Development | Async Subagents | QuickJS Code Interpreter | Deterministic Session ID System | Plugin system | Hybrid memory (per-caller /scratch/ working memory) | Thread Event Buffer / Replay | Web reviewer (browser-use subagent) | Coverage count |
+| --- | --- | --- | --- | --- | --- | --- | --- | ---  | --- |
+| `/health` | — | — | — | — | — | — | — | — | 0 |
+| `/v1/audit` | — | — | — | — | — | — | — | — | 0 |
+| `/v1/chat` | — | — | — | — | — | — | — | — | 0 |
+| `/v1/chat/stream` | — | — | — | — | — | — | — | — | 0 |
+| `/v1/eval` | — | — | — | — | — | — | — | — | 0 |
+| `/v1/memories/{path}` | — | — | — | — | — | — | — | — | 0 |
+| `/v1/plugins` | — | — | — | — | — | — | — | — | 0 |
+| `/v1/policies/{path}` | — | — | — | — | — | — | — | — | 0 |
+| `/v1/threads` | — | — | — | — | — | — | — | — | 0 |
+| `/v1/threads/{thread_id}` | — | — | — | — | — | — | — | — | 0 |
+| `/v1/threads/{thread_id}/events` | — | — | — | — | — | — | — | — | 0 |
+| `/v1/threads/{thread_id}/history` | — | — | — | — | — | — | — | — | 0 |
+| `/v1/threads/{thread_id}/resume` | — | — | — | — | — | — | — | — | 0 |
+| `/v1/threads/{thread_id}/state` | — | — | — | — | — | — | — | — | 0 |
+| `/v1/threads/{thread_id}/unarchive` | — | — | — | — | — | — | — | — | 0 |
+| `/v1/tools` | — | ✓ | ✓ | — | — | — | — | — | 2 |
+| `/v1/webhooks` | — | — | — | — | — | — | — | — | 0 |
+| `/v1/webhooks/{webhook_id}` | — | — | — | — | — | — | — | — | 0 |
+| `/v1/whoami` | — | — | — | — | — | — | — | — | 0 |
+| **Totals** | 0 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | **19** |

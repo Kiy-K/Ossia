@@ -91,7 +91,40 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1, description="User message for this turn.")
     thread_id: str | None = Field(
         default=None,
-        description="Optional thread id. Server scopes it to the authenticated caller.",
+        description=(
+            "Optional thread id. When provided (and new_session=False) the server "
+            "uses it directly, scoped to the authenticated caller. This is the "
+            "backward-compatible path — prefer session_topic for reproducible sessions."
+        ),
+    )
+    session_topic: str | None = Field(
+        default=None,
+        description=(
+            "Optional session topic slug for deterministic session ID derivation. "
+            "Topics like ``\"bugfix-auth\"``, ``\"refactor-api\"``, or ``\"general-chat\"`` "
+            "each produce a distinct, reproducible thread ID via UUID v5. The same "
+            "topic in the same project always resumes the same session. "
+            "Mutually exclusive with ``thread_id`` — when both are set, "
+            "``session_topic`` takes precedence. When unset, defaults to ``\"default\"``."
+        ),
+    )
+    new_session: bool = Field(
+        default=False,
+        description=(
+            "When ``true``, create a fresh random session (UUID v4) instead of "
+            'resuming the deterministic or provided thread. Use this for "+ New Chat" '
+            "flows. The response always echoes the resolved ``thread_id`` so the "
+            "client can cache it for later reconnection."
+        ),
+    )
+    project_context: str | None = Field(
+        default=None,
+        description=(
+            "Optional project/workspace context override. When unset, the server "
+            "auto-detects it from the current working directory or git remote. "
+            "Clients can send this to explicitly scope sessions to a specific "
+            "repository or project."
+        ),
     )
     artifacts: list[Artifact] = Field(
         default_factory=list,
@@ -470,6 +503,105 @@ class ThreadHistoryResponse(BaseModel):
 
     thread_id: str
     messages: list[ChatMessage]
+
+
+class ThreadInfo(BaseModel):
+    """Summary of a single thread for the caller's thread list.
+
+    Returned by ``GET /v1/threads``. Each entry represents the latest
+    checkpoint for a thread the caller has participated in. Compatible
+    with assistant-ui's ``RemoteThreadMetadata`` shape.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    thread_id: str = Field(
+        description="Caller-scoped thread identifier (remoteId in assistant-ui terms).",
+    )
+    external_id: str | None = Field(
+        default=None,
+        description="Raw UUID without caller prefix (assistant-ui's externalId).",
+    )
+    status: Literal["regular", "archived"] = Field(
+        default="regular",
+        description="Thread visibility. Archived threads are hidden from the default list.",
+    )
+    title: str | None = Field(
+        default=None,
+        description="Human-readable title, derived from the first user message.",
+    )
+    updated_at: str = Field(
+        description="ISO-8601 timestamp of the most recent checkpoint.",
+    )
+    last_message_at: str | None = Field(
+        default=None,
+        description="ISO-8601 timestamp of the last message in the thread.",
+    )
+    message_count: int = Field(
+        ge=0,
+        description="Number of messages in the thread at the latest checkpoint.",
+    )
+    source: str = Field(
+        default="",
+        description="Source of the latest checkpoint (input/loop/update/fork).",
+    )
+    step: int = Field(
+        default=0,
+        description="Step number of the latest checkpoint.",
+    )
+
+
+class ThreadListResponse(BaseModel):
+    """Response payload for GET /v1/threads."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    threads: list[ThreadInfo] = Field(
+        description="List of threads for the authenticated caller, sorted newest first.",
+    )
+    total: int = Field(
+        description="Total number of unique threads returned.",
+    )
+    next_cursor: str | None = Field(
+        default=None,
+        description="Cursor for the next page; null when no more results.",
+    )
+
+
+class ThreadInitializeRequest(BaseModel):
+    """Request body for POST /v1/threads (create a new thread)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    external_id: str | None = Field(
+        default=None,
+        description="Optional client-supplied local ID; returned as externalId for round-tripping.",
+    )
+    title: str | None = Field(
+        default=None,
+        description="Optional initial title.",
+    )
+
+
+class ThreadInitializeResponse(BaseModel):
+    """Response body for POST /v1/threads."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    thread_id: str = Field(description="Caller-scoped thread identifier (the new thread's remoteId).")
+    external_id: str | None = Field(default=None, description="Echo of the client-supplied external_id.")
+
+
+class ThreadPatchRequest(BaseModel):
+    """Request body for PATCH /v1/threads/{id} (rename and/or archive)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, description="New title. Omit to leave unchanged.")
+    status: Literal["regular", "archived"] | None = Field(
+        default=None,
+        description="New status. Omit to leave unchanged.",
+    )
 
 
 class ThreadStateResponse(BaseModel):

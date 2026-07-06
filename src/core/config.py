@@ -392,6 +392,20 @@ class Settings(BaseSettings):
         ),
     )
 
+    # CORS: comma-separated list of allowed origins for the Web UI.
+    # Defaults to the standard local dev servers. Override with
+    # ``OSSIA_CORS_ORIGINS`` env var for production deployment:
+    # e.g. ``OSSIA_CORS_ORIGINS=https://app.ossia.dev,https://ossia.dev``
+    cors_origins: str = Field(
+        default="http://localhost:5173,http://127.0.0.1:5173",
+        description=(
+            "Comma-separated list of allowed CORS origins for the Web UI. "
+            "Defaults to local dev servers. Set to your deployment URL(s) "
+            "in production (e.g. https://app.ossia.dev,https://ossia.dev). "
+            "Use '*' to allow any origin (not recommended with credentials)."
+        ),
+    )
+
     # Tool result cache: langgraph-redis ``ToolResultCacheMiddleware``
     # caches exact-match tool results in Redis. Only takes effect
     # when ``REDIS_URL`` is set; otherwise the helper is skipped.

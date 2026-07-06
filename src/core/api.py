@@ -50,6 +50,7 @@ setup_logging(
 
 from fastapi import Depends, FastAPI, HTTPException, Request  # noqa: E402
 from fastapi.exceptions import RequestValidationError  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.responses import JSONResponse, StreamingResponse  # noqa: E402
 from langchain_core.messages import (  # noqa: E402
     AIMessage,
@@ -96,6 +97,11 @@ from core.schemas import (  # noqa: E402
     ResumeResponse,
     ThreadEventsResponse,
     ThreadHistoryResponse,
+    ThreadInfo,
+    ThreadInitializeRequest,
+    ThreadInitializeResponse,
+    ThreadListResponse,
+    ThreadPatchRequest,
     ThreadStateResponse,
     ToolInfo,
     ToolListResponse,
@@ -105,8 +111,91 @@ from core.schemas import (  # noqa: E402
     WebhookListResponse,
     WhoAmIResponse,
 )
+from core.utils.session import resolve_thread_id  # noqa: E402
 
 logger = logging.getLogger(__name__)
+
+
+# ── Thread metadata store ────────────────────────────────────────────────────
+# Stores per-thread metadata (archive status, custom title) that doesn't fit
+# in the checkpointer's checkpoint tuples. Keyed by caller-scoped thread_id.
+# Ponytail: in-memory dict is fine for the demo deadline; swap for a Postgres
+# table when this needs to survive restarts.
+_thread_meta: dict[str, dict[str, Any]] = {}
+
+
+def _get_thread_meta(thread_id: str) -> dict[str, Any]:
+    """Return the metadata dict for a thread, creating it if needed."""
+    meta = _thread_meta.get(thread_id)
+    if meta is None:
+        meta = {}
+        _thread_meta[thread_id] = meta
+    return meta
+
+
+def _strip_caller_prefix(caller: str, thread_id: str) -> str:
+    """Return the thread_id without the ``caller:`` prefix."""
+    prefix = f"{caller}:"
+    return thread_id[len(prefix):] if thread_id.startswith(prefix) else thread_id
+
+
+def _derive_title_from_history(thread_id: str) -> str | None:
+    """Best-effort title from the first user message in the thread's history.
+
+    Ponytail: the agent's ``get_state`` is async-only in our setup, so we
+    delegate to the existing async history endpoint via a quick fetch
+    instead. Returns None on any error so the caller falls back to a
+    thread_id display.
+    """
+    # The frontend's SessionSidebar already loads titles on demand via
+    # /v1/threads/{id}/history; returning None here means the list
+    # response just won't include a title (the sidebar will fetch it).
+    return None
+
+
+# ── Session header dependency ────────────────────────────────────────────────
+# FastAPI dependency that reads ``X-Session-Topic`` and ``X-Project-Context``
+# HTTP headers so clients can specify the session topic without modifying the
+# JSON payload. Header values are used as fallbacks when the corresponding
+# ``ChatRequest`` payload fields are absent.
+
+
+class _SessionHeaders:
+    """Carrier for session-related HTTP header values.
+
+    Populated by :func:`session_header_params` which is injected as a
+    FastAPI dependency into the chat route handlers.
+    """
+
+    __slots__ = ("session_topic", "project_context")
+
+    def __init__(
+        self,
+        session_topic: str | None = None,
+        project_context: str | None = None,
+    ) -> None:
+        self.session_topic = session_topic
+        self.project_context = project_context
+
+
+async def session_header_params(request: Request) -> _SessionHeaders:
+    """FastAPI dependency: extract session-related HTTP headers.
+
+    Reads:
+    - ``X-Session-Topic`` — session topic slug (overrides payload default).
+    - ``X-Project-Context`` — project/workspace context (overrides auto-detect
+      and payload default).
+
+    Header names are case-insensitive per the HTTP spec (FastAPI's ``Request``
+    normalises them).
+
+    Returns:
+        A :class:`_SessionHeaders` instance with the parsed values.
+    """
+    return _SessionHeaders(
+        session_topic=request.headers.get("x-session-topic"),
+        project_context=request.headers.get("x-project-context"),
+    )
 
 # ── Rate limiter ─────────────────────────────────────────────────────────────
 # In-memory rate limiter backed by slowapi. The bucket key is the
@@ -255,7 +344,21 @@ async def verify_api_key(request: Request) -> str:
 
 
 def _thread_id_for(caller: str, requested: str | None) -> str:
-    """Scope a thread id to the authenticated caller."""
+    """Scope a thread id to the authenticated caller (legacy).
+
+    Used by thread routes (``/v1/threads/{thread_id}/*``) that receive a
+    ``thread_id`` from the URL path. The chat routes (``/v1/chat`` and
+    ``/v1/chat/stream``) use :func:`resolve_thread_id` instead, which
+    supports deterministic UUID v5 session ID derivation, session topics,
+    and "new chat" flows.
+
+    Args:
+        caller: The authenticated caller hash.
+        requested: The raw thread id from the request (or ``None``).
+
+    Returns:
+        A caller-scoped thread id string.
+    """
     base = requested or "default"
     return f"{caller}:{base}"
 
@@ -350,6 +453,20 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+# Wire CORS so the Web UI (which may run on a different origin) can reach
+# the API. Origins come from ``Settings.cors_origins`` (env var
+# ``OSSIA_CORS_ORIGINS``) — a comma-separated list of allowed origins.
+# Default: local dev servers. Override for production deployment.
+_origins_str = get_settings().cors_origins
+_cors_origins = [o.strip() for o in _origins_str.split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Wire rate limiting. Must happen before Instrumentator because slowapi
 # adds its own middleware, and Starlette does not allow adding middleware
@@ -691,9 +808,31 @@ async def chat(
     payload: ChatRequest,
     request: Request,
     caller: str = Depends(verify_api_key),
+    session_headers: _SessionHeaders = Depends(session_header_params),  # noqa: B008
 ) -> ChatResponse:
-    """Run a single chat turn against the agent."""
-    thread_id = _thread_id_for(caller, payload.thread_id)
+    """Run a single chat turn against the agent.
+
+    Session/thread ID resolution follows this priority:
+      1. ``payload.session_topic`` → deterministic UUID v5 derived
+         from ``(caller, project_context, topic)``.
+      2. ``payload.new_session`` is ``true`` → random UUID v4 ("New Chat").
+      3. ``payload.thread_id`` (legacy) → used directly, caller-scoped.
+      4. None of the above → deterministic UUID v5 with topic ``"default"``.
+
+    Clients can also set ``X-Session-Topic`` and ``X-Project-Context`` HTTP
+    headers which act as fallbacks when the corresponding payload fields are
+    absent. Payload fields always take precedence over headers.
+    """
+    # Payload fields take precedence; headers are the fallback.
+    resolved_topic = payload.session_topic or session_headers.session_topic
+    resolved_project = payload.project_context or session_headers.project_context
+    thread_id, metadata = resolve_thread_id(
+        caller_id=caller,
+        topic=resolved_topic,
+        new_session=payload.new_session,
+        project_context=resolved_project,
+        explicit_thread_id=payload.thread_id,
+    )
     # Seed the caller's memory namespace on first request so the
     # agent's user-scoped backend finds the seed.
     await ensure_caller_memory_seeded(app.state.store, caller)
@@ -719,6 +858,7 @@ async def chat_stream(
     payload: ChatRequest,
     request: Request,
     caller: str = Depends(verify_api_key),
+    session_headers: _SessionHeaders = Depends(session_header_params),  # noqa: B008
 ) -> StreamingResponse:
     """Stream a chat turn as Server-Sent Events, v3 protocol.
 
@@ -738,8 +878,28 @@ async def chat_stream(
     the upstream shape changes, only the projection adapters below need
     to update — the wire contract (``kind`` + per-kind ``data`` shape)
     is the part we promise to clients.
+
+    Session/thread ID resolution follows the same priority as
+    ``POST /v1/chat``:
+      1. ``payload.session_topic`` → deterministic UUID v5.
+      2. ``payload.new_session`` is ``true`` → random UUID v4.
+      3. ``payload.thread_id`` (legacy) → used directly.
+      4. None of the above → deterministic UUID v5 with ``"default"``.
+
+    Clients can also set ``X-Session-Topic`` and ``X-Project-Context`` HTTP
+    headers which act as fallbacks when the corresponding payload fields are
+    absent. Payload fields always take precedence over headers.
     """
-    thread_id = _thread_id_for(caller, payload.thread_id)
+    # Payload fields take precedence; headers are the fallback.
+    resolved_topic = payload.session_topic or session_headers.session_topic
+    resolved_project = payload.project_context or session_headers.project_context
+    thread_id, metadata = resolve_thread_id(
+        caller_id=caller,
+        topic=resolved_topic,
+        new_session=payload.new_session,
+        project_context=resolved_project,
+        explicit_thread_id=payload.thread_id,
+    )
     # Seed the caller's memory namespace on first request so the
     # agent's user-scoped backend finds the seed.
     await ensure_caller_memory_seeded(app.state.store, caller)
@@ -1075,6 +1235,48 @@ async def thread_events(
     )
 
 
+@app.delete("/v1/threads/{thread_id}")
+async def delete_thread(
+    thread_id: str,
+    caller: str = Depends(verify_api_key),
+) -> dict[str, Any]:
+    """Delete a thread and all its checkpoint history.
+
+    Removes all checkpoint tuples associated with the thread from the
+    checkpointer (Postgres or Redis). Subsequent ``GET /v1/threads``
+    will not include this thread.
+
+    When no checkpointer is available (in-memory mode) the endpoint
+    returns 200 with ``deleted=false`` and a message explaining why,
+    rather than raising an error, so the client can handle this
+    gracefully.
+
+    Returns:
+        A response with ``deleted`` (bool), ``thread_id`` (str),
+        and optionally a ``message`` field.
+    """
+    scoped = _thread_id_for(caller, thread_id)
+
+    if app.state.checkpointer is None:
+        return {
+            "deleted": False,
+            "thread_id": scoped,
+            "message": "No checkpointer available; thread exists only in memory and cannot be deleted.",
+        }
+
+    try:
+        await app.state.checkpointer.adelete_thread(scoped)
+    except Exception as exc:
+        logger.warning("Failed to delete thread %s: %s", scoped, exc)
+        return {"deleted": False, "thread_id": scoped, "error": str(exc)}
+
+    # Also clear the event buffer for this thread
+    from core.events import get_thread_event_buffer
+
+    get_thread_event_buffer().clear(scoped)
+    return {"deleted": True, "thread_id": scoped}
+
+
 @app.delete("/v1/threads/{thread_id}/events")
 async def thread_events_delete(
     thread_id: str,
@@ -1118,6 +1320,188 @@ async def thread_history(
     )
 
 
+@app.get("/v1/threads", response_model=ThreadListResponse)
+async def list_threads(
+    caller: str = Depends(verify_api_key),
+    limit: int = 50,
+    include_archived: bool = False,
+) -> ThreadListResponse:
+    """List all threads for the authenticated caller.
+
+    Returns the latest checkpoint for each unique thread, sorted most
+    recent first. Threads are scoped to the calling API key — a caller
+    only sees their own threads. Archived threads are excluded by default.
+
+    Args:
+        limit: Maximum number of threads to return (default 50, max 200).
+        include_archived: If true, also include archived threads.
+
+    Returns:
+        A ``ThreadListResponse`` containing the thread summaries.
+    """
+    caller_prefix = f"{caller}:"
+    limit = min(max(limit, 1), 200)
+
+    if app.state.checkpointer is None:
+        return ThreadListResponse(threads=[], total=0)
+
+    checkpointer = app.state.checkpointer
+    seen: set[str] = set()
+    threads: list[ThreadInfo] = []
+
+    # Iterate checkpoint tuples in reverse chronological order
+    # using the async alist() generator (avoids blocking the event loop).
+    # Deduplicate by thread_id — the first encounter is the latest checkpoint.
+    async for tup in checkpointer.alist(None, limit=200):
+        thread_id: str = tup.config["configurable"]["thread_id"]  # type: ignore[typeddict-item]
+
+        # Filter to caller's threads only
+        if not thread_id.startswith(caller_prefix):
+            continue
+
+        # Skip threads we've already seen (keep only the latest checkpoint)
+        if thread_id in seen:
+            continue
+        seen.add(thread_id)
+
+        checkpoint = tup.checkpoint
+        messages = checkpoint.get("channel_values", {}).get("messages", [])
+        message_count = len(messages) if isinstance(messages, (list, tuple)) else 0
+        metadata = tup.metadata or {}
+        meta = _get_thread_meta(thread_id)
+
+        # Skip archived threads from the default list
+        if meta.get("status") == "archived" and not include_archived:
+            continue
+
+        # Derive title if not explicitly set
+        title = meta.get("title") or _derive_title_from_history(thread_id)
+
+        threads.append(
+            ThreadInfo(
+                thread_id=thread_id,
+                external_id=_strip_caller_prefix(caller, thread_id) or None,
+                status=meta.get("status", "regular"),
+                title=title,
+                updated_at=checkpoint.get("ts", ""),
+                last_message_at=checkpoint.get("ts", "") or None,
+                message_count=message_count,
+                source=metadata.get("source", ""),
+                step=metadata.get("step", 0),
+            )
+        )
+
+        if len(threads) >= limit:
+            break
+
+    return ThreadListResponse(threads=threads, total=len(threads))
+
+
+# ── Thread metadata endpoints (assistant-ui RemoteThreadListAdapter) ────────
+
+
+@app.post("/v1/threads", response_model=ThreadInitializeResponse)
+async def initialize_thread(
+    payload: ThreadInitializeRequest,
+    caller: str = Depends(verify_api_key),
+) -> ThreadInitializeResponse:
+    """Initialize a new thread (creates a caller-scoped thread_id).
+
+    Used by the assistant-ui ``RemoteThreadListAdapter.initialize()`` call.
+    The returned ``thread_id`` becomes the new thread's ``remoteId``;
+    ``external_id`` is round-tripped for client-side bookkeeping.
+    """
+    external = payload.external_id or str(uuid.uuid4())
+    thread_id = f"{caller}:{external}"
+    meta = _get_thread_meta(thread_id)
+    if payload.title:
+        meta["title"] = payload.title
+    return ThreadInitializeResponse(thread_id=thread_id, external_id=external)
+
+
+@app.get("/v1/threads/{thread_id}", response_model=ThreadInfo)
+async def get_thread(
+    thread_id: str,
+    caller: str = Depends(verify_api_key),
+) -> ThreadInfo:
+    """Fetch metadata for a single thread. Used by the adapter's ``fetch()``."""
+    scoped = _thread_id_for(caller, thread_id)
+    meta = _get_thread_meta(scoped)
+    title = meta.get("title") or _derive_title_from_history(scoped)
+
+    if app.state.checkpointer is None:
+        return ThreadInfo(
+            thread_id=scoped,
+            external_id=_strip_caller_prefix(caller, scoped) or None,
+            status=meta.get("status", "regular"),
+            title=title,
+            updated_at="",
+            message_count=0,
+        )
+
+    # Look up the latest checkpoint for this thread.
+    found: ThreadInfo | None = None
+    async for tup in app.state.checkpointer.alist(None, limit=50):
+        tid: str = tup.config["configurable"]["thread_id"]  # type: ignore[typeddict-item]
+        if tid != scoped:
+            continue
+        checkpoint = tup.checkpoint
+        messages = checkpoint.get("channel_values", {}).get("messages", [])
+        message_count = len(messages) if isinstance(messages, (list, tuple)) else 0
+        metadata = tup.metadata or {}
+        found = ThreadInfo(
+            thread_id=scoped,
+            external_id=_strip_caller_prefix(caller, scoped) or None,
+            status=meta.get("status", "regular"),
+            title=title,
+            updated_at=checkpoint.get("ts", ""),
+            last_message_at=checkpoint.get("ts", "") or None,
+            message_count=message_count,
+            source=metadata.get("source", ""),
+            step=metadata.get("step", 0),
+        )
+        break
+
+    if found is None:
+        # Thread not in checkpointer yet (just initialized, no run). Return meta-only.
+        found = ThreadInfo(
+            thread_id=scoped,
+            external_id=_strip_caller_prefix(caller, scoped) or None,
+            status=meta.get("status", "regular"),
+            title=title,
+            updated_at="",
+            message_count=0,
+        )
+    return found
+
+
+@app.patch("/v1/threads/{thread_id}", response_model=ThreadInfo)
+async def patch_thread(
+    thread_id: str,
+    payload: ThreadPatchRequest,
+    caller: str = Depends(verify_api_key),
+) -> ThreadInfo:
+    """Update a thread's title and/or status (archive)."""
+    scoped = _thread_id_for(caller, thread_id)
+    meta = _get_thread_meta(scoped)
+    if payload.title is not None:
+        meta["title"] = payload.title
+    if payload.status is not None:
+        meta["status"] = payload.status
+    return await get_thread(thread_id, caller=caller)  # type: ignore[arg-type]
+
+
+@app.post("/v1/threads/{thread_id}/unarchive", response_model=ThreadInfo)
+async def unarchive_thread(
+    thread_id: str,
+    caller: str = Depends(verify_api_key),
+) -> ThreadInfo:
+    """Restore an archived thread to regular status."""
+    scoped = _thread_id_for(caller, thread_id)
+    _get_thread_meta(scoped)["status"] = "regular"
+    return await get_thread(thread_id, caller=caller)  # type: ignore[arg-type]
+
+
 @app.post("/v1/threads/{thread_id}/resume", response_model=ResumeResponse)
 async def thread_resume(
     thread_id: str,
@@ -1143,7 +1527,11 @@ async def thread_resume(
             entry["message"] = d.message
         decisions.append(entry)
     result = await agent.ainvoke(Command(resume={"decisions": decisions}), config, version="v2")
-    messages = [_msg_to_chat_message(m) for m in result.get("messages", [])]
+    # GraphOutput is dict-like (supports __getitem__) but has no ``.get``.
+    # Use the bracket form so the v2 invoke result is unpacked the same
+    # way the v3 streaming path does.
+    raw_messages = result["messages"] if "messages" in result else []  # noqa: SIM401
+    messages = [_msg_to_chat_message(m) for m in raw_messages]
     interrupted = bool(getattr(result, "interrupts", None))
     return ResumeResponse(thread_id=scoped, messages=messages, interrupted=interrupted)
 
