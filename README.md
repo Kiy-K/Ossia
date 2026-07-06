@@ -97,7 +97,7 @@ Ossia's architecture is composed of six interconnected subsystems, each document
 | **Memory & Persistence** | [ADR-0007](docs/adr/0007-agent-scoped-memory-and-episodic-recall.md) | Postgres + in-memory store, per-caller namespaces, thread replay buffer | [Deployment topology](docs/diagrams.md#5-deployment-topology) |
 | **Orchestrator Pipelines** | [ADR-0008](docs/adr/0008-subagent-design-and-routing.md) | bugfix/audit/refactor pipelines via code interpreter with multi-step workflows | [Subagent routing](docs/diagrams.md#1-subagent-routing) |
 | **Terminal UI** | `src/tui/` | OpenTUI/React 19 terminal client consuming `/v1/chat/stream` over SSE | [TUI README](src/tui/README.md) |
-| **Web UI** | `src/webui/` | React 19 + Vite + Tailwind v4 web client with dark/light mode, 4 panels, SSE streaming | [Web UI README](src/webui/README.md) |
+| **Web UI** | `src/webui/` | React 19 + Vite + Tailwind v4 web client with ChatGPT-style layout, session sidebar, SSE streaming | [Web UI README](src/webui/README.md) |
 
 ### Request lifecycle
 
@@ -310,7 +310,7 @@ See the [TUI README](src/tui/README.md) for full documentation.
 ### Web UI
 
 Ossia also ships with a **Web UI** built with React 19, Vite, and Tailwind CSS v4.
-It connects to the backend via SSE and provides a browser-based interface:
+It connects to the backend via SSE and provides a ChatGPT-style browser interface:
 
 ```bash
 # Start both backend + Web UI together:
@@ -326,18 +326,21 @@ The Web UI features:
 
 | Feature | Description |
 |---------|-------------|
-| **4 panels** | Chat, Subagents (with pipelines), Tools (with async tasks), ReAct reasoning loop |
+| **ChatGPT-style layout** | Minimal header, centered empty state, sticky composer, high-contrast bubbles |
+| **Session sidebar** | Thread list via `GET /v1/threads`, click to switch, New Chat, lazy-loaded titles |
 | **Dark/light mode** | Sun/Moon toggle, persists to localStorage, no flash on load |
-| **Theme-aware favicon** | Purple ring that swaps color based on mode |
-| **Panel persistence** | Active tab survives page refreshes |
+| **Theme-aware favicon** | Matches dark/light mode automatically |
 | **Connection config** | Gear icon to set API URL and key, live connection indicator |
-| **SSE streaming** | Real-time agent responses via server-sent events |
-| **Playwright e2e tests** | 5 tests covering panel persistence, tab switching, and edge cases |
+| **SSE streaming** | Real-time agent responses with inline tool call tracking |
+| **ToolGroup** | Collapsible card for consecutive tool calls |
+| **Markdown rendering** | Full syntax highlighting via Shiki |
 
 ```bash
 # Run e2e tests (auto-starts Vite dev server)
 cd src/webui && npm run test:e2e
 ```
+
+See the [Web UI README](src/webui/README.md) for full documentation.
 
 ## Configuration
 

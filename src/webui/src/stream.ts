@@ -64,44 +64,6 @@ function parseSSEBuffer(block: string): OssiaEvent[] {
 }
 
 /**
- * Send a chat message and yield the SSE event stream.
- */
-export async function* sendMessage(
-  message: string,
-  config: Config,
-  threadId?: string,
-  signal?: AbortSignal,
-): AsyncGenerator<OssiaEvent> {
-  const url = `${config.apiUrl}/v1/chat/stream`;
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-API-Key": config.apiKey,
-    },
-    body: JSON.stringify({
-      message,
-      thread_id: threadId,
-    }),
-    signal,
-  });
-
-  if (!response.ok) {
-    let detail = `HTTP ${response.status}`;
-    try {
-      const body = (await response.json()) as { error?: { message?: string } };
-      detail = body?.error?.message ?? detail;
-    } catch {
-      // use default
-    }
-    throw new Error(`API error: ${detail}`);
-  }
-
-  yield* parseSSEStream(response);
-}
-
-/**
  * Check if the backend server is reachable.
  */
 export async function checkHealth(config: Config): Promise<boolean> {

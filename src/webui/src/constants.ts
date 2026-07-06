@@ -9,9 +9,6 @@
  */
 
 export const STORAGE_KEYS = {
-  /** Active panel tab: "chat" | "subagents" | "tools" | "react" */
-  ACTIVE_PANEL: "ossia:activePanel",
-
   /** Dark mode toggle: "true" | "false" */
   DARK_MODE: "ossia:darkMode",
 

@@ -1,243 +1,267 @@
-/* Outfit variable font for headings + UI */
+/* ── Fonts ────────────────────────────────────────────────────────────── */
 @import "@fontsource-variable/outfit";
-/* JetBrains Mono variable for code */
 @import "@fontsource-variable/jetbrains-mono";
 
+/* ── Tailwind v4 import ──────────────────────────────────────────────── */
 @import "tailwindcss";
 
-/* Class-based dark mode: .dark on <html> activates dark: variants */
-@variant dark (&:where(.dark, .dark *));
+/* ── CSS Custom Properties (ChatGPT-inspired palette) ────────────────── */
+@layer base {
+  :root {
+    /* Base backgrounds – ChatGPT light */
+    --ossia-bg: #ffffff;
+    --ossia-surface: #f5f5f5;
+    --ossia-surface-2: #e5e5e5;
 
+    /* Text – ChatGPT */
+    --ossia-text: #0d0d0d;
+    --ossia-text-secondary: #5d5d5d;
+    --ossia-muted: #5d5d5d;
+    --ossia-muted-more: #9ca3af;
+
+    /* Borders */
+    --ossia-border: #e5e5e5;
+    --ossia-border-subtle: #e5e5e5;
+
+    /* Semantics */
+    --ossia-green: #16a34a;
+    --ossia-red: #dc2626;
+    --ossia-yellow: #ca8a04;
+    --ossia-blue: #2563eb;
+
+    --ossia-green-subtle: #dcfce7;
+    --ossia-red-subtle: #fee2e2;
+    --ossia-yellow-subtle: #fef9c3;
+    --ossia-blue-subtle: #dbeafe;
+
+    --shadow-ossia-sm: 0 1px 2px rgb(0 0 0 / 0.06);
+    --shadow-ossia-md: 0 4px 6px -1px rgb(0 0 0 / 0.08);
+  }
+
+  .dark {
+    /* Base backgrounds – ChatGPT dark */
+    --ossia-bg: #000000;
+    --ossia-surface: #212121;
+    --ossia-surface-2: #2f2f2f;
+
+    /* Text – ChatGPT */
+    --ossia-text: #ececec;
+    --ossia-text-secondary: #afafaf;
+    --ossia-muted: #cdcdcd;
+    --ossia-muted-more: #71717a;
+
+    /* Borders */
+    --ossia-border: #3f3f46;
+    --ossia-border-subtle: #2f2f2f;
+
+    /* Semantics */
+    --ossia-green: #22c55e;
+    --ossia-red: #ef4444;
+    --ossia-yellow: #eab308;
+    --ossia-blue: #3b82f6;
+
+    --ossia-green-subtle: #14532d;
+    --ossia-red-subtle: #450a0a;
+    --ossia-yellow-subtle: #422006;
+    --ossia-blue-subtle: #1e3a5f;
+
+    --shadow-ossia-sm: 0 1px 2px rgb(0 0 0 / 0.3);
+    --shadow-ossia-md: 0 4px 6px -1px rgb(0 0 0 / 0.4);
+  }
+}
+
+/* ── Tailwind v4 theme extension ─────────────────────────────────────── */
 @theme {
-  /* ── CSS variable indirection ─────────────────────────── */
-  /* Values switch dynamically via :root (light) vs .dark (dark) blocks below.
-     Tailwind generates utility classes from these var() references. */
+  --font-sans: "Outfit Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
 
   --color-ossia-bg: var(--ossia-bg);
   --color-ossia-surface: var(--ossia-surface);
   --color-ossia-surface-2: var(--ossia-surface-2);
-  --color-ossia-surface-3: var(--ossia-surface-3);
-  --color-ossia-border: var(--ossia-border);
-  --color-ossia-border-subtle: var(--ossia-border-subtle);
+
   --color-ossia-text: var(--ossia-text);
   --color-ossia-text-secondary: var(--ossia-text-secondary);
   --color-ossia-muted: var(--ossia-muted);
   --color-ossia-muted-more: var(--ossia-muted-more);
 
-  /* Brand accent — consistent purple across both modes */
-  --color-ossia-accent: var(--ossia-accent);
-  --color-ossia-accent-hover: var(--ossia-accent-hover);
-  --color-ossia-accent-subtle: var(--ossia-accent-subtle);
-  --color-ossia-cyan: var(--ossia-cyan);
-  --color-ossia-cyan-subtle: var(--ossia-cyan-subtle);
+  --color-ossia-border: var(--ossia-border);
+  --color-ossia-border-subtle: var(--ossia-border-subtle);
 
-  /* Status colors */
   --color-ossia-green: var(--ossia-green);
-  --color-ossia-green-subtle: var(--ossia-green-subtle);
-  --color-ossia-yellow: var(--ossia-yellow);
-  --color-ossia-yellow-subtle: var(--ossia-yellow-subtle);
   --color-ossia-red: var(--ossia-red);
-  --color-ossia-red-subtle: var(--ossia-red-subtle);
+  --color-ossia-yellow: var(--ossia-yellow);
   --color-ossia-blue: var(--ossia-blue);
+
+  --color-ossia-green-subtle: var(--ossia-green-subtle);
+  --color-ossia-red-subtle: var(--ossia-red-subtle);
+  --color-ossia-yellow-subtle: var(--ossia-yellow-subtle);
   --color-ossia-blue-subtle: var(--ossia-blue-subtle);
 
-  /* Elevation shadows */
-  --shadow-ossia-sm: var(--ossia-shadow-sm);
-  --shadow-ossia-md: var(--ossia-shadow-md);
-  --shadow-ossia-lg: var(--ossia-shadow-lg);
-
-  /* Shape scale */
-  --radius-ossia-sm: 4px;
-  --radius-ossia-md: 8px;
-  --radius-ossia-lg: 12px;
-  --radius-ossia-xl: 16px;
-  --radius-ossia-full: 9999px;
-
-  /* Transition tokens */
-  --ease-ossia-out: cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-ossia-in-out: cubic-bezier(0.45, 0, 0.2, 1);
-  --duration-ossia-fast: 150ms;
-  --duration-ossia-normal: 250ms;
-  --duration-ossia-slow: 400ms;
+  --shadow-ossia-sm: var(--shadow-ossia-sm);
+  --shadow-ossia-md: var(--shadow-ossia-md);
 }
 
-/* ════════════════════════════════════════════════════════════════════════
-   LIGHT MODE (default)
-   Zinc with purple undertone — inverted from dark, same design DNA.
-   ════════════════════════════════════════════════════════════════════════ */
+/* ── Global resets ───────────────────────────────────────────────────── */
+@layer base {
+  * {
+    scrollbar-color: var(--ossia-border) transparent;
+    scrollbar-width: thin;
+  }
 
-:root {
-  --ossia-bg: #f2f2f8;
-  --ossia-surface: #ffffff;
-  --ossia-surface-2: #eaeaf2;
-  --ossia-surface-3: #dfdfea;
-  --ossia-border: #cdcddc;
-  --ossia-border-subtle: #ddddea;
-  --ossia-text: #16162a;
-  --ossia-text-secondary: #494964;
-  --ossia-muted: #7a7a98;
-  --ossia-muted-more: #9a9ab4;
+  body {
+    font-family: "Outfit Variable", ui-sans-serif, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
 
-  --ossia-accent: #7c3aed;
-  --ossia-accent-hover: #6d28d9;
-  --ossia-accent-subtle: #7c3aed0f;
-  --ossia-cyan: #0891b2;
-  --ossia-cyan-subtle: #0891b206;
+  ::selection {
+    background-color: color-mix(in srgb, var(--ossia-text) 20%, transparent);
+    color: var(--ossia-text);
+  }
 
-  --ossia-green: #16a34a;
-  --ossia-green-subtle: #16a34a0d;
-  --ossia-yellow: #ca8a04;
-  --ossia-yellow-subtle: #ca8a040d;
-  --ossia-red: #dc2626;
-  --ossia-red-subtle: #dc26260d;
-  --ossia-blue: #2563eb;
-  --ossia-blue-subtle: #2563eb0d;
-
-  --ossia-shadow-sm: 0 1px 2px rgba(0,0,0,0.05), 0 1px 3px rgba(124,58,237,0.04);
-  --ossia-shadow-md: 0 4px 12px rgba(0,0,0,0.07), 0 2px 6px rgba(124,58,237,0.05);
-  --ossia-shadow-lg: 0 8px 24px rgba(0,0,0,0.09), 0 4px 12px rgba(124,58,237,0.06);
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--ossia-border);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--ossia-muted);
+  }
 }
 
-/* ════════════════════════════════════════════════════════════════════════
-   DARK MODE — activated via .dark class on <html>
-   Deep, harmonious dark palette — zinc with purple undertone.
-   ════════════════════════════════════════════════════════════════════════ */
-
-.dark,
-.dark * {
-  --ossia-bg: #0c0c14;
-  --ossia-surface: #14142a;
-  --ossia-surface-2: #1c1c36;
-  --ossia-surface-3: #242442;
-  --ossia-border: #2e2e52;
-  --ossia-border-subtle: #22223e;
-  --ossia-text: #e8e8f4;
-  --ossia-text-secondary: #b0b0c8;
-  --ossia-muted: #78789a;
-  --ossia-muted-more: #5a5a78;
-
-  --ossia-accent: #8b5cf6;
-  --ossia-accent-hover: #7c3aed;
-  --ossia-accent-subtle: #7c3aed20;
-  --ossia-cyan: #22d3ee;
-  --ossia-cyan-subtle: #22d3ee14;
-
-  --ossia-green: #22c55e;
-  --ossia-green-subtle: #22c55e14;
-  --ossia-yellow: #eab308;
-  --ossia-yellow-subtle: #eab30814;
-  --ossia-red: #ef4444;
-  --ossia-red-subtle: #ef444414;
-  --ossia-blue: #3b82f6;
-  --ossia-blue-subtle: #3b82f614;
-
-  --ossia-shadow-sm: 0 1px 2px rgba(0,0,0,0.4), 0 1px 3px rgba(124,58,237,0.06);
-  --ossia-shadow-md: 0 4px 12px rgba(0,0,0,0.4), 0 2px 6px rgba(124,58,237,0.08);
-  --ossia-shadow-lg: 0 8px 24px rgba(0,0,0,0.45), 0 4px 12px rgba(124,58,237,0.1);
+/* ── Markdown content styling ────────────────────────────────────────── */
+.message-content p {
+  margin-bottom: 0.5rem;
+}
+.message-content p:last-child {
+  margin-bottom: 0;
+}
+.message-content ul,
+.message-content ol {
+  margin: 0.25rem 0 0.5rem;
+  padding-left: 1.25rem;
+}
+.message-content li {
+  margin-bottom: 0.15rem;
+}
+.message-content h1,
+.message-content h2,
+.message-content h3,
+.message-content h4 {
+  font-weight: 600;
+  margin-top: 0.75rem;
+  margin-bottom: 0.25rem;
+}
+.message-content h1 {
+  font-size: 1.125rem;
+}
+.message-content h2 {
+  font-size: 1rem;
+}
+.message-content h3 {
+  font-size: 0.9375rem;
+}
+.message-content blockquote {
+  border-left: 2px solid var(--ossia-border);
+  padding-left: 0.75rem;
+  margin: 0.5rem 0;
+  color: var(--ossia-muted);
+}
+.message-content a {
+  color: var(--ossia-blue);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.message-content a:hover {
+  opacity: 0.8;
+}
+.message-content table {
+  border-collapse: collapse;
+  margin: 0.5rem 0;
+  font-size: 0.8125rem;
+  width: 100%;
+}
+.message-content th,
+.message-content td {
+  border: 1px solid var(--ossia-border);
+  padding: 0.375rem 0.5rem;
+  text-align: left;
+}
+.message-content th {
+  background: var(--ossia-surface);
+  font-weight: 500;
+}
+.message-content hr {
+  border: none;
+  border-top: 1px solid var(--ossia-border);
+  margin: 1rem 0;
+}
+.message-content code {
+  font-family: "JetBrains Mono Variable", ui-monospace, monospace;
+  font-size: 0.8125rem;
+  background: var(--ossia-surface-2);
+  padding: 0.125rem 0.375rem;
+  border-radius: 3px;
+}
+.message-content pre {
+  background: var(--ossia-surface-2);
+  border: 1px solid var(--ossia-border);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  overflow-x: auto;
+  margin: 0.5rem 0;
+}
+.message-content pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
 }
 
-/* ── Base ────────────────────────────────────────────────────────────── */
-
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--ossia-border) transparent;
-}
-
-::selection {
-  background: var(--ossia-accent);
-  color: white;
-}
-
-body {
-  margin: 0;
-  background: var(--ossia-bg);
-  color: var(--ossia-text);
-  font-family: "Outfit Variable", ui-sans-serif, system-ui, -apple-system, sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
-  transition: background-color var(--duration-ossia-normal) var(--ease-ossia-out),
-              color var(--duration-ossia-normal) var(--ease-ossia-out);
-}
-
-code,
-pre,
-.font-mono {
-  font-family: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
-  font-feature-settings: "calt", "liga", "ss01", "ss02";
-}
-
-/* ── Focus ring ──────────────────────────────────────────────────────── */
-
-*:focus-visible {
-  outline: 2px solid var(--ossia-accent);
-  outline-offset: 2px;
-  border-radius: 4px;
-}
-
-/* ── Streaming cursor ────────────────────────────────────────────────── */
-
-@keyframes blink {
-  0%, 100% { opacity: 1; }
+/* ── Motion keyframes ────────────────────────────────────────────────── */
+@keyframes cursor-blink {
+  0%,
+  100% { opacity: 1; }
   50% { opacity: 0; }
 }
 
 .streaming-cursor::after {
   content: "▊";
-  animation: blink 1s step-end infinite;
-  color: var(--ossia-accent);
-  margin-left: 2px;
-  font-weight: 400;
+  animation: cursor-blink 1s step-end infinite;
+  margin-left: 1px;
+  color: var(--ossia-muted);
 }
 
-/* ── Pulse dot ───────────────────────────────────────────────────────── */
-
-@keyframes pulse-dot {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.6; transform: scale(0.85); }
+@keyframes thinking-dot {
+  0%, 80%, 100% { transform: scale(0); opacity: 0; }
+  40% { transform: scale(1); opacity: 1; }
 }
 
-.pulse-dot {
-  animation: pulse-dot 1.5s ease-in-out infinite;
+.thinking-dot {
+  width: 4px;
+  height: 4px;
+  background: var(--ossia-muted);
+  border-radius: 50%;
+  display: inline-block;
+  animation: thinking-dot 1.4s ease-in-out infinite both;
 }
 
-/* ── Progress bar shimmer ────────────────────────────────────────────── */
-
-@keyframes shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
-}
+.thinking-dot:nth-child(1) { animation-delay: -0.32s; }
+.thinking-dot:nth-child(2) { animation-delay: -0.16s; }
+.thinking-dot:nth-child(3) { animation-delay: 0s; }
 
 .progress-shimmer {
-  background: linear-gradient(
-    90deg,
-    var(--ossia-accent) 25%,
-    var(--ossia-cyan) 50%,
-    var(--ossia-accent) 75%
-  );
+  background: linear-gradient(90deg, var(--ossia-yellow) 25%, var(--ossia-blue) 50%, var(--ossia-yellow) 75%);
   background-size: 200% 100%;
   animation: shimmer 1.5s ease-in-out infinite;
 }
 
-/* ── Skeleton pulse ──────────────────────────────────────────────────── */
-
-@keyframes skeleton-pulse {
-  0%, 100% { opacity: 0.4; }
-  50% { opacity: 0.7; }
-}
-
-.skeleton {
-  animation: skeleton-pulse 1.8s ease-in-out infinite;
-}
-
-/* ── Reduced motion ──────────────────────────────────────────────────── */
-
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-  }
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }

@@ -235,7 +235,7 @@ HTTPS and security headers. Set `DOMAIN=your.domain` in `.env` for certs.
 - **ADR** — architecture decision record (in `docs/adr/`)
 - **spec-driven** — pinned OpenAPI contract + drift test workflow
 - **TUI** — terminal UI (OpenTUI/React client at `src/tui/`)
-- **Web UI** — browser-based UI (React + Vite + Tailwind v4 client at `src/webui/`)
+- **Web UI** — browser-based UI (React + Vite + Tailwind v4 client at `src/webui/`) with ChatGPT-style layout and session sidebar with ChatGPT-style layout and session sidebar
 - **episodic memory** — per-thread recall via `recall_thread_turns`
 - **semantic memory** — agent-scoped long-term store at `/memories/AGENTS.md`
 - **orchestrator pipeline** — programmatic multi-step automations (bugfix, audit, refactor)
