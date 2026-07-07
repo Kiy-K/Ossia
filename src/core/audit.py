@@ -572,8 +572,8 @@ async def audit_model_middleware() -> AuditSection:
     import openai
     from langchain_core.messages import AIMessage
 
-    from core.agent import create_chat_model
     from core.config import Provider
+    from core.llm import create_chat_model
 
     checks: list[CheckResult] = []
     api_key = os.environ.get("OPENROUTER_API_KEY")

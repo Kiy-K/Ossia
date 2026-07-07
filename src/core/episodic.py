@@ -141,7 +141,7 @@ def make_episodic_recall_tool(
             # thread. It also works with purely sync checkpointers like
             # ``InMemorySaver`` — they simply run on the thread pool.
             raw = await anyio.to_thread.run_sync(  # pyright: ignore[reportAttributeAccessIssue]
-                lambda: list(checkpointer.list(config, limit=limit))  # type: ignore[union-attr]
+                lambda: list(checkpointer.list(config, limit=limit))  # type: ignore[union-attr,unused-ignore]
             )
         except Exception as exc:  # noqa: BLE001
             return {

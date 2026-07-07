@@ -1025,12 +1025,13 @@ def internet_search(
     """
 
     def _tavily(client: Any) -> dict[str, Any]:
-        return client.search(
+        result: dict[str, Any] = client.search(
             query=query,
             max_results=max_results,
             topic=topic,
             include_answer="basic",
         )
+        return result
 
     def _ddg() -> list[dict[str, Any]]:
         return _ddgs_text(query, max_results)
@@ -1132,7 +1133,7 @@ def fetch_url(url: str, question: str | None = None) -> FetchUrlOutput:
     """
 
     def _tavily(client: Any) -> dict[str, Any]:
-        return client.extract(
+        return client.extract(  # type: ignore[no-any-return]
             urls=[url],
             format="markdown",
             query=question or None,

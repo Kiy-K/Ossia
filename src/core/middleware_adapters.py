@@ -92,7 +92,7 @@ class EagerToolAdapter:
             raise
 
 
-def eager_tool_map(tools: list[BaseTool]) -> dict[str, "EagerToolAdapter"]:
+def eager_tool_map(tools: list[BaseTool]) -> dict[str, EagerToolAdapter]:
     """Build the ``{name: Tool}`` dict that ``eager_middleware`` expects.
 
     Every tool in the list is wrapped in an :class:`EagerToolAdapter`.

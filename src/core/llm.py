@@ -48,7 +48,7 @@ def create_chat_model(settings: Settings | None = None) -> BaseChatModel:
             kwargs["nvidia_api_key"] = settings.nim_api_key
         if settings.nim_base_url:
             kwargs["base_url"] = settings.nim_base_url
-        return ChatNVIDIA(**kwargs)  # type: ignore[arg-type]
+        return ChatNVIDIA(**kwargs)
     openai_like_providers = {
         Provider.OPENROUTER: ("https://openrouter.ai/api/v1", settings.openrouter_api_key),
         Provider.FIREWORKS: ("https://api.fireworks.ai/inference/v1", settings.fireworks_api_key),
@@ -61,7 +61,7 @@ def create_chat_model(settings: Settings | None = None) -> BaseChatModel:
             raise ValueError(f"API key for provider '{provider}' is not configured.")
         from langchain_openai import ChatOpenAI
 
-        kwargs: dict[str, Any] = {
+        openai_kwargs: dict[str, Any] = {
             "model": settings.model,
             "temperature": settings.temperature,
             "max_tokens": settings.max_tokens,
@@ -69,8 +69,8 @@ def create_chat_model(settings: Settings | None = None) -> BaseChatModel:
             "api_key": api_key,
         }
         if base_url:
-            kwargs["base_url"] = base_url
-        return ChatOpenAI(**kwargs)
+            openai_kwargs["base_url"] = base_url
+        return ChatOpenAI(**openai_kwargs)
     if provider == Provider.ANTHROPIC:
         from langchain_anthropic import ChatAnthropic
 

@@ -140,7 +140,7 @@ def _check_prerequisites() -> str | None:
     from core.config import get_settings
 
     try:
-        import browser_use  # noqa: F401  # type: ignore[import-not-found]
+        import browser_use  # noqa: F401
     except ImportError:
         return (
             "The `browser-use` package is not installed. Install it with "
@@ -186,7 +186,7 @@ def _build_output_model(schema: dict[str, str]) -> type[BaseModel]:
         if not name.isidentifier():
             raise ValueError(f"output_schema field name {name!r} is not a valid Python identifier")
         fields[name] = (str, Field(description=desc))
-    return create_model("BrowserUseStructuredOutput", **fields)  # type: ignore[call-overload]
+    return create_model("BrowserUseStructuredOutput", **fields)  # type: ignore[call-overload,no-any-return]
 
 
 # Conservative list of Chromium flags that reduce the obvious bot
@@ -275,7 +275,7 @@ def _build_browser() -> Any:
     * ``browser_use_local=False`` → browser-use cloud browser, the
       default for users with a paid account. Requires BROWSER_USE_API_KEY.
     """
-    from browser_use import Browser  # type: ignore[import-not-found]
+    from browser_use import Browser
 
     from core.config import get_settings
 
@@ -308,7 +308,7 @@ def _build_browser() -> Any:
     # Cloud path. Type stubs lag the runtime; the SDK accepts all
     # three kwargs at runtime (see browser-use AGENTS.md "Cloud
     # Browser" section).
-    return Browser(  # type: ignore[call-arg]
+    return Browser(  # type: ignore[call-overload]
         use_cloud=True,
         cloud_timeout=15,
         viewport={"width": 1280, "height": 800},
@@ -338,7 +338,7 @@ def _build_llm() -> Any:
 
     settings = get_settings()
     if settings.browser_use_llm == "browser-use":
-        from browser_use.llm import ChatBrowserUse  # type: ignore[import-not-found]
+        from browser_use.llm import ChatBrowserUse
 
         return ChatBrowserUse()
 
@@ -360,7 +360,7 @@ def _build_llm() -> Any:
         ),
     }
     if settings.provider in openai_compat:
-        from browser_use.llm import ChatOpenAI  # type: ignore[import-not-found]
+        from browser_use.llm import ChatOpenAI  # type: ignore[import-not-found,unused-ignore]
 
         base_url, api_key = openai_compat[settings.provider]
         if not api_key:
@@ -373,13 +373,13 @@ def _build_llm() -> Any:
 
     # Anthropic / Google use their own browser-use chat classes.
     if settings.provider == Provider.ANTHROPIC:
-        from browser_use.llm import ChatAnthropic  # type: ignore[import-not-found]
+        from browser_use.llm import ChatAnthropic
 
         if not settings.anthropic_api_key:
             raise ValueError("ANTHROPIC_API_KEY is required for the anthropic provider.")
         return ChatAnthropic(model=settings.model, api_key=settings.anthropic_api_key)
     if settings.provider == Provider.GOOGLE:
-        from browser_use.llm import ChatGoogle  # type: ignore[import-not-found]
+        from browser_use.llm import ChatGoogle
 
         if not settings.google_api_key:
             raise ValueError("GOOGLE_API_KEY is required for the google provider.")
@@ -420,10 +420,10 @@ async def _run_browser_use_task(
     )
 
     try:
-        from browser_use import Agent  # type: ignore[import-not-found]
+        from browser_use import Agent
 
         output_model = _build_output_model(output_schema) if output_schema else None
-        agent = Agent(
+        agent: Any = Agent(
             task=task,
             llm=_build_llm(),
             browser=_build_browser(),

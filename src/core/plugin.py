@@ -61,7 +61,7 @@ class LoadedPlugin:
     name: str
     module: str
     path: Path
-    config: dict = field(default_factory=dict)
+    config: dict[str, Any] = field(default_factory=dict)
     tools: list[BaseTool] = field(default_factory=list)
     subagents: list[dict[str, Any]] = field(default_factory=list)
     middlewares: list[Any] = field(default_factory=list)
@@ -200,7 +200,7 @@ def _load_module_from_path(path: Path, alias: str) -> Any:
     return module
 
 
-def _call_register(register: Any, api: PluginAPI, config: dict | None) -> bool:
+def _call_register(register: Any, api: PluginAPI, config: dict[str, Any] | None) -> bool:
     """Call ``register(api, config=...)``, falling back to ``register(api)``
     for plugins that haven't been updated to the new signature.
 
@@ -226,7 +226,7 @@ def _call_register(register: Any, api: PluginAPI, config: dict | None) -> bool:
         return False
 
 
-def _load_one(path: Path, config: dict | None = None) -> LoadedPlugin | None:
+def _load_one(path: Path, config: dict[str, Any] | None = None) -> LoadedPlugin | None:
     """Try to load one plugin file. Returns None when it is not a plugin."""
     alias = f"ossia_plugin_{path.stem}"
     try:
@@ -283,12 +283,12 @@ def discover_plugins(
     second is skipped with a warning.
     """
     cfg = config if config is not None else load_ossia_config()
-    cfg_by_stem: dict[str, dict] = {
+    cfg_by_stem: dict[str, dict[str, Any]] = {
         pc.name: pc.config for pc in cfg.plugins if pc.enabled and pc.config
     }
     disabled: set[str] = {pc.name for pc in cfg.plugins if not pc.enabled}
-    cfg_explicit: list[tuple[Path, dict]] = [
-        (pc.path, pc.config)  # type: ignore[arg-type]
+    cfg_explicit: list[tuple[Path, dict[str, Any]]] = [
+        (pc.path, pc.config)
         for pc in cfg.plugins
         if pc.enabled and pc.path is not None
     ]

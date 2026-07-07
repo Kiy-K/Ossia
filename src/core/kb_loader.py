@@ -228,7 +228,7 @@ async def ensure_kb_index(client: aioredis.Redis | None) -> bool:
     """
     if client is None:
         return False
-    await client.execute_command(
+    await client.execute_command(  # type: ignore[no-untyped-call]
         "FT.CREATE",
         _KB_INDEX,
         "ON",
@@ -304,7 +304,7 @@ async def search_redis_kb(
     if client is None or not query.strip():
         return None
     try:
-        raw = await client.execute_command(
+        raw = await client.execute_command(  # type: ignore[no-untyped-call]
             "FT.SEARCH",
             _KB_INDEX,
             query,

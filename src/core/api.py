@@ -380,7 +380,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             "need persistent state."
         )
     async with AsyncExitStack() as stack:
-        checkpointer = None
+        checkpointer: Any = None
         if settings.redis_url:
             from core.memory import get_redis_checkpointer
 
@@ -1353,7 +1353,7 @@ async def list_threads(
     # using the async alist() generator (avoids blocking the event loop).
     # Deduplicate by thread_id — the first encounter is the latest checkpoint.
     async for tup in checkpointer.alist(None, limit=200):
-        thread_id: str = tup.config["configurable"]["thread_id"]  # type: ignore[typeddict-item]
+        thread_id: str = tup.config["configurable"]["thread_id"]
 
         # Filter to caller's threads only
         if not thread_id.startswith(caller_prefix):
@@ -1442,7 +1442,7 @@ async def get_thread(
     # Look up the latest checkpoint for this thread.
     found: ThreadInfo | None = None
     async for tup in app.state.checkpointer.alist(None, limit=50):
-        tid: str = tup.config["configurable"]["thread_id"]  # type: ignore[typeddict-item]
+        tid: str = tup.config["configurable"]["thread_id"]
         if tid != scoped:
             continue
         checkpoint = tup.checkpoint
@@ -1488,7 +1488,7 @@ async def patch_thread(
         meta["title"] = payload.title
     if payload.status is not None:
         meta["status"] = payload.status
-    return await get_thread(thread_id, caller=caller)  # type: ignore[arg-type]
+    return await get_thread(thread_id, caller=caller)
 
 
 @app.post("/v1/threads/{thread_id}/unarchive", response_model=ThreadInfo)
@@ -1499,7 +1499,7 @@ async def unarchive_thread(
     """Restore an archived thread to regular status."""
     scoped = _thread_id_for(caller, thread_id)
     _get_thread_meta(scoped)["status"] = "regular"
-    return await get_thread(thread_id, caller=caller)  # type: ignore[arg-type]
+    return await get_thread(thread_id, caller=caller)
 
 
 @app.post("/v1/threads/{thread_id}/resume", response_model=ResumeResponse)

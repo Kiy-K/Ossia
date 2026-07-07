@@ -41,6 +41,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,7 @@ class PluginConfig:
     name: str
     path: Path | None = None
     enabled: bool = True
-    config: dict = field(default_factory=dict)
+    config: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

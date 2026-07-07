@@ -251,7 +251,7 @@ async def get_redis_store(
     if index is None and settings.enable_vector_index:
         from core.embeddings import make_ollama_embedder
 
-        resolved_index = {  # type: ignore[typeddict-item]
+        resolved_index = {  # type: ignore[assignment]
             "dims": settings.embedding_dim,
             "embed": make_ollama_embedder(settings),
         }

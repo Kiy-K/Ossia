@@ -522,7 +522,7 @@ def _build_middlewares(
     # Gates on enable_advisor flag; pilots alongside ModelFallbackMiddleware.
     if settings.enable_advisor:
         try:
-            from advisor_middleware import AdvisorMiddleware, AdvisorConfig
+            from advisor_middleware import AdvisorConfig, AdvisorMiddleware
 
             middlewares.append(
                 AdvisorMiddleware(
@@ -778,8 +778,9 @@ def _compile_agent(
     # the full all_tools list.
     if settings.enable_eager_tools:
         try:
-            from core.middleware_adapters import eager_tool_map
             from eager_tools_langgraph import eager_middleware
+
+            from core.middleware_adapters import eager_tool_map
 
             middlewares.append(
                 eager_middleware(
@@ -954,7 +955,7 @@ async def build_agent_async(
         # graph is a Pydantic model but attribute assignment works for
         # arbitrary objects (verified — see tests).
         try:
-            compiled.store = store  # type: ignore[attr-defined]
+            compiled.store = store
         except Exception:  # noqa: BLE001
             # If a future LangGraph release makes the graph frozen, fall
             # back to module-level state. Ponytail: keep one path.
