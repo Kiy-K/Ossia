@@ -27,6 +27,28 @@ def create_chat_model(settings: Settings | None = None) -> BaseChatModel:
             "Use Provider.OPENROUTER (or another OpenAI-compatible "
             "provider) with a Nebius-routed model id."
         )
+    # ── Nvidia NIM ──────────────────────────────────────────────────────────
+    # Uses the native ``ChatNVIDIA`` from ``langchain-nvidia-ai-endpoints``.
+    # Defaults to the free hosted endpoint (https://integrate.api.nvidia.com/v1);
+    # override ``nim_base_url`` for local NIM containers. The API key is
+    # ``NVIDIA_API_KEY`` in the environment or ``nim_api_key`` in settings —
+    # local containers don't need one.
+    if provider == Provider.NIM:
+        from langchain_nvidia_ai_endpoints import ChatNVIDIA
+
+        kwargs: dict[str, Any] = {
+            "model": settings.model,
+            "temperature": settings.temperature,
+        }
+        # ChatNVIDIA uses ``max_completion_tokens`` for newer endpoints.
+        # Set it regardless — older NIMs silently cap at their own limit.
+        if settings.max_tokens:
+            kwargs["max_completion_tokens"] = settings.max_tokens
+        if settings.nim_api_key:
+            kwargs["nvidia_api_key"] = settings.nim_api_key
+        if settings.nim_base_url:
+            kwargs["base_url"] = settings.nim_base_url
+        return ChatNVIDIA(**kwargs)  # type: ignore[arg-type]
     openai_like_providers = {
         Provider.OPENROUTER: ("https://openrouter.ai/api/v1", settings.openrouter_api_key),
         Provider.FIREWORKS: ("https://api.fireworks.ai/inference/v1", settings.fireworks_api_key),
@@ -43,8 +65,8 @@ def create_chat_model(settings: Settings | None = None) -> BaseChatModel:
             "model": settings.model,
             "temperature": settings.temperature,
             "max_tokens": settings.max_tokens,
-            "api_key": api_key,
             "streaming": True,
+            "api_key": api_key,
         }
         if base_url:
             kwargs["base_url"] = base_url

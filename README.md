@@ -24,7 +24,7 @@ Think of Ossia as a **digital teammate**: it can research your codebase, diagnos
 
 | Problem | Ossia's approach |
 |---|---|
-| Agent frameworks tied to one provider | **Model-agnostic** — OpenRouter, OpenAI, Anthropic, Google, Nebius, or any OpenAI-compatible endpoint |
+| Agent frameworks tied to one provider | **Model-agnostic** — OpenRouter, OpenAI, Anthropic, Google, Nvidia NIM, Nebius, or any OpenAI-compatible endpoint |
 | Streaming feels like a black box | **Normalized event protocol** — every message, tool call, subagent spawn, and pipeline step is a typed, ordered, replayable event |
 | Subagents are hard to observe | **Concurrent real-time normalization** — coordinator and subagent events stream together in a single ordered feed |
 | Hard to debug agent runs | **Thread replay buffer** — `GET /v1/threads/{id}/events` replays the full event stream for any thread |
@@ -39,8 +39,8 @@ flowchart TB
     Client["🌐 Client<br/><i>TUI / Web UI / curl / app</i>"]
     Proxy["🚀 Reverse Proxy<br/><i>Caddy / Nginx</i>"]
     API["⚙️ FastAPI Server<br/><i>POST /v1/chat<br/>POST /v1/chat/stream<br/>GET /v1/tools<br/>GET /v1/threads/*<br/>POST /v1/resume<br/>GET /v1/audit<br/>GET /metrics</i>"]
-    MW["🔒 Middleware Stack<br/><i>10 layers: PII → Model Retry →<br/>Circuit Breaker → Tool Retry →<br/>Revision Cap → Tool Limit →<br/>Code Interpreter → Subagents →<br/>Caller Context</i>"]
-    LLM["🤖 LLM Provider<br/><i>OpenRouter / OpenAI /<br/>Anthropic / Google</i>"]
+    MW["🔒 Middleware Stack<br/><i>13 layers: PII → Tool Cache →<br/>Model Retry → Model Fallback →<br/>Circuit Breaker → Tool Retry →<br/>Revision Cap → Tool Limit →<br/>Eager Tools → Code Interpreter →<br/>Subagents → Compact → Advisor →<br/>Caller Context</i>"]
+    LLM["🤖 LLM Provider<br/><i>OpenRouter / OpenAI /<br/>Anthropic / Google /<br/>Nvidia NIM</i>"]
     COORD["🎯 Coordinator Agent"]
     SUB["🔧 Subagents<br/><i>code-researcher<br/>bug-diagnostician<br/>fix-proposer<br/>test-runner</i>"]
     ASYNC["⏳ Async Subagents<br/><i>researcher / tester / auditor</i>"]
@@ -91,7 +91,7 @@ Ossia's architecture is composed of six interconnected subsystems, each document
 | Subsystem | ADR | What it does | Key diagram |
 |-----------|-----|-------------|-------------|
 | **API Gateway** | [ADR-0014](docs/adr/0014-standalone-deployment.md) | FastAPI server, auth (Argon2), rate limiting, `/v1/*` routes | [Deployment topology](docs/diagrams.md#5-deployment-topology) |
-| **Middleware Stack** | [ADR-0013](docs/adr/0013-production-readiness-middleware-stack.md) | 10-layer defense-in-depth: PII → model retry/fallback → circuit breaker → tool retry → caps → runtime | [Stack order](docs/diagrams.md#2-middleware-stack) + [Request flow](docs/diagrams.md#3-request-flow-sequence) |
+| **Middleware Stack** | [ADR-0013](docs/adr/0013-production-readiness-middleware-stack.md) | 13-layer defense-in-depth: PII → Tool Cache → model retry/fallback → circuit breaker → tool retry → caps → eager tools → code interpreter → subagents → compact → advisor → caller context | [Stack order](docs/diagrams.md#2-middleware-stack) + [Request flow](docs/diagrams.md#3-request-flow-sequence) |
 | **Agent Runtime** | [ADR-0008](docs/adr/0008-subagent-design-and-routing.md) | Coordinator delegates to subagents with scoped tool permissions | [Subagent routing](docs/diagrams.md#1-subagent-routing) |
 | **Event Streaming** | [ADR-0006](docs/adr/0006-streaming-v3-protocol.md) | v3 stream → normalizer (5 concurrent relays) → typed events → SSE | [Event pipeline](docs/diagrams.md#4-event-stream-pipeline) |
 | **Memory & Persistence** | [ADR-0007](docs/adr/0007-agent-scoped-memory-and-episodic-recall.md) | Postgres + in-memory store, per-caller namespaces, thread replay buffer | [Deployment topology](docs/diagrams.md#5-deployment-topology) |
@@ -105,7 +105,7 @@ A typical request flows through the stack as follows:
 
 1. **Client** sends a request to `POST /v1/chat` via the reverse proxy (Caddy on port 443)
 2. **FastAPI** authenticates via `X-API-Key` (Argon2 caller-id derivation), sets rate limits, injects `request_id` and `caller` context
-3. **Middleware stack** processes the request through 10 layers — PII redaction strips secrets, model retry/fallback handles provider failures, circuit breaker blocks dead services, tool retry adds backoff, revision cap and tool-call limit prevent runaway agents
+3. **Middleware stack** processes the request through 13 layers — PII redaction strips secrets, tool cache short-circuits repeated reads, model retry/fallback handles provider failures, circuit breaker blocks dead services, tool retry adds backoff, revision cap and tool-call limit prevent runaway agents, eager-tools dispatches tool calls concurrently for lower latency, code interpreter runs sandboxed JS, subagents fan out work, compact middleware manages context window pressure, and caller context injects identity
 4. **Deep Agent runtime** invokes the coordinator, which may delegate to subagents or call tools
 5. **EventNormalizer** converts the v3 stream into typed events in real-time via 5 concurrent relays
 6. **Response** flows back through the middleware stack in reverse, serialized as SSE events or a JSON response
@@ -355,6 +355,8 @@ All settings are driven by environment variables parsed through Pydantic in `src
 | `OPENAI_API_KEY` | OpenAI key | — |
 | `ANTHROPIC_API_KEY` | Anthropic key | — |
 | `GOOGLE_API_KEY` | Google Gemini key | — |
+| `NVIDIA_API_KEY` | Nvidia NIM key (free at build.nvidia.com) | — |
+| `NIM_BASE_URL` | Nvidia NIM base URL | `https://integrate.api.nvidia.com/v1` |
 | `POSTGRES_URL` | Postgres DSN for checkpointing | — |
 | `ENABLE_HUMAN_REVIEW` | Pause before sending | `true` |
 | `MAX_REVISION_LOOPS` | Revision cap | `3` |
@@ -364,12 +366,27 @@ All settings are driven by environment variables parsed through Pydantic in `src
 | `PROMETHEUS_RETENTION` | Prometheus data retention period | `30d` |
 | `LOG_DRIVER` | Docker log driver | `json-file` |
 
+### Community Middleware Settings
+
+| Variable | Description | Default |
+|---|---|---|
+| `ENABLE_EAGER_TOOLS` | Dispatch tool calls concurrently for lower latency | `true` |
+| `EAGER_MAX_CONCURRENT` | Max concurrent eager tool executions | `32` |
+| `ENABLE_NOPII` | Vault-based PII tokenization via nopii.co | `false` |
+| `NOPII_BASE_URL` | NoPII proxy base URL | `https://api.nopii.co` |
+| `ENABLE_COMPACT` | Context window compaction for long sessions | `false` |
+| `COMPACT_TRIGGER_FRACTION` | Context fraction that triggers compaction | `0.85` |
+| `ENABLE_ADVISOR` | Proactive model routing (fast executor + advisor) | `false` |
+| `ADVISOR_MODEL` | Advisor model identifier | `anthropic:claude-sonnet-4-6` |
+| `ADVISOR_MAX_USES_PER_TURN` | Max advisor consultations per turn | `3` |
+
 ## Project Structure
 
 ```
 src/
   core/              # Core library: agent, api, tools, events, memory,
-                     # middleware, config, schemas, graphs, orchestrators
+                     # middleware, config, schemas, graphs, orchestrators,
+                     # sessions, middleware_adapters
   tui/               # Terminal UI (bun + OpenTUI/React)
   webui/             # Web UI (React + Vite + Tailwind v4)
 tests/               # 100+ tests across all modules

@@ -21,6 +21,7 @@ class Provider(StrEnum):
     FIREWORKS = "fireworks"
     BASETEN = "baseten"
     OLLAMA = "ollama"
+    NIM = "nim"  # NVIDIA NIM — local/self-hosted OpenAI-compatible API
 
 
 class Settings(BaseSettings):
@@ -336,6 +337,27 @@ class Settings(BaseSettings):
         description="Base URL for the Ollama server (ollama provider only).",
     )
 
+    # Nvidia NIM — free hosted inference on 100+ models via an
+    # OpenAI-compatible API. Get a free key at https://build.nvidia.com
+    # (click "Get API Key" on any model). The key looks like nvapi-*.
+    # Rate limits: ~5 req/s, shared across all models on the free tier.
+    nim_api_key: str | None = Field(
+        default=None,
+        description=(
+            "Free Nvidia NIM API key from build.nvidia.com. Starts with "
+            "'nvapi-'. Required for the hosted endpoint; leave empty for "
+            "local NIM containers."
+        ),
+    )
+    nim_base_url: str = Field(
+        default="https://integrate.api.nvidia.com/v1",
+        description=(
+            "Base URL for the Nvidia NIM OpenAI-compatible endpoint. "
+            "Default is the free hosted API. Override to "
+            "http://localhost:8000/v1 for local NIM containers."
+        ),
+    )
+
     # Memory scope: "user" isolates per API key (safe default),
     # "agent" shares one memory across all callers (matches the
     # DeepAgents "agent-scoped memory" pattern; use for shared
@@ -427,6 +449,83 @@ class Settings(BaseSettings):
             "tighten to 60s for tools whose outputs change often "
             "(tests, search)."
         ),
+    )
+
+    # ── Community middlewares ────────────────────────────────────────────────
+
+    # eager-tools: dispatch tool calls as streaming blocks seal, overlapping
+    # tool execution with LLM generation. Cuts wall-clock latency by 20-50%
+    # for multi-tool turns. Zero-risk for read-only tools.
+    enable_eager_tools: bool = Field(
+        default=True,
+        description=(
+            "Enable eager tool dispatch via eager-tools middleware. "
+            "Dispatches each tool call the moment its streaming block "
+            "seals, overlapping tool execution with LLM generation. "
+            "Only affects idempotent tools (read-only by default)."
+        ),
+    )
+    eager_max_concurrent: int = Field(
+        default=32,
+        ge=1,
+        le=128,
+        description="Max concurrent eager tool executions.",
+    )
+
+    # NoPII: vault-based PII tokenization via nopii.co proxy. Replaces
+    # in-process regex redaction with deterministic tokenization that
+    # keeps PII out of the LLM entirely.
+    enable_nopii: bool = Field(
+        default=False,
+        description=(
+            "Enable vault-based PII tokenization via NoPII proxy. "
+            "Requires a nopii.co account; set NOPII_BASE_URL for "
+            "self-hosted. Disabled by default (uses regex-based "
+            "PIIRedactionMiddleware instead)."
+        ),
+    )
+    nopii_base_url: str = Field(
+        default="https://api.nopii.co",
+        description="NoPII proxy base URL. Override for self-hosted.",
+    )
+
+    # compact-middleware: Claude Code's compaction engine for context
+    # window management. Prevents agent context from overflowing in
+    # long-running sessions.
+    enable_compact: bool = Field(
+        default=False,
+        description=(
+            "Enable context compaction via compact-middleware. "
+            "Piloted — enable for long-running agent sessions that "
+            "risk context window overflow."
+        ),
+    )
+    compact_trigger_fraction: float = Field(
+        default=0.85,
+        ge=0.5,
+        le=0.95,
+        description="Context window fraction that triggers compaction.",
+    )
+
+    # advisor-middleware: proactive model routing. Fast/cheap executor
+    # runs every turn; advisor model consulted only on hard decisions.
+    enable_advisor: bool = Field(
+        default=False,
+        description=(
+            "Enable advisor-middleware for proactive model routing. "
+            "Piloted — uses a fast executor + expensive advisor on "
+            "demand to improve cost/quality trade-off."
+        ),
+    )
+    advisor_model: str = Field(
+        default="anthropic:claude-sonnet-4-6",
+        description="Advisor model identifier (e.g. anthropic:claude-opus-4-6).",
+    )
+    advisor_max_uses_per_turn: int = Field(
+        default=3,
+        ge=1,
+        le=20,
+        description="Max advisor consultations per agent turn.",
     )
 
     @field_validator("provider", mode="before")

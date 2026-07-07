@@ -29,6 +29,13 @@ dependencies = [
     "langchain-core>=1.4.7,<2.0.0",
     # Code interpreter middleware (QuickJS)
     "langchain-quickjs>=0.1.0",
+    # Nvidia NIM via native ChatNVIDIA (free hosted + local containers)
+    "langchain-nvidia-ai-endpoints>=1.0.0",
+    # Community middlewares: eager dispatch, PII vault, context compaction, advisor routing
+    "eager-tools-langgraph>=0.3.0",
+    "langchain-nopii-middleware>=0.1.0",
+    "compact-middleware>=0.1.1",
+    "advisor-middleware>=0.1.1",
     # Model providers (portable, no hardcoded vendor)
     "langchain-openai>=0.3.0",
     "langchain-anthropic>=0.3.0",

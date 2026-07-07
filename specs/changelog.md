@@ -5,6 +5,55 @@ Ossia HTTP contract. The machine-readable record is the git history of
 
 ## Unreleased
 
+### New: Nvidia NIM provider (native ChatNVIDIA)
+
+Nvidia NIM is available as a model provider via the native
+``ChatNVIDIA`` client from ``langchain-nvidia-ai-endpoints``
+(instead of the ChatOpenAI → OpenAI-compatible shim).
+
+- **Provider enum**: ``Provider.NIM`` in ``core/config.py``
+- **Client**: ``ChatNVIDIA`` from ``langchain-nvidia-ai-endpoints``
+  wired in ``core/llm.py``
+- **Free tier**: key from build.nvidia.com (``nvapi-*``), model
+  ``nvidia/llama-3.3-70b-instruct``, ~5 req/s shared rate limit
+- **Settings**: ``NVIDIA_API_KEY`` (env), ``NIM_BASE_URL``
+  (defaults to ``https://integrate.api.nvidia.com/v1``, override
+  for local containers)
+- **Dependency**: ``langchain-nvidia-ai-endpoints`` added to
+  ``pyproject.toml``
+
+### New: community middleware layers (13-layer stack)
+
+Three community middleware layers extend the 10-layer production
+stack from ADR-0013:
+
+- **Eager-tools** (``eager-tools`` + ``eager-tools-langgraph``):
+  Dispatches idempotent tool calls the moment each streaming block
+  seals, overlapping tool execution with LLM generation. Reduces
+  wall-clock latency by 20-50% for multi-tool turns. Enabled by
+  default. Configurable via ``ENABLE_EAGER_TOOLS`` and
+  ``EAGER_MAX_CONCURRENT``. Deny list for side-effect tools in
+  ``core/middleware_adapters.py`` (``_EAGER_DENY``).
+- **Compact** (``compact-middleware``): Context window compaction
+  for long-running agent sessions. Gated by ``ENABLE_COMPACT``
+  (default off). Configurable trigger fraction via
+  ``COMPACT_TRIGGER_FRACTION``.
+- **Advisor** (``advisor-middleware`` / ``langchain-router``):
+  Proactive fast/slow model routing. Fast executor handles routine
+  turns; advisor model consulted only on hard decisions. Gated by
+  ``ENABLE_ADVISOR`` (default off). Configurable via
+  ``ADVISOR_MODEL`` and ``ADVISOR_MAX_USES_PER_TURN``.
+- **NoPII** (``nopii``): Vault-based PII tokenization via
+  nopii.co proxy. Replaces regex-based PII redaction with
+  deterministic tokenization. Gated by ``ENABLE_NOPII``
+  (default off). Configurable via ``NOPII_BASE_URL``.
+
+All community middlewares are wired in ``_compile_agent`` in
+``core/agent.py``. Settings in ``core/config.py``. Adapters and
+deny lists in ``core/middleware_adapters.py`` (new module).
+
+**Non-breaking** for the HTTP contract. No routes changed.
+
 ### New: thread metadata endpoints (assistant-ui `RemoteThreadListAdapter` shape)
 
 Companion endpoints for the assistant-ui thread-list runtime. The

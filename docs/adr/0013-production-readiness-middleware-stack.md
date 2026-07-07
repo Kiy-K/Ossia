@@ -345,3 +345,39 @@ Accepted. Implemented across v1.8.0–v1.9.0 (consecutive production-readiness p
 - `docs/adr/0007-agent-scoped-memory-and-episodic-recall.md` — superseded re multi-tenancy
 - `docs/adr/0010-runtime-context-ossia-context.md` — runtime context foundation
 - Deep Agents production guide: https://docs.langchain.com/oss/python/deepagents/going-to-production
+
+## Amendment A (2026-07-07): Community middleware layers (10 → 13 layers)
+
+Three community middleware layers are inserted into the stack after
+the original 10, bringing the total to 13:
+
+| # | Middleware | Purpose | Gating | Source |
+|---|-----------|---------|--------|--------|
+| 9 | Eager-tools | Dispatch tool calls concurrently as streaming blocks seal | `enable_eager_tools=true` (default) | `eager-tools` + `eager-tools-langgraph` |
+| 12 | Compact | Context window compaction | `enable_compact=true` (piloted) | `compact-middleware` |
+| 13 | Advisor | Proactive fast/slow model routing | `enable_advisor=true` (piloted) | `advisor-middleware` / `langchain-router` |
+
+Additionally, NoPII vault-based tokenization is available at position 1
+(replacing regex-based PII redaction when `enable_nopii=true`).
+
+### Implementation
+
+- All community middlewares wired in ``_compile_agent`` in
+  ``core/agent.py``. Settings in ``core/config.py``.
+- ``core/middleware_adapters.py`` (new) provides ``EagerToolAdapter``
+  and ``_EAGER_DENY`` (side-effect tool deny list).
+- Eager-tools placed after core middlewares so that retries and
+  circuit breakers wrap the eager dispatch path.
+- Compact and advisor placed close to the model (before caller context).
+
+### Rationale
+
+- **Eager-tools**: Overlaps tool execution with LLM generation for
+  20-50% latency improvement on multi-tool turns. Zero risk for
+  read-only tools (deny list excludes side-effect tools).
+- **Compact**: Prevents context window overflow in long-running
+  sessions with multi-subagent pipelines. Piloted because deep
+  agent workloads rarely exhaust context at current model capacities.
+- **Advisor**: Cost optimization for deployments with both cheap
+  and expensive model access. Piloted because the fast/slow
+  routing heuristics need calibration per workload.

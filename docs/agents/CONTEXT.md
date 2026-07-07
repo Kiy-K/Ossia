@@ -55,6 +55,62 @@ make webui-e2e    # Run Playwright e2e tests
 
 ---
 
+## Middleware stack (13 layers)
+
+The 10-layer production stack from ADR-0013 is extended with 3 community middleware layers:
+
+| # | Middleware | Purpose | Gating |
+|---|-----------|---------|--------|
+| 1 | PIIRedactionMiddleware | Redact secrets from tool inputs | Always |
+| 2 | ToolResultCacheMiddleware | Cache exact-match tool results in Redis | `REDIS_URL` set |
+| 3 | ModelRetryMiddleware | Retry transient LLM failures | Always |
+| 4 | ModelFallbackMiddleware | Switch provider on outage | `fallback_provider` set |
+| 5 | CircuitBreakerMiddleware | Fail-fast on overloaded services | Always |
+| 6 | RetryToolMiddleware | Retry tool calls with backoff | Always |
+| 7 | RevisionLoopCapMiddleware | Cap response revision loops | Always |
+| 8 | ToolCallLimitMiddleware | Cap total tool calls per run | Always |
+| 9 | Eager-tools | Concurrent tool dispatch (20-50% faster) | `enable_eager_tools=true` |
+| 10 | CodeInterpreterMiddleware | Sandboxed QuickJS eval | Always |
+| 11 | AsyncSubAgentMiddleware | Long-running background tasks | `enable_async_subagents=true` |
+| 12 | Compact | Context window compaction | `enable_compact=true` (piloted) |
+| 13 | Advisor | Proactive fast/slow model routing | `enable_advisor=true` (piloted) |
+
+Each middleware layer addresses a specific failure domain — see
+ADR-0013 for the full decision record and ordering rationale.
+
+---
+
+## NIM — Nvidia NIM provider (free tier)
+
+Ossia supports Nvidia NIM as a model provider via the native ``ChatNVIDIA``
+client from ``langchain-nvidia-ai-endpoints``:
+
+- **Free tier** at https://build.nvidia.com — API key looks like ``nvapi-*``
+- **Models**: 100+ LLMs available (llama-3.3-70b, mixtral, etc.)
+- **Rate limits**: ~5 req/s shared across all models on the free tier
+- **Default base URL**: ``https://integrate.api.nvidia.com/v1``
+- **Local NIM**: override ``NIM_BASE_URL`` for self-hosted containers
+
+```bash
+# .env
+PROVIDER=nim
+MODEL=nvidia/llama-3.3-70b-instruct
+NVIDIA_API_KEY=nvapi-...
+```
+
+---
+
+## Web UI (externalStoreRuntime + custom SSE adapter)
+
+The Web UI at ``src/webui/`` uses ``useExternalStoreRuntime`` from
+``@assistant-ui/react`` — NOT ``useStreamRuntime`` from ``@assistant-ui/react-langchain``.
+Ossia is self-hosted FastAPI, not LangGraph Platform; ``react-langchain`` only
+works with Managed Deep Agents / LangGraph Platform deployments.
+The custom SSE adapter in ``src/webui/src/runtimes/`` handles thread management,
+message streaming, and interrupt state against the Ossia ``/v1/*`` HTTP contract.
+
+---
+
 ## Subagents
 
 Ossia has **7 sync subagents** (delegated via the `task` tool) and **3 async

@@ -390,12 +390,35 @@ def _build_async_subagents(settings: Settings) -> list[AsyncSubAgent]:
     ]
 
 
-def _build_middlewares(settings: Settings) -> list[Any]:
-    middlewares: list[Any] = [
-        # PII redaction runs first so sensitive data is stripped before
-        # any tool executes and before retries, circuit breakers, or
-        # revision caps evaluate.
-        PIIRedactionMiddleware(),
+def _build_middlewares(
+    settings: Settings,
+    *,
+    model: BaseChatModel | None = None,
+    backend: Any | None = None,
+) -> list[Any]:
+    middlewares: list[Any] = []
+
+    # ── PII redaction ────────────────────────────────────────────────────────
+    # NoPII (vault-based tokenization) replaces in-process regex when
+    # enabled. Falls back to PIIRedactionMiddleware when disabled or
+    # when NoPII is unreachable.
+    if settings.enable_nopii:
+        try:
+            from langchain_nopii_middleware import NoPIIMiddleware
+
+            middlewares.append(
+                NoPIIMiddleware(
+                    base_url=settings.nopii_base_url,
+                )
+            )
+            logger.info("NoPII middleware wired (vault-based tokenization)")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("NoPII init failed (%s); falling back to regex redaction", exc)
+            middlewares.append(PIIRedactionMiddleware())
+    else:
+        middlewares.append(PIIRedactionMiddleware())
+
+    middlewares.extend([
         # Model retry handles transient LLM provider failures (rate limits,
         # timeouts) before the call reaches any tool. Placed early so
         # retries don't exhaust tool-call budgets.
@@ -446,7 +469,7 @@ def _build_middlewares(settings: Settings) -> list[Any]:
             max_ptc_calls=settings.code_interpreter_max_ptc_calls,
             mode="thread",
         ),
-    ]
+    ])
     # Filter out None entries so an unconfigured fallback doesn't break the list.
     middlewares = [mw for mw in middlewares if mw is not None]
     # Tool result cache: when REDIS_URL is set, the langgraph-redis
@@ -493,6 +516,58 @@ def _build_middlewares(settings: Settings) -> list[Any]:
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("Failed to wire async subagent middleware: %s", exc)
+
+    # ── Advisor: proactive model routing ─────────────────────────────────────
+    # Fast executor runs every turn; expensive advisor consulted on demand.
+    # Gates on enable_advisor flag; pilots alongside ModelFallbackMiddleware.
+    if settings.enable_advisor:
+        try:
+            from advisor_middleware import AdvisorMiddleware, AdvisorConfig
+
+            middlewares.append(
+                AdvisorMiddleware(
+                    advisor_model=settings.advisor_model,
+                    config=AdvisorConfig(
+                        max_uses_per_turn=settings.advisor_max_uses_per_turn,
+                    ),
+                )
+            )
+            logger.info(
+                "Advisor middleware wired (advisor=%s, max_uses=%d)",
+                settings.advisor_model,
+                settings.advisor_max_uses_per_turn,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to wire advisor middleware: %s", exc)
+
+    # ── Compact: context window compaction ───────────────────────────────────
+    # Claude Code's compaction engine. Placed outermost (first model wrapper)
+    # so compaction happens before advisor routing, eager dispatch, fallback,
+    # and retry. Requires model + backend.
+    if settings.enable_compact and model is not None and backend is not None:
+        try:
+            from compact_middleware import (
+                CompactionConfig,
+                CompactionMiddleware,
+                CompactionToolMiddleware,
+            )
+
+            cmw = CompactionMiddleware(
+                model=model,
+                backend=backend,
+                config=CompactionConfig(
+                    trigger=("fraction", settings.compact_trigger_fraction),
+                ),
+            )
+            middlewares.insert(0, cmw)  # outermost model wrapper
+            middlewares.append(CompactionToolMiddleware(cmw))
+            logger.info(
+                "Compact middleware wired (trigger=%.0f%%)",
+                settings.compact_trigger_fraction * 100,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to wire compact middleware: %s", exc)
+
     return middlewares
 
 
@@ -694,7 +769,31 @@ def _compile_agent(
     search_tool = make_search_threads_tool(make_postgres_search_fn(settings))
     if search_tool is not None:
         all_tools.append(search_tool)
-    middlewares = _build_middlewares(settings)
+    middlewares = _build_middlewares(settings, model=model, backend=backend)
+    # ── Eager-tools: dispatch tool calls as streaming blocks seal ────────────
+    # Overlaps tool execution with LLM generation. Only idempotent tools
+    # are eager-dispatched; side-effect tools run in the normal tool step.
+    # Placed after core middlewares so retries/circuit breakers wrap the
+    # eager path. Wired here (not in _build_middlewares) because we need
+    # the full all_tools list.
+    if settings.enable_eager_tools:
+        try:
+            from core.middleware_adapters import eager_tool_map
+            from eager_tools_langgraph import eager_middleware
+
+            middlewares.append(
+                eager_middleware(
+                    eager_tool_map(all_tools),
+                    max_concurrent=settings.eager_max_concurrent,
+                )
+            )
+            logger.info(
+                "Eager-tools middleware wired (%d tools, max_concurrent=%d)",
+                len(all_tools),
+                settings.eager_max_concurrent,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to wire eager-tools middleware: %s", exc)
     # Plugin middlewares run AFTER the core stack but BEFORE the
     # caller-context middleware (which must be closest to the model
     # call). Ponytail: insertion order matters for the middleware

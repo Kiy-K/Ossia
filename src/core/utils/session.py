@@ -402,7 +402,14 @@ def resolve_thread_id(
 
     # 1. Explicit override.
     if explicit_thread_id and not new_session:
-        scoped = f"{caller_id}:{explicit_thread_id}"
+        # If the thread_id already includes the caller prefix (e.g. from
+        # a previous response or SSE event), use it as-is. Otherwise
+        # scope it with the caller prefix.
+        scoped = (
+            explicit_thread_id
+            if explicit_thread_id.startswith(f"{caller_id}:")
+            else f"{caller_id}:{explicit_thread_id}"
+        )
         metadata = SessionMetadata(
             session_id=scoped,
             topic=resolved_topic,

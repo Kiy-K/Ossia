@@ -6,7 +6,7 @@ Repo-specific guidance for OpenCode and other coding sessions in `/home/khoi/oss
 
 Ossia — a portable, model-agnostic support agent built on LangChain Deep Agents. The unified HTTP API at `/v1/*` is the only runtime entry point; CLI scripts, the notebook, the TUI, and the **Web UI** are thin HTTP clients. Spec-driven: `specs/openapi.checked.json` is the pinned contract, `tests/test_openapi_drift.py` fails the suite on drift.
 
-Architecture and intent: `README.md` (overview), `specs/SPEC.md` (narrative spec), `docs/adr/0001..0012.md` (twelve design decisions). Read those before changing behavior.
+Architecture and intent: `README.md` (overview), `specs/SPEC.md` (narrative spec), `docs/adr/0001..0014.md` (fourteen design decisions). Read those before changing behavior.
 
 ## Quick start (the commands you actually need)
 
@@ -112,7 +112,7 @@ Run `make help` to see all targets with descriptions.
 - **Issue tracker:** GitHub Issues on `Kiy-K/Ossia` (https://github.com/Kiy-K/Ossia/issues).
 - **Triage labels:** `bug`, `feature`, `enhancement`, `ready-for-agent`, `needs-triage`, `blocked`, `good-first-issue`.
 - **Domain docs:** `docs/agents/CONTEXT.md` (glossary, ADRs, architecture).
-- **ADR index:** `docs/adr/0001..0012.md` — the twelve design decisions (incl. 0011 QuickJS code interpreter, 0012 thread event buffer replay).
+- **ADR index:** `docs/adr/0001..0014.md` — the fourteen design decisions (incl. 0013 middleware stack, 0014 standalone deployment).
 
 - **Project name** is **Ossia** (brand, PyPI, env-var prefix `OSSIA_*`,
   Docker container name `ossia-postgres`).
@@ -200,7 +200,10 @@ The 3 async subagents (researcher, tester, auditor) are wired into the main agen
 
 ```
 src/core/            # Library: agent, memory, tools, mcp_tools, middleware,
-                     # schemas, audit, eval, cli_helper, api, events,
+                     # middleware_adapters, schemas, audit, eval, cli_helper,
+                     # api, events, config (Settings), context, llm,
+                     # request_context, episodic, redis_client, cache,
+                     # embeddings, kb_loader, browser_use_tool,
                      # graphs (supervisor, researcher, tester, auditor),
                      # orchestrators (bugfix, audit, refactor pipelines)
 src/tui/             # OpenTUI/React terminal client (bun)
@@ -208,15 +211,20 @@ src/webui/           # Web UI (React + Vite + Tailwind v4)
 tests/               # test_api, test_graph, test_mcp_tools, test_openapi_drift,
                      # test_context, test_episodic, test_memory, test_tools,
                      # test_feature_specs, test_events, test_graph_id_consistency,
-                     # test_subagent_descriptions, test_tool_descriptions
+                     # test_subagent_descriptions, test_tool_descriptions,
+                     # test_semantic_recall, test_embeddings, test_kb,
+                     # test_redis_backends, test_tool_cache_middleware
 scripts/             # audit_ossia, eval_ossia, update_openapi_spec,
                      # coverage_matrix, generate_changelog_entry
 specs/               # SPEC.md, openapi.checked.json (pinned), changelog.md,
                      # features/ (feature specs), coverage.md
 monitoring/          # prometheus.yml, loki-config.yml, grafana/ (datasources,
                      # dashboard.json, dashboard-provider.yml)
-docs/adr/            # 0001..0012 — design decisions
+docs/adr/            # 0001..0014 — design decisions
+docs/agents/         # CONTEXT.md
 docs/skills/         # SKILL.md files (web-search, code-review)
+plugins/             # Bundled plugins (ponytail)
+plugins_local/       # User-installed plugins
 notebooks/demo.ipynb # HTTP client via httpx
 ```
 
@@ -232,6 +240,44 @@ The real entrypoints:
 ## DeepAgents / LangGraph specifics
 
 - Installed `deepagents==0.6.11` (see `pyproject.toml`). The signature has `store=` and `backend=` kwargs; later versions may drop them. The repo's `agent.py` passes both. Verify against the installed signature (`inspect.signature(deepagents.create_deep_agent)`) before bumping.
+
+### Provider specifics
+
+- **Nvidia NIM** uses the native `ChatNVIDIA` from `langchain-nvidia-ai-endpoints`, not a `ChatOpenAI` shim. Set `PROVIDER=nim` and `MODEL=nvidia/llama-3.3-70b-instruct`. The free key from build.nvidia.com is `NVIDIA_API_KEY` — it looks like `nvapi-*`. Default base URL is `https://integrate.api.nvidia.com/v1`; override with `NIM_BASE_URL` for local NIM containers.
+- See `src/core/llm.py` for the `create_chat_model` factory — all provider dispatch lives there.
+
+### Middleware stack (13 layers)
+
+The 10-layer production stack from ADR-0013 is extended with 3 community middleware layers for lower latency and cost-optimized routing:
+
+| # | Middleware | Purpose | Gating |
+|---|-----------|---------|--------|
+| 1 | PIIRedactionMiddleware | Strip secrets from tool inputs | Always |
+| 2 | ToolResultCacheMiddleware | Cache exact-match tool results in Redis | `REDIS_URL` set + `enable_tool_cache=true` |
+| 3 | ModelRetryMiddleware | Retry transient LLM failures | Always |
+| 4 | ModelFallbackMiddleware | Switch provider on outage | `fallback_provider` + `fallback_model` set |
+| 5 | CircuitBreakerMiddleware | Fail-fast on overloaded services | Always |
+| 6 | RetryToolMiddleware | Retry tool calls with backoff | Always |
+| 7 | RevisionLoopCapMiddleware | Cap response revision loops | Always |
+| 8 | ToolCallLimitMiddleware | Cap total tool calls per run | Always |
+| 9 | **Eager-tools** | Dispatch tool calls as streaming blocks seal | `enable_eager_tools=true` (default) |
+| 10 | CodeInterpreterMiddleware | Sandboxed QuickJS eval | Always |
+| 11 | AsyncSubAgentMiddleware | Long-running background tasks | `enable_async_subagents=true` (default) |
+| 12 | **Compact** | Context window compaction | `enable_compact=true` (piloted, default off) |
+| 13 | **Advisor** | Proactive model routing (fast executor + advisor) | `enable_advisor=true` (piloted, default off) |
+
+The last middlewares (caller context) run closest to the model.
+
+- **Eager-tools** (`eager-tools` + `eager-tools-langgraph`): Dispatches idempotent tool calls the moment each streaming block seals, overlapping tool execution with LLM generation. Reduces wall-clock latency for multi-tool turns by 20-50%. Side-effect tools are excluded via `_EAGER_DENY` in `core/middleware_adapters.py`.
+- **Compact** (`compact-middleware`): Claude Code's compaction engine. When the context window reaches `compact_trigger_fraction` (default 0.85), older messages are compacted to prevent overflow. Piloted — enable for long-running agent sessions.
+- **Advisor** (`advisor-middleware` / `langchain-router`): Fast/cheap executor runs every turn; an expensive advisor model is consulted only on hard decisions. Configurable via `advisor_model` and `advisor_max_uses_per_turn`. Piloted — enable to improve cost/quality trade-off.
+- **NoPII** (`nopii`): Vault-based PII tokenization via nopii.co proxy. Disabled by default; set `enable_nopii=true` to replace regex-based PII redaction with deterministic tokenization that keeps PII out of the LLM entirely.
+- All community middlewares are wired in `_compile_agent` in `core/agent.py`. Settings in `core/config.py`. Deny lists and adapters in `core/middleware_adapters.py`.
+
+### Session / thread utils
+
+- `src/core/utils/session.py` — deterministic thread ID derivation (UUID v5). Same caller + project + topic → same thread ID, so sidebar sessions survive restarts. `/v1/threads` uses `resolve_thread_id` to handle explicit vs. auto-generated IDs.
+- The Web UI sends future requests with `thread_id` from the `/v1/chat/stream` response so follow-up messages continue the same session.
 - HITL resume: `agent.invoke(Command(resume={"decisions": [...]}), config, version="v2")`. Each decision has shape `{"type": "approve"|"edit"|"reject"|"respond", ...}`. There is **no top-level `feedback` field** — feedback lives as `message` *inside* each decision. See `docs/adr/0004` and the test `test_resume_rejects_top_level_feedback`.
 - For v2 streaming, `astream_events(..., version="v2")` yields flat `{event, name, data}` dicts. v3 (`astream_events(..., version="v3")`) returns a typed projection with `.messages`, `.interrupts`, etc. **`/v1/chat/stream` is built on v3** (see ADR-0006). The internal audit harness still uses v2 for its own event enumeration — that's an implementation detail, not part of the public contract.
 - The v3 streaming protocol is marked `@beta` upstream. The `core.api.chat_stream` handler adapts the typed projections to our wire contract (`kind` + per-kind `data`). If upstream changes projection attribute names, only the adapter needs to update; clients are insulated by the wire contract.
