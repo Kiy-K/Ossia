@@ -1,6 +1,6 @@
-"""In-memory thread event buffer for replay and late-joining TUI sessions.
+"""In-memory thread event buffer for replay and late-joining sessions.
 
-Stores normalized ``OssiaEvent`` objects per thread so clients can replay a
+Stores raw v2 ``StreamPart`` dicts per thread so clients can replay a
 thread's event stream via ``GET /v1/threads/{id}/events`` without needing
 a full checkpoint-based re-run.
 
@@ -19,30 +19,28 @@ from __future__ import annotations
 
 import asyncio
 import logging
-
-from core.events.types import OssiaEvent
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Maximum number of events stored per thread to bound memory growth.
-# At ~500 bytes per event this is ~5 MB per thread.
 MAX_EVENTS_PER_THREAD = 10_000
 
 
 class ThreadEventBuffer:
-    """In-memory thread-scoped event buffer.
+    """In-memory thread-scoped event buffer (v2 StreamPart dicts).
 
-    ``store()`` appends events to the buffer for a given thread.
-    ``get()`` returns a copy of the stored events list.
+    ``store()`` appends raw dicts to the buffer for a given thread.
+    ``get()`` returns a copy of the stored dicts list.
     ``clear()`` drops all events for a thread.
     """
 
     def __init__(self) -> None:
-        self._events: dict[str, list[OssiaEvent]] = {}
+        self._events: dict[str, list[dict[str, Any]]] = {}
 
-    def store(self, thread_id: str, events: list[OssiaEvent]) -> None:
+    def store(self, thread_id: str, events: list[dict[str, Any]]) -> None:
         """Append *events* to the buffer for *thread_id*.
 
+        *events* should be v2 ``StreamPart`` dicts with ``{type, ns, data}``.
         If the thread already has buffered events, *events* are appended.
         The total count is trimmed to ``MAX_EVENTS_PER_THREAD``.
 
@@ -64,14 +62,11 @@ class ThreadEventBuffer:
         self._events[thread_id] = existing
         self._dispatch_webhooks(events)
 
-    def _dispatch_webhooks(self, events: list[OssiaEvent]) -> None:
+    def _dispatch_webhooks(self, events: list[dict[str, Any]]) -> None:
         """Schedule a webhook delivery task per event when an event loop is running.
 
-        No-op outside a running loop (sync callers like the
-        ``/v1/threads/{id}/events`` replay path don't trigger
-        webhooks — those events are not new). Ponytail: import
-        inside the method to avoid a hard dependency on the
-        webhooks module at import time.
+        No-op outside a running loop. Ponytail: import inside the method
+        to avoid a hard dependency on the webhooks module at import time.
         """
         try:
             loop = asyncio.get_running_loop()
@@ -82,7 +77,7 @@ class ThreadEventBuffer:
         for ev in events:
             loop.create_task(deliver_event(ev))
 
-    def get(self, thread_id: str) -> list[OssiaEvent]:
+    def get(self, thread_id: str) -> list[dict[str, Any]]:
         """Return a copy of stored events for *thread_id*, or []."""
         return list(self._events.get(thread_id, []))
 

@@ -41,7 +41,7 @@ import {
 } from "@assistant-ui/react";
 import { STORAGE_KEYS } from "./constants";
 import type { Config } from "./types";
-import { checkHealth } from "./stream";
+import { checkHealth } from "./stream-v3";
 import { MyRuntimeProvider } from "./components/MyRuntimeProvider";
 import { MarkdownText } from "./components/MarkdownText";
 import { ToolFallback } from "./components/ToolFallback";

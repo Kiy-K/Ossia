@@ -491,7 +491,7 @@ class ThreadEventsResponse(BaseModel):
     thread_id: str
     events: list[dict[str, Any]] = Field(
         default_factory=list,
-        description="Normalized OssiaEvent dicts in emit order.",
+        description="Channel-keyed event dicts in emit order.",
     )
     count: int = Field(description="Number of events in the response.")
 

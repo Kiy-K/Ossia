@@ -12,7 +12,6 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 
-from core.events.types import OssiaEvent
 from core.webhooks import (
     EVENTS_ALL,
     MAX_DELIVERY_ATTEMPTS,
@@ -25,8 +24,8 @@ from core.webhooks import (
 )
 
 
-def _evt(type_: str = "message_delta", thread_id: str = "t1") -> OssiaEvent:
-    return OssiaEvent(type=type_, thread_id=thread_id, seq=1, data={"text": "hi"})
+def _evt(event_type: str = "message_delta", thread_id: str = "t1") -> dict[str, Any]:
+    return {"type": event_type, "thread_id": thread_id, "data": {"text": "hi"}}
 
 
 def test_sign_is_hmac_sha256_hex() -> None:
@@ -224,19 +223,18 @@ async def test_buffer_store_dispatches_webhooks(
 ) -> None:
     from core.events.buffer import ThreadEventBuffer
 
-    delivered: list[OssiaEvent] = []
+    delivered: list[dict[str, Any]] = []
 
-    async def _capture(event: OssiaEvent, **_k: Any) -> list[str]:
+    async def _capture(event: dict[str, Any], **_k: Any) -> list[str]:
         delivered.append(event)
         return ["x"]
 
     monkeypatch.setattr("core.webhooks.deliver_event", _capture)
     buf = ThreadEventBuffer()
     buf.store("t1", [_evt("message_delta")])
-    # Let the scheduled task run
     await asyncio.sleep(0)
     assert len(delivered) == 1
-    assert delivered[0].type == "message_delta"
+    assert delivered[0]["type"] == "message_delta"
 
 
 def test_buffer_store_sync_does_not_dispatch() -> None:

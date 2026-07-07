@@ -15,7 +15,6 @@ from __future__ import annotations
 import os
 from collections.abc import Generator
 from contextlib import suppress
-from typing import Any
 
 import pytest
 from dotenv import find_dotenv, load_dotenv
@@ -930,24 +929,14 @@ def test_thread_events_returns_empty_for_unknown_thread(client: TestClient) -> N
 
 @pytest.mark.asyncio
 async def test_thread_events_returns_events_after_stream(client: TestClient) -> None:
-    """After a stream completes, events are available via the events endpoint.
-
-    This test uses the normalizer directly to simulate what chat_stream does:
-    normalize events → serialize to SSE → buffer for replay. It computes the
-    actual caller hash so stored events match the scoped thread_id the endpoint
-    will compute from the API key.
-    """
-
-    # Compute the actual caller hash the same way verify_api_key does.
-    # This ensures the scoped thread_id we store matches what the
-    # endpoint computes from the API key header.
+    """After a stream completes, v3 channel dicts are available via /events."""
     from argon2 import low_level as argon2_low_level
 
-    from core.events import EventNormalizer, get_thread_event_buffer, serialize_sse
+    from core.events import get_thread_event_buffer
 
     caller_hash = argon2_low_level.hash_secret_raw(
         secret=b"test-api-key",
-        salt=b"ossia-caller-id",  # must be exactly 16 bytes
+        salt=b"ossia-caller-id",
         time_cost=2,
         memory_cost=65536,
         parallelism=1,
@@ -955,33 +944,16 @@ async def test_thread_events_returns_events_after_stream(client: TestClient) -> 
         type=argon2_low_level.Type.ID,
     ).hex()
 
-    # Clear any previous state from the singleton
     buf = get_thread_event_buffer()
     buf.clear_all()
 
-    # Create a fake stream to produce events
-    from tests.test_events import _FakeMsg, _FakeV3Stream
-
-    stream = _FakeV3Stream()
-    stream._messages = [
-        _FakeMsg("Hello", role="ai", id_="msg-1"),
-        _FakeMsg(" World", role="ai", id_="msg-1"),
-    ]
-    stream._output = {}
-    stream._interrupted = False
-
-    # Simulate what chat_stream does: normalize events, serialize to SSE,
-    # then store them in the buffer for replay.
     scoped_thread = f"{caller_hash}:stream-thread"
-    normalizer = EventNormalizer(thread_id=scoped_thread)
-    collected: list[Any] = []
-    async for event in normalizer.normalize(stream):
-        collected.append(event)
-        serialize_sse(event)  # simulate streaming
-    if collected:
-        buf.store(scoped_thread, collected)
+    buf.store(scoped_thread, [
+        {"channel": "messages", "data": {"content": "Hello", "role": "ai"}},
+        {"channel": "tool_calls", "data": {"tool_name": "search", "state": "completed"}},
+        {"channel": "control", "data": {"event": "complete", "interrupted": False}},
+    ])
 
-    # Now verify via the API endpoint
     r = client.get(
         "/v1/threads/stream-thread/events",
         headers={"X-API-Key": "test-api-key"},
@@ -989,45 +961,25 @@ async def test_thread_events_returns_events_after_stream(client: TestClient) -> 
     assert r.status_code == 200
     body = r.json()
     assert body["thread_id"] == scoped_thread
-    assert body["count"] == 4  # message_started + message_delta + message_completed + complete
-    assert len(body["events"]) == 4
+    assert body["count"] == 3
+    assert body["events"][0]["channel"] == "messages"
+    assert body["events"][1]["channel"] == "tool_calls"
+    assert body["events"][2]["channel"] == "control"
 
-    # Verify event ordering
-    assert body["events"][0]["type"] == "message_started"
-    assert body["events"][0]["data"]["text"] == "Hello"
-    assert body["events"][1]["type"] == "message_delta"
-    assert body["events"][1]["data"]["text"] == " World"
-    assert body["events"][2]["type"] == "message_completed"
-    assert body["events"][3]["type"] == "complete"
-
-    # Verify each event has the standard fields
-    for evt in body["events"]:
-        assert "id" in evt
-        assert "seq" in evt
-        assert "timestamp" in evt
-        assert "source" in evt
-        assert "thread_id" in evt
-        assert evt["thread_id"] == scoped_thread
-
-    # Clear events via DELETE
+    # Clear via DELETE
     r_del = client.delete(
         "/v1/threads/stream-thread/events",
         headers={"X-API-Key": "test-api-key"},
     )
     assert r_del.status_code == 200
-    del_body = r_del.json()
-    assert del_body["thread_id"] == scoped_thread
-    assert del_body["cleared"] is True
+    assert r_del.json()["cleared"] is True
 
-    # Verify events are gone after DELETE
     r_after = client.get(
         "/v1/threads/stream-thread/events",
         headers={"X-API-Key": "test-api-key"},
     )
     assert r_after.status_code == 200
-    after_body = r_after.json()
-    assert after_body["count"] == 0
-    assert after_body["events"] == []
+    assert r_after.json()["count"] == 0
 
 
 # ── CORS origin validation tests ────────────────────────────────────────────
@@ -1149,14 +1101,11 @@ def test_thread_events_delete_does_not_affect_other_threads(client: TestClient) 
 
     from argon2 import low_level as argon2_low_level
 
-    from core.events import (
-        OssiaEvent,
-        get_thread_event_buffer,
-    )
+    from core.events import get_thread_event_buffer
 
     caller_hash = argon2_low_level.hash_secret_raw(
         secret=b"test-api-key",
-        salt=b"ossia-caller-id",  # must be exactly 16 bytes
+        salt=b"ossia-caller-id",
         time_cost=2,
         memory_cost=65536,
         parallelism=1,
@@ -1166,7 +1115,7 @@ def test_thread_events_delete_does_not_affect_other_threads(client: TestClient) 
     buf = get_thread_event_buffer()
     buf.clear_all()
 
-    evt = OssiaEvent(seq=1, type="complete", data={"interrupted": False, "output": {}})
+    evt = {"channel": "control", "data": {"event": "complete", "interrupted": False}}
     buf.store(f"{caller_hash}:alpha", [evt])
     buf.store(f"{caller_hash}:beta", [evt])
 

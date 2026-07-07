@@ -46,12 +46,12 @@ import {
   generateId,
 } from "@assistant-ui/react";
 import type { Config } from "../types";
-import { parseSSEStream } from "../stream";
+import { parseV3SSEStream } from "../stream-v3";
+import { V3Accumulator } from "../runtimes/v3-accumulator";
 import { ossiaToolkit } from "../tools/ossia-toolkit";
 import {
   clearError,
   clearInterrupts,
-  dispatchSideEvent,
   reportError,
   resetSideChannel,
   sideChannelStore,
@@ -91,13 +91,7 @@ type OssiaAction =
         | { type: "incomplete"; reason: "cancelled" | "length" | "content-filter" | "other" | "error" };
     };
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
-
-function cleanText(raw: string): string {
-  return /^<[\w.]+ object at 0x[0-9a-f]+>$/.test(raw)
-    ? "[content available]"
-    : raw;
-}
+// ── Helpers ────────────────────────────────────────────────────────────────
 
 /** Shape returned by ``GET /v1/threads/{id}/history``. */
 interface ThreadHistoryResponse {
@@ -591,7 +585,6 @@ async function streamResponse(
   placeholderId: string,
   threadId: string,
 ): Promise<void> {
-  // Fetch the SSE stream
   let response: Response;
   try {
     response = await fetch(`${apiUrl}/v1/chat/stream`, {
@@ -622,105 +615,38 @@ async function streamResponse(
     return;
   }
 
-  const activeTools = new Map<string, ActiveToolCall>();
-  const lastToolStarted = new Map<string, string>();
-  let fullText = "";
-  // Track whether the last seen event type was a final/complete signal;
-  // used to decide when to flip the placeholder to ``status: complete``.
-  let streamDone = false;
-
-  /**
-   * Rebuild the placeholder's content array from the current text and
-   * tracked tool calls, then dispatch an in-place update. The text
-   * content (if any) is followed by one tool-call part per active
-   * tool call in the order they were started.
-   */
-  const updatePlaceholder = (
-    status:
-      | { type: "running" }
-      | { type: "complete" }
-      | { type: "incomplete"; reason: "cancelled" | "length" | "content-filter" | "other" | "error" },
-  ) => {
-    const parts: ThreadMessageLike["content"] = [];
-    if (fullText) parts.push({ type: "text" as const, text: fullText });
-    for (const tool of activeTools.values()) {
-      parts.push({
-        type: "tool-call" as const,
-        toolCallId: tool.toolCallId,
-        toolName: tool.toolName,
-        args: tool.args,
-        argsText: JSON.stringify(tool.args),
-        ...(tool.result !== undefined && { result: tool.result }),
-        ...(tool.isError && { isError: true }),
-      });
-    }
+  const accumulator = new V3Accumulator((content, status, meta) => {
     dispatch({
       type: "update-message",
       id: placeholderId,
-      content: parts,
+      content,
       status,
     });
-  };
+    // Per-channel meta: interrupts + run_state only.
+    if (meta.interrupts.length > 0) {
+      sideChannelStore.setState((prev) => ({
+        ...prev,
+        run_state: "interrupted" as const,
+        interrupts: meta.interrupts,
+      }));
+    } else if (status.type === "complete") {
+      sideChannelStore.setState((prev) => ({
+        ...prev,
+        run_state: "completed" as const,
+        interrupts: [],
+      }));
+    }
+  });
 
   try {
-    for await (const event of parseSSEStream(response)) {
-      dispatchSideEvent(event);
-
-      // Tool lifecycle (side-channel tracking only — tool cards are
-      // rendered from the side channel, not from this message).
-      if (event.type === "tool_started") {
-        const toolName = String(event.data.name ?? "unknown");
-        const toolInput = (event.data.input as Record<string, unknown>) ?? {};
-        const toolCallId = nextToolCallId();
-        activeTools.set(toolCallId, { toolName, toolCallId, args: toolInput });
-        lastToolStarted.set(toolName, toolCallId);
-        updatePlaceholder({ type: "running" });
-      } else if (event.type === "tool_completed") {
-        const toolName = String(event.data.name ?? "");
-        const output = event.data.output;
-        const id = lastToolStarted.get(toolName);
-        if (id && activeTools.has(id)) {
-          activeTools.set(id, { ...activeTools.get(id)!, result: output });
-        }
-        updatePlaceholder({ type: "running" });
-      } else if (event.type === "tool_failed") {
-        const toolName = String(event.data.name ?? "");
-        const error = String(event.data.error ?? "unknown error");
-        const id = lastToolStarted.get(toolName);
-        if (id && activeTools.has(id)) {
-          activeTools.set(id, { ...activeTools.get(id)!, isError: true, result: error });
-        }
-        updatePlaceholder({ type: "running" });
-      }
-
-      // Capture the running text (latest is authoritative).
-      if (
-        event.type === "message_started" ||
-        event.type === "message_delta" ||
-        event.type === "message_completed"
-      ) {
-        const raw = String(event.data.text ?? "");
-        const cleaned = cleanText(raw);
-        if (cleaned) fullText = cleaned;
-        updatePlaceholder({ type: "running" });
-      }
-
-      // ``complete`` is the terminal event: the graph finished, no more
-      // events will arrive. Flip the placeholder to complete so the UI
-      // shows the final state.
-      if (event.type === "complete") {
-        streamDone = true;
-      }
+    for await (const chunk of parseV3SSEStream(response)) {
+      accumulator.ingest(chunk);
     }
   } catch {
-    // Stream errors are non-fatal — we still emit whatever we have.
+    // stream errors are non-fatal
   }
 
-  // Final state: complete if the graph finished cleanly, incomplete
-  // otherwise (cancelled, errored, or connection dropped).
-  updatePlaceholder(
-    streamDone ? { type: "complete" } : { type: "incomplete", reason: "cancelled" },
-  );
+  accumulator.finalize();
 }
 
 /** Extract text from an AppendMessage. */

@@ -11,7 +11,7 @@ Wire model
 
   - A webhook is ``(id, url, events, secret, created_at)``.
   - ``events`` is a list of event-kind strings; ``["*"]`` matches all.
-  - Delivery body: JSON of the ``OssiaEvent``.
+  - Delivery body: JSON of the event dict (v3 channel-keyed format).
   - Signature header: ``X-Ossia-Signature: sha256=<hex>`` over the
     raw JSON body. The receiver verifies with the same secret.
   - Retry: 3 attempts, backoff 1s / 2s / 4s. After 3 failures the
@@ -35,8 +35,6 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 import httpx
-
-from core.events.types import OssiaEvent
 
 logger = logging.getLogger(__name__)
 
@@ -120,19 +118,13 @@ def get_webhook_store() -> WebhookStore:
     return _STORE
 
 
-def _event_payload(event: OssiaEvent) -> bytes:
-    """Serialize an ``OssiaEvent`` to JSON bytes for delivery."""
-    if hasattr(event, "model_dump"):
-        body = event.model_dump()
-    elif isinstance(event, dict):
-        body = event
-    else:
-        body = {"type": getattr(event, "type", "unknown"), "data": str(event)}
-    return json.dumps(body, default=str).encode("utf-8")
+def _event_payload(event: dict[str, Any]) -> bytes:
+    """Serialize a v2 StreamPart dict to JSON bytes for delivery."""
+    return json.dumps(event, default=str).encode("utf-8")
 
 
 async def deliver_event(
-    event: OssiaEvent,
+    event: dict[str, Any],
     *,
     store: WebhookStore | None = None,
     client: httpx.AsyncClient | None = None,
@@ -145,7 +137,7 @@ async def deliver_event(
     list.
     """
     store = store or _STORE
-    event_type = getattr(event, "type", None) or "unknown"
+    event_type = event.get("type", "unknown") if isinstance(event, dict) else getattr(event, "type", None) or "unknown"
     webhooks = [w for w in await store.list() if w.matches(event_type)]
     if not webhooks:
         return []

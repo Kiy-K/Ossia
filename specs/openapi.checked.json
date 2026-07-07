@@ -754,7 +754,7 @@
             "type": "integer"
           },
           "events": {
-            "description": "Normalized OssiaEvent dicts in emit order.",
+            "description": "Channel-keyed event dicts in emit order.",
             "items": {
               "additionalProperties": true,
               "type": "object"
@@ -1834,7 +1834,7 @@
         "summary": "Thread Events Delete"
       },
       "get": {
-        "description": "Return the buffered normalized event stream for a thread.\n\nEvents are stored in-memory after each ``POST /v1/chat/stream`` completes.\nClients can use this endpoint to replay or late-join a thread's event\nstream for debugging, audit, or TUI session recovery.\n\nOnly threads that have had at least one streaming invocation since server\nstart will have buffered events. The buffer is bounded per-thread to\nprevent unbounded memory growth (~5 MB max per thread).\n\nReturns:\n    A ``ThreadEventsResponse`` containing the ordered list of normalized\n    ``OssiaEvent`` dicts and the event count.",
+        "description": "Return the buffered normalized event stream for a thread.\n\nEvents are stored in-memory after each ``POST /v1/chat/stream`` completes.\nClients can use this endpoint to replay or late-join a thread's event\nstream for debugging, audit, or TUI session recovery.\n\nOnly threads that have had at least one streaming invocation since server\nstart will have buffered events. The buffer is bounded per-thread to\nprevent unbounded memory growth (~5 MB max per thread).\n\nReturns:\n    A ``ThreadEventsResponse`` containing the ordered list of v3\n    channel-keyed event dicts and the event count.",
         "operationId": "thread_events_v1_threads__thread_id__events_get",
         "parameters": [
           {

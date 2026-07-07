@@ -22,6 +22,7 @@ Error contract: every non-2xx response returns
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import secrets
@@ -69,7 +70,7 @@ from core.audit import run_audit  # noqa: E402
 from core.config import get_settings  # noqa: E402
 from core.context import OssiaContext  # noqa: E402
 from core.eval import run_eval  # noqa: E402
-from core.events import EventNormalizer, get_thread_event_buffer, serialize_sse  # noqa: E402
+from core.events import get_thread_event_buffer  # noqa: E402
 from core.memory import (  # noqa: E402
     ensure_caller_memory_seeded,
     get_checkpointer,
@@ -112,6 +113,7 @@ from core.schemas import (  # noqa: E402
     WhoAmIResponse,
 )
 from core.utils.session import resolve_thread_id  # noqa: E402
+from core.v3_projector import project_v3_stream  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -911,16 +913,13 @@ async def chat_stream(
 
     async def event_stream() -> AsyncGenerator[str, None]:
         stream = await agent.astream_events(input_dict, config, version="v3", context=context)
-        # Use the EventNormalizer to convert the DeepAgent v3 stream
-        # into normalized OssiaEvent objects, then serialize each to SSE.
-        normalizer = EventNormalizer(thread_id=thread_id)
         buffer = get_thread_event_buffer()
-        collected: list[Any] = []
-        async for event in normalizer.normalize(stream, artifacts=payload.artifacts or []):
-            collected.append(event)
-            yield serialize_sse(event)
-        # Store all events in the buffer for later replay after the
-        # stream has been fully consumed.
+        collected: list[dict[str, Any]] = []
+        async for chunk in project_v3_stream(stream, thread_id=thread_id):
+            collected.append(chunk)
+            channel = chunk["channel"]
+            data_json = json.dumps(chunk["data"], default=str, ensure_ascii=False)
+            yield f"event: {channel}\ndata: {data_json}\n\n"
         if collected:
             buffer.store(thread_id, collected)
 
@@ -1222,15 +1221,15 @@ async def thread_events(
     prevent unbounded memory growth (~5 MB max per thread).
 
     Returns:
-        A ``ThreadEventsResponse`` containing the ordered list of normalized
-        ``OssiaEvent`` dicts and the event count.
+        A ``ThreadEventsResponse`` containing the ordered list of v3
+        channel-keyed event dicts and the event count.
     """
     scoped = _thread_id_for(caller, thread_id)
     buffer = get_thread_event_buffer()
     events = buffer.get(scoped)
     return ThreadEventsResponse(
         thread_id=scoped,
-        events=[e.model_dump() for e in events],
+        events=events,
         count=len(events),
     )
 
