@@ -389,6 +389,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             checkpointer = await stack.enter_async_context(get_redis_checkpointer(settings))
         elif settings.postgres_url:
             checkpointer = await stack.enter_async_context(get_checkpointer(settings))
+        else:
+            # In-memory checkpointer fallback: required by the AG-UI
+            # protocol which calls aget_state() on every run. Without a
+            # checkpointer the SSE stream silently produces no events.
+            from langgraph.checkpoint.memory import InMemorySaver
+
+            checkpointer = InMemorySaver()
         # Load the knowledge base from KB_SOURCE_URLS into Redis
         # (when set). Runs before build_agent_async so the tool has
         # docs to find on the first request. Failures are logged
@@ -417,6 +424,29 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # so the Web UI (CopilotKit frontend) can connect directly. This
         # co-exists with the existing /v1/* REST API — both paths talk to
         # the same agent instance and share the same checkpointer/state.
+        #
+        # ag-ui-langgraph==0.0.42 has a bug: run() calls
+        # input.copy(update=...) on a Pydantic model, which fails.
+        # Monkey-patch to use model_copy until a new upstream release.
+        import ag_ui_langgraph.agent as _agui_agent  # noqa: E402
+
+        _original_run = _agui_agent.LangGraphAgent.run
+
+        async def _patched_run(self, input):
+            forwarded_props = {}
+            if hasattr(input, "forwarded_props") and input.forwarded_props:
+                forwarded_props = {
+                    _agui_agent.camel_to_snake(k): v
+                    for k, v in input.forwarded_props.items()
+                }
+            patched = input.model_copy(
+                update={"forwarded_props": {**input.forwarded_props, **forwarded_props}}
+            )
+            async for event_str in self._handle_stream_events(patched):
+                yield event_str
+
+        _agui_agent.LangGraphAgent.run = _patched_run  # type: ignore[method-assign]
+
         from copilotkit import LangGraphAGUIAgent  # noqa: E402
         from ag_ui_langgraph import add_langgraph_fastapi_endpoint  # noqa: E402
 

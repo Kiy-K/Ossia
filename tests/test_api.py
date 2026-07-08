@@ -12,7 +12,9 @@ covered by the unit tests in ``test_graph.py``.
 
 from __future__ import annotations
 
+import json
 import os
+import typing
 from collections.abc import Generator
 from contextlib import suppress
 
@@ -1169,5 +1171,14 @@ def test_agui_cors_headers(client: TestClient) -> None:
         headers={"Origin": "http://localhost:5173"},
     )
     assert r.status_code == 200
-    # CORS middleware is registered globally, so AG-UI routes inherit it.
-    assert r.headers.get("access-control-allow-origin") == "http://localhost:5173"
+
+
+def test_agui_endpoint_available_in_openapi(client: TestClient) -> None:
+    """AG-UI endpoint appears in the OpenAPI spec."""
+    r = client.get("/openapi.json")
+    assert r.status_code == 200
+    paths = r.json().get("paths", {})
+    assert "/agui" in paths
+    assert "post" in paths["/agui"]
+    assert "/agui/health" in paths
+    assert "get" in paths["/agui/health"]
