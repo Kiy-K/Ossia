@@ -26,7 +26,7 @@ override (the env-var path is the default today).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -41,8 +41,27 @@ class OssiaContext:
         provider: Model provider in use. Defaults to ``"openrouter"``;
             override via the FastAPI layer if a caller requests a
             different provider.
+
+    LangGraph passes extra fields (e.g. ``thread_id``) through context
+    during astream_events. ``_extra`` captures them silently so the
+    graph doesn't raise on unknown kwargs.
     """
 
-    caller: str
+    caller: str = ""
     request_id: str | None = None
     provider: str = "openrouter"
+    _extra: dict[str, object] = field(default_factory=dict)
+
+    # Accept any unknown kwargs into _extra so LangGraph's streaming
+    # context injection (thread_id, etc.) doesn't raise.
+    def __init__(
+        self,
+        caller: str = "",
+        request_id: str | None = None,
+        provider: str = "openrouter",
+        **extra: object,
+    ) -> None:
+        object.__setattr__(self, "caller", caller)
+        object.__setattr__(self, "request_id", request_id)
+        object.__setattr__(self, "provider", provider)
+        object.__setattr__(self, "_extra", extra)
