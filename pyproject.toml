@@ -74,6 +74,9 @@ dependencies = [
     "slowapi>=0.1.10",
     # Long-term memory: self-hosted Mem0 with pgvector on existing Postgres
     "mem0ai>=0.1.0",
+    # CopilotKit: AG-UI protocol bridge that exposes the agent to the Web UI
+    "copilotkit>=0.1.94",
+    "ag-ui-langgraph>=0.0.42",
 ]
 
 [project.scripts]
@@ -137,7 +140,7 @@ warn_return_any = true
 warn_unused_configs = true
 
 [[tool.mypy.overrides]]
-module = ["bs4", "tavily", "langchain_ollama", "eager_tools_langgraph", "compact_middleware", "advisor_middleware", "langchain_nopii_middleware", "numpy", "browser_use", "mem0"]
+module = ["bs4", "tavily", "langchain_ollama", "eager_tools_langgraph", "compact_middleware", "advisor_middleware", "langchain_nopii_middleware", "numpy", "browser_use", "mem0", "copilotkit", "ag_ui_langgraph"]
 ignore_missing_imports = true
 
 [tool.pyright]

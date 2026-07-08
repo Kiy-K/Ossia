@@ -1,35 +1,42 @@
 {
-  "name": "ossia-webui",
-  "private": true,
+  "name": "copilotkit-langgraph-template",
   "version": "0.1.0",
-  "type": "module",
+  "private": true,
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "preview": "vite preview",
-    "typecheck": "tsc --noEmit",
-    "test:e2e": "playwright test"
+    "dev": "npm run dev:infra && concurrently \"npm run dev:ui\" --names ui --prefix-colors blue --kill-others",
+    "dev:debug": "LOG_LEVEL=debug npm run dev",
+    "dev:ui": "next dev --turbopack",
+    "build": "next build",
+    "start": "next start",
+    "dev:infra": "node scripts/copilotkit-dev-infra.mjs"
   },
   "dependencies": {
-    "@assistant-ui/react": "^0.14.26",
-    "@assistant-ui/react-markdown": "^0.14.5",
-    "@fontsource-variable/jetbrains-mono": "^5.2.8",
-    "@fontsource-variable/outfit": "^5.2.8",
-    "lucide-react": "^1.23.0",
-    "motion": "^12.42.2",
-    "react": "^19.2.7",
-    "react-dom": "^19.2.7",
-    "shiki": "^4.3.1"
+    "@copilotkit/a2ui-renderer": "1.62.2",
+    "@copilotkit/react-core": "1.62.2",
+    "@copilotkit/runtime": "1.62.2",
+    "@radix-ui/react-checkbox": "^1.3.3",
+    "@radix-ui/react-label": "^2.1.8",
+    "@radix-ui/react-separator": "^1.1.8",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "hono": "^4.12.10",
+    "lucide-react": "^0.577.0",
+    "next": "16.1.6",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "react-rnd": "^10.5.2",
+    "react18-json-view": "^0.2.9",
+    "recharts": "^3.7.0",
+    "tailwind-merge": "^3.5.0",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@playwright/test": "^1.61.1",
-    "@tailwindcss/vite": "^4.1.0",
-    "@types/react": "^19.2.17",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.3",
-    "playwright-core": "^1.61.1",
-    "tailwindcss": "^4.1.0",
-    "typescript": "^5.8.0",
-    "vite": "^8.1.3"
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "concurrently": "^9.1.2",
+    "tailwindcss": "^4",
+    "typescript": "^5"
   }
 }

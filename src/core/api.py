@@ -412,6 +412,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.agent = agent
         app.state.settings = settings
         app.state.checkpointer = checkpointer
+        # ── CopilotKit AG-UI endpoint ─────────────────────────────────
+        # Exposes the same DeepAgents graph on the AG-UI streaming protocol
+        # so the Web UI (CopilotKit frontend) can connect directly. This
+        # co-exists with the existing /v1/* REST API — both paths talk to
+        # the same agent instance and share the same checkpointer/state.
+        from copilotkit import LangGraphAGUIAgent  # noqa: E402
+        from ag_ui_langgraph import add_langgraph_fastapi_endpoint  # noqa: E402
+
+        add_langgraph_fastapi_endpoint(
+            app=app,
+            agent=LangGraphAGUIAgent(
+                name="ossia",
+                description="Ossia — portable, model-agnostic support agent",
+                graph=agent,
+            ),
+            path="/agui",
+        )
         # Expose the store for the /v1/memories/* and /v1/policies/*
         # debug routes. Falls back to the module-level handle in
         # ``core.agent`` for cases where the compiled graph rejected
