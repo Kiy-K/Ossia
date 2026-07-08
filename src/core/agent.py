@@ -72,6 +72,7 @@ from core.tools import (
     search_knowledge_base,
     send_response,
 )
+from core.mem0_tools import add_memory, search_memory
 
 logger = logging.getLogger(__name__)
 
@@ -339,6 +340,8 @@ def create_core_tools() -> list[BaseTool]:
         create_pr,
         grade_response,
         send_response,
+        search_memory,
+        add_memory,
         run_bugfix_pipeline,
         run_audit_pipeline,
         run_refactor_pipeline,
@@ -356,6 +359,12 @@ def _build_async_subagents(settings: Settings) -> list[AsyncSubAgent]:
     For local development without LangGraph Cloud, the middleware still
     exposes the lifecycle tools; actual execution requires a server.
 
+    Per ADR-0016, only the ``researcher`` subagent remains async —
+    it genuinely fans out across parallel file searches. The ``tester``
+    and ``auditor`` roles are covered by sync declarative subagents
+    (``test-runner`` in the main subagent catalogue, ``run_audit_pipeline``
+    as a core tool).
+
     ``AsyncSubAgent`` is a ``TypedDict``, so return values use dict-style
     access (``spec["name"]``) rather than attribute access.
     """
@@ -368,24 +377,6 @@ def _build_async_subagents(settings: Settings) -> list[AsyncSubAgent]:
                 "tracing that would take many turns inline."
             ),
             graph_id="researcher",
-        ),
-        AsyncSubAgent(
-            name="tester",
-            description=(
-                "Runs test suites and validation pipelines. "
-                "Use this for long test runs, coverage analysis, and flaky test "
-                "detection that should not block the conversation."
-            ),
-            graph_id="tester",
-        ),
-        AsyncSubAgent(
-            name="auditor",
-            description=(
-                "Performs repository audits and indexing tasks. "
-                "Use this for comprehensive codebase audits, lint sweeps, "
-                "and batch analysis jobs."
-            ),
-            graph_id="auditor",
         ),
     ]
 

@@ -38,15 +38,16 @@ def _get_graph_modules() -> list[str]:
     """Return all graph module file stems (minus ``.py``) in ``src/core/graphs/``.
 
     Excludes ``__init__`` (package marker), ``supervisor`` (main entry-point
-    graph, not an async subagent), and ``_shared`` (internal helper shared
-    by the other graph modules).
+    graph, not an async subagent), ``_shared`` (internal helper), and
+    ``tester``/``auditor`` (retained for future LangGraph Platform deployment
+    per ADR-0016; covered by sync declarative subagents and core tools today).
     """
     modules: list[str] = []
     for fpath in sorted(GRAPHS_DIR.iterdir()):
         if fpath.suffix != ".py":
             continue
         stem = fpath.stem
-        if stem in ("__init__", "supervisor", "_shared"):
+        if stem in ("__init__", "supervisor", "_shared", "tester", "auditor"):
             continue
         modules.append(stem)
     return modules

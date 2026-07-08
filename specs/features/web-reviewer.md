@@ -105,9 +105,10 @@ exposed internally to the subagent; clients do not call it directly.
   kwargs, the Agent kwargs plumbed by `_run_browser_use_task`
   (flash_mode + output_model_schema), and the structured-output
   surface path.
-- `tests/test_subagent_descriptions.py` — bumps the subagent count
-  from 10 (7 sync + 3 async) to 11 (8 sync + 3 async) and updates
-  the docstring.
+- `tests/test_subagent_descriptions.py` — adjusts the subagent count
+  from 10 (7 sync + 3 async) to 11 (8 sync + 3 async); later reduced
+  to 9 (8 sync + 1 async) per ADR-0016 (tester/auditor collapsed to
+  sync declarative equivalents).
 
 ## Testing notes
 

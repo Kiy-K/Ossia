@@ -43,7 +43,7 @@ flowchart TB
     LLM["🤖 LLM Provider<br/><i>OpenRouter / OpenAI /<br/>Anthropic / Google /<br/>Nvidia NIM</i>"]
     COORD["🎯 Coordinator Agent"]
     SUB["🔧 Subagents<br/><i>code-researcher<br/>bug-diagnostician<br/>fix-proposer<br/>test-runner</i>"]
-    ASYNC["⏳ Async Subagents<br/><i>researcher / tester / auditor</i>"]
+    ASYNC["⏳ Async Subagent<br/><i>researcher</i>"]
     PIPE["🏗️ Pipelines<br/><i>bugfix / audit / refactor</i>"]
     TOOLS["🛠️ Tools<br/><i>search_codebase<br/>internet_search<br/>run_tests<br/>grade_response<br/>send_response</i>"]
     NORM["🔄 EventNormalizer<br/><i>4 concurrent relays →<br/>asyncio.Queue → OssiaEvent</i>"]
@@ -259,7 +259,7 @@ The EventNormalizer converts the raw DeepAgent v3 stream into a typed, ordered e
 Every streamed run's normalized events are stored in an in-memory buffer. Clients can late-join or replay via `GET /v1/threads/{id}/events` — useful for session recovery, debugging, and audit.
 
 ### Subagent Delegation
-7 synchronous subagents (`code-researcher`, `bug-diagnostician`, `fix-proposer`, `test-runner`, `ui-debugger`, `diagram-analyzer`, `visual-regression-reviewer`) and 3 async subagents (`researcher`, `tester`, `auditor`) handle specialized work without filling the coordinator's context.
+7 synchronous subagents (`code-researcher`, `bug-diagnostician`, `fix-proposer`, `test-runner`, `ui-debugger`, `diagram-analyzer`, `visual-regression-reviewer`) and 1 async subagent (`researcher`) handle specialized work without filling the coordinator's context.
 
 ### Programmatic Pipelines
 Three orchestrator pipelines (`run_bugfix_pipeline`, `run_audit_pipeline`, `run_refactor_pipeline`) automate multi-step workflows via the code interpreter — diagnose → propose → test, or research → report, or research → plan → rewrite → validate.
@@ -298,7 +298,7 @@ It connects to the backend via SSE and provides multi-pane visualizations:
 | **ReAct** | Agent reasoning loops — thoughts, actions, and observations in real time |
 | **Subagents** | Lifecycle of each active subagent (spawned → running → completed/error) |
 | **Tools** | Active and completed tool calls with inputs and outputs |
-| **Background Tasks** | Long-running async subagent tasks (researcher, tester, auditor) |
+| **Background Tasks** | Long-running async subagent tasks (researcher) |
 | **Status Bar** | Thread ID, agent/tool counts, async task count, and run state |
 
 ```bash

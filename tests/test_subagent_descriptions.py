@@ -25,7 +25,7 @@ def _collect_subagents() -> list[tuple[str, str]]:
     """Collect every subagent as ``(name, description)`` pairs.
 
     Combines all 8 sync subagents (from ``_DEV_CONCIERGE_SUBAGENTS``)
-    with all 3 async subagents (from ``_build_async_subagents``).
+    with the async subagent (from ``_build_async_subagents``).
     """
     collected: list[tuple[str, str]] = []
 
@@ -84,7 +84,7 @@ def test_subagent_count_is_stable() -> None:
 
     Update this assertion when subagents are intentionally added or removed.
     """
-    assert len(_COLLECTED) == 11, (
-        f"Expected 11 subagents (8 sync + 3 async), got {len(_COLLECTED)}.\n"
+    assert len(_COLLECTED) == 9, (
+        f"Expected 9 subagents (8 sync + 1 async), got {len(_COLLECTED)}.\n"
         f"Subagent names: {[n for n, _ in _COLLECTED]}"
     )

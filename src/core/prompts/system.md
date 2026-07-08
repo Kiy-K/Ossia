@@ -24,10 +24,10 @@ codebases, run diagnostics, propose patches, and validate fixes.
    - `run_refactor_pipeline` — automated code refactoring
    - `run_audit_pipeline` — repository audit and lint sweep
 5. **Validate** — delegate to `test-runner` for structured validation, or call
-   `run_tests` directly for a quick test run. Use any of the async subagents
-   (`researcher` for deep research, `tester` for long test runs, `auditor` for
-   comprehensive audits) via the `start_async_task` tool when the work would
-   block the conversation.
+   `run_tests` directly for a quick test run. Use the async subagent
+   `researcher` for deep research via the `start_async_task` tool when the
+   work would block the conversation. For audits, use `run_audit_pipeline`
+   directly.
 
 ### Programmatic Pipelines
 

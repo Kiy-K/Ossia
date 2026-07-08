@@ -113,8 +113,10 @@ message streaming, and interrupt state against the Ossia ``/v1/*`` HTTP contract
 
 ## Subagents
 
-Ossia has **7 sync subagents** (delegated via the `task` tool) and **3 async
-subagents** (long-running, non-blocking via `AsyncSubAgentMiddleware`).
+Ossia has **7 sync subagents** (delegated via the `task` tool) and **1 async
+subagent** (`researcher`, long-running via `AsyncSubAgentMiddleware`).
+The `tester` and `auditor` roles are covered by sync declarative subagents
+(`test-runner`, `run_audit_pipeline`) per ADR-0016.
 
 ### Sync subagents
 
@@ -137,11 +139,13 @@ word limit) — raw tool outputs are stripped to keep main agent context clean.
 | Subagent | What it does | When to launch |
 |----------|-------------|----------------|
 | `researcher` | In-depth codebase research and repo-wide analysis | For broad searches, architectural mapping, and dependency tracing that would take many turns inline |
-| `tester` | Run test suites and validation pipelines | For long test runs, coverage analysis, and flaky test detection that should not block the conversation |
-| `auditor` | Repository audits and indexing tasks | For comprehensive codebase audits, lint sweeps, and batch analysis jobs |
 
-Async subagents run via `AsyncSubAgentMiddleware`. The supervisor starts them,
-checks progress, and retrieves results without blocking. Each spec maps to a
+Per ADR-0016, only the `researcher` remains async — it's genuinely concurrent / fan-out
+work (parallel file searches). The `tester` role is covered by the `test-runner` sync
+subagent; the `auditor` role uses the `run_audit_pipeline` core tool directly.
+
+The async subagent runs via `AsyncSubAgentMiddleware`. The supervisor starts it,
+checks progress, and retrieves results without blocking. The spec maps to a
 `graph_id` registered in `langgraph.json` (see graph architecture below).
 
 ---

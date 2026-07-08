@@ -194,7 +194,7 @@ Four graphs registered for the LangGraph Platform deployment model:
 
 **Important:** All 4 graph files are structurally identical — they all call `core.agent.build_agent()`. They exist so the LangGraph Platform has separate `graph_id` values to route async subagent runs to. When running locally via `uvicorn core.api:app`, `langgraph.json` is not read; the main app creates the agent in-process.
 
-The 3 async subagents (researcher, tester, auditor) are wired into the main agent via `AsyncSubAgentMiddleware` in `core/agent.py`, which exposes `start_async_task`, `check_async_task`, etc. tools. They require a LangGraph Cloud deployment to actually execute.
+The `researcher` async subagent is wired into the main agent via `AsyncSubAgentMiddleware` in `core/agent.py`, which exposes `start_async_task`, `check_async_task`, etc. tools. The `tester` and `auditor` roles are covered by sync declarative subagents (`test-runner`, `run_audit_pipeline`) per ADR-0016. Async subagents require a LangGraph Cloud deployment to actually execute.
 
 ## Layout (current)
 

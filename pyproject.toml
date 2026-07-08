@@ -72,6 +72,8 @@ dependencies = [
     "prometheus-fastapi-instrumentator>=8.0.0",
     # Rate limiting
     "slowapi>=0.1.10",
+    # Long-term memory: self-hosted Mem0 with pgvector on existing Postgres
+    "mem0ai>=0.1.0",
 ]
 
 [project.scripts]
@@ -135,7 +137,7 @@ warn_return_any = true
 warn_unused_configs = true
 
 [[tool.mypy.overrides]]
-module = ["bs4", "tavily", "langchain_ollama", "eager_tools_langgraph", "compact_middleware", "advisor_middleware", "langchain_nopii_middleware", "numpy", "browser_use"]
+module = ["bs4", "tavily", "langchain_ollama", "eager_tools_langgraph", "compact_middleware", "advisor_middleware", "langchain_nopii_middleware", "numpy", "browser_use", "mem0"]
 ignore_missing_imports = true
 
 [tool.pyright]

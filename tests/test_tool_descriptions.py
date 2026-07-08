@@ -92,6 +92,6 @@ def test_core_tool_count_is_stable() -> None:
     Update this assertion when tools are intentionally added or removed.
     """
     tools = _get_tools()
-    assert len(tools) == 14, (
-        f"Expected 14 tools, got {len(tools)}.\nTool names: {[t[0] for t in tools]}"
+    assert len(tools) == 16, (
+        f"Expected 16 tools, got {len(tools)}.\nTool names: {[t[0] for t in tools]}"
     )

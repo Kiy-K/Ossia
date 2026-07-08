@@ -10,7 +10,7 @@ Against the `deep-agents-orchestration` skill (`create_deep_agent()` defaults):
 
 | Pattern | Skill states | What Ossia does | Verdict |
 |---------|-------------|-----------------|---------|
-| Custom subagents | `list[dict]` with name, description, system_prompt, tools, model | ✅ 7 sync subagents + 3 async subagents in `core/agent.py` | Aligned |
+| Custom subagents | `list[dict]` with name, description, system_prompt, tools, model | ✅ 7 sync subagents + 1 async subagent (researcher) in `core/agent.py`; tester/auditor covered by sync subagents + core tools per ADR-0016 | Aligned |
 | Tool permission scoping | Subagent-level tool allowlists | ✅ `_SUBAGENT_TOOL_MAP` dict in `agent.py:479–487` | Aligned |
 | SubAgentMiddleware (task tool) | Auto-included by `create_deep_agent()` | ✅ Orchestrators use `task()` in JS via CodeInterpreter | Aligned (see ⚠️ below) |
 | Async subagents | `AsyncSubAgentMiddleware` with 5 tools | ✅ `_build_async_subagents()` in `agent.py:340–376` | Aligned |
@@ -61,9 +61,9 @@ middleware merge logic. If explicit lists replace defaults, then
 and model. Matches the skill's `TypedDict` pattern exactly.
 
 ### Async subagents
-`agent.py:340–376` — 3 specs (researcher, tester, auditor) with `graph_id`,
-`description`, and `result_handler`. Wired via `AsyncSubAgentMiddleware` at
-line 444.
+`agent.py:351–376` — 1 spec (`researcher`) with `graph_id`,
+`description`. Wired via `AsyncSubAgentMiddleware` at
+line 502.
 
 ### Orchestrator pipeline JS templates
 `src/core/orchestrators/bugfix_pipeline.py:45–83` — uses `task()` with
