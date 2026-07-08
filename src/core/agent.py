@@ -761,16 +761,6 @@ def _compile_agent(
     if search_tool is not None:
         all_tools.append(search_tool)
     middlewares = _build_middlewares(settings, model=model, backend=backend)
-    # ── CopilotKit: AG-UI tool + state bridge ───────────────────────────────
-    # Bridges the deepagents graph into the CopilotKit AG-UI protocol so
-    # the frontend discovers tool capabilities and streams shared state.
-    # Must run before eager-tools and after core middlewares.
-    try:
-        from copilotkit import CopilotKitMiddleware  # noqa: E402
-
-        middlewares.append(CopilotKitMiddleware())
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Failed to wire CopilotKitMiddleware: %s", exc)
     # ── Eager-tools: dispatch tool calls as streaming blocks seal ────────────
     # Overlaps tool execution with LLM generation. Only idempotent tools
     # are eager-dispatched; side-effect tools run in the normal tool step.
