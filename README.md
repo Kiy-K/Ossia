@@ -394,7 +394,7 @@ scripts/             # Audit, eval, OpenAPI spec generation, coverage matrix
 specs/               # OpenAPI contract, changelog, feature specs, coverage
 monitoring/          # Prometheus, Loki, Grafana configs
 docs/
-  adr/               # Architecture Decision Records (0001..0014)
+  adr/               # Architecture Decision Records (0001..0015)
   agents/            # Agent context reference
   skills/            # Loadable skill files (web-search, code-review)
   diagrams.md        # 📊 Index of all architecture diagrams
