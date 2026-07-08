@@ -6,7 +6,7 @@ Repo-specific guidance for OpenCode and other coding sessions in `/home/khoi/oss
 
 Ossia — a portable, model-agnostic support agent built on LangChain Deep Agents. The unified HTTP API at `/v1/*` is the only runtime entry point; CLI scripts, the notebook, the TUI, and the **Web UI** are thin HTTP clients. Spec-driven: `specs/openapi.checked.json` is the pinned contract, `tests/test_openapi_drift.py` fails the suite on drift.
 
-Architecture and intent: `README.md` (overview), `specs/SPEC.md` (narrative spec), `docs/adr/0001..0014.md` (fourteen design decisions). Read those before changing behavior.
+Architecture and intent: `README.md` (overview), `specs/SPEC.md` (narrative spec), `docs/adr/0001..0015.md` (fifteen design decisions). Read those before changing behavior.
 
 ## Quick start (the commands you actually need)
 
@@ -112,7 +112,7 @@ Run `make help` to see all targets with descriptions.
 - **Issue tracker:** GitHub Issues on `Kiy-K/Ossia` (https://github.com/Kiy-K/Ossia/issues).
 - **Triage labels:** `bug`, `feature`, `enhancement`, `ready-for-agent`, `needs-triage`, `blocked`, `good-first-issue`.
 - **Domain docs:** `docs/agents/CONTEXT.md` (glossary, ADRs, architecture).
-- **ADR index:** `docs/adr/0001..0014.md` — the fourteen design decisions (incl. 0013 middleware stack, 0014 standalone deployment).
+- **ADR index:** `docs/adr/0001..0015.md` — the fifteen design decisions (incl. 0013 middleware stack, 0014 standalone deployment, 0015 durable/horizontal-scaling stores).
 
 - **Project name** is **Ossia** (brand, PyPI, env-var prefix `OSSIA_*`,
   Docker container name `ossia-postgres`).
@@ -220,7 +220,7 @@ specs/               # SPEC.md, openapi.checked.json (pinned), changelog.md,
                      # features/ (feature specs), coverage.md
 monitoring/          # prometheus.yml, loki-config.yml, grafana/ (datasources,
                      # dashboard.json, dashboard-provider.yml)
-docs/adr/            # 0001..0014 — design decisions
+docs/adr/            # 0001..0015 — design decisions
 docs/agents/         # CONTEXT.md
 docs/skills/         # SKILL.md files (web-search, code-review)
 plugins/             # Bundled plugins (ponytail)
