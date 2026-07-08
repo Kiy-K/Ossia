@@ -26,7 +26,8 @@ override (the env-var path is the default today).
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import json as _json
+from dataclasses import asdict, dataclass, field
 
 
 @dataclass(frozen=True)
@@ -65,3 +66,12 @@ class OssiaContext:
         object.__setattr__(self, "request_id", request_id)
         object.__setattr__(self, "provider", provider)
         object.__setattr__(self, "_extra", extra)
+
+    def model_dump(self) -> dict[str, object]:
+        """Pydantic-compatible serialization for CopilotKitMiddleware."""
+        result = asdict(self)
+        result.pop("_extra", None)
+        return result
+
+    def __repr__(self) -> str:
+        return _json.dumps(self.model_dump(), default=str)
