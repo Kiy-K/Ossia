@@ -1139,3 +1139,35 @@ def test_thread_events_delete_does_not_affect_other_threads(client: TestClient) 
         headers={"X-API-Key": "test-api-key"},
     )
     assert r_beta.json()["count"] == 1
+
+
+# ── AG-UI endpoint (CopilotKit integration) ──────────────────────────────────
+
+
+def test_agui_health(client: TestClient) -> None:
+    """AG-UI health check returns agent name."""
+    r = client.get("/agui/health")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "ok"
+    assert body["agent"]["name"] == "ossia"
+
+
+def test_agui_rejects_invalid_run(client: TestClient) -> None:
+    """AG-UI run endpoint rejects request missing required fields."""
+    r = client.post("/agui", json={"method": "agents/info"})
+    assert r.status_code == 422
+    body = r.json()
+    assert "error" in body
+    assert body["error"]["code"] == "http_422"
+
+
+def test_agui_cors_headers(client: TestClient) -> None:
+    """AG-UI health endpoint returns CORS headers for allowed origins (5173 = webui dev)."""
+    r = client.get(
+        "/agui/health",
+        headers={"Origin": "http://localhost:5173"},
+    )
+    assert r.status_code == 200
+    # CORS middleware is registered globally, so AG-UI routes inherit it.
+    assert r.headers.get("access-control-allow-origin") == "http://localhost:5173"
