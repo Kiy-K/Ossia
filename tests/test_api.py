@@ -1182,3 +1182,28 @@ def test_agui_endpoint_available_in_openapi(client: TestClient) -> None:
     assert "post" in paths["/agui"]
     assert "/agui/health" in paths
     assert "get" in paths["/agui/health"]
+
+
+def test_agui_sse_stream_completes_with_run_finished(client: TestClient) -> None:
+    """AG-UI SSE stream produces content and terminates."""
+    r = client.post(
+        "/agui",
+        json={
+            "threadId": "t-terminal",
+            "runId": "r-terminal",
+            "messages": [{"id": "m1", "role": "user", "content": "say hi"}],
+            "state": {},
+            "tools": [],
+            "context": [],
+            "forwardedProps": {},
+        },
+        headers={"Accept": "text/event-stream"},
+    )
+    assert r.status_code == 200
+    # Starlette TestClient buffers the SSE stream into response.content
+    # after the request completes. Verify we got actual SSE data.
+    body = r.text
+    assert 'data:' in body, f"Expected SSE data, got {len(body)} bytes"
+    assert 'RUN_STARTED' in body, f"Missing RUN_STARTED in stream"
+    terminal = 'RUN_FINISHED' in body or 'RUN_ERROR' in body
+    assert terminal, f"Stream missing terminal event: {body[:500]}"
