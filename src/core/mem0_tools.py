@@ -93,15 +93,54 @@ def _parse_postgres_url(url: str) -> dict[str, Any]:
 def _build_mem0_config(settings: Any) -> dict[str, Any] | None:
     """Build a Mem0 ``MemoryConfig``-compatible dict from Ossia settings.
 
-    Returns ``None`` when a required component is not configured
-    (``POSTGRES_URL`` or ``OLLAMA_BASE_URL``) — Mem0 degrades
+    Vector store selection via ``MEM0_VECTOR_STORE`` env var:
+      - ``"pgvector"`` (default): pgvector on existing Postgres.
+        Requires ``POSTGRES_URL``.
+      - ``"qdrant"``: Qdrant server. Configured via ``MEM0_QDRANT_URL``
+        (preferred), ``MEM0_QDRANT_HOST`` + ``MEM0_QDRANT_PORT``, or
+        defaults to local ``localhost:6333``.
+
+    When Mem0 is not configured, returns ``None`` — Mem0 degrades
     cleanly to not-loaded.
     """
-    pg_kwargs = _parse_postgres_url(settings.postgres_url or "")
-    if not pg_kwargs:
-        logger.debug("Mem0 not configured: POSTGRES_URL missing or unparseable")
+    vector_store_provider = os.environ.get("MEM0_VECTOR_STORE", "pgvector").lower()
+
+    # ── Vector store config ──────────────────────────────────────────────
+    if vector_store_provider == "qdrant":
+        qdrant_url = os.environ.get("MEM0_QDRANT_URL", "")
+        qdrant_host = os.environ.get("MEM0_QDRANT_HOST", "localhost")
+        qdrant_port = int(os.environ.get("MEM0_QDRANT_PORT", "6333"))
+        qdrant_api_key = os.environ.get("MEM0_QDRANT_API_KEY", "")
+
+        if qdrant_url:
+            vector_config: dict[str, Any] = {
+                "url": qdrant_url,
+                "api_key": qdrant_api_key,
+            }
+        else:
+            vector_config = {
+                "host": qdrant_host,
+                "port": qdrant_port,
+            }
+        vs_config = {"provider": "qdrant", "config": vector_config}
+
+    elif vector_store_provider == "pgvector":
+        pg_kwargs = _parse_postgres_url(settings.postgres_url or "")
+        if not pg_kwargs:
+            logger.debug("Mem0 not configured: POSTGRES_URL missing or unparseable")
+            return None
+        vs_config = {
+            "provider": "pgvector",
+            "config": {
+                **pg_kwargs,
+                "collection_name": "mem0",
+            },
+        }
+    else:
+        logger.warning("Mem0 not configured: unknown MEM0_VECTOR_STORE=%s", vector_store_provider)
         return None
 
+    # ── Embedder + LLM config (shared across vector stores) ──────────────
     ollama_base = getattr(settings, "ollama_base_url", None) or os.environ.get(
         "OLLAMA_BASE_URL", "http://localhost:11434"
     )
@@ -145,14 +184,7 @@ def _build_mem0_config(settings: Any) -> dict[str, Any] | None:
         base_url = None
 
     config: dict[str, Any] = {
-        "vector_store": {
-            "provider": "pgvector",
-            "config": {
-                **pg_kwargs,
-                "collection_name": "mem0",
-                "embedding_model_dims": embedding_dims,
-            },
-        },
+        "vector_store": vs_config,
         "embedder": {
             "provider": "ollama",
             "config": {

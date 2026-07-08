@@ -116,6 +116,57 @@ def test_build_mem0_config_non_openai_compatible_provider() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Qdrant vector store config
+# ---------------------------------------------------------------------------
+
+
+def test_build_mem0_config_qdrant_with_url(monkeypatch) -> None:
+    """Qdrant via MEM0_QDRANT_URL."""
+    monkeypatch.setenv("MEM0_VECTOR_STORE", "qdrant")
+    monkeypatch.setenv("MEM0_QDRANT_URL", "http://qdrant:6333")
+    s = _FakeSettings()
+    s.postgres_url = "postgres://u:p@host:5432/db"  # should be ignored for Qdrant
+    cfg = _build_mem0_config(s)
+    assert cfg is not None
+    assert cfg["vector_store"]["provider"] == "qdrant"
+    assert cfg["vector_store"]["config"]["url"] == "http://qdrant:6333"
+
+
+def test_build_mem0_config_qdrant_with_host_port(monkeypatch) -> None:
+    """Qdrant via MEM0_QDRANT_HOST + MEM0_QDRANT_PORT."""
+    monkeypatch.setenv("MEM0_VECTOR_STORE", "qdrant")
+    monkeypatch.setenv("MEM0_QDRANT_HOST", "192.168.1.10")
+    monkeypatch.setenv("MEM0_QDRANT_PORT", "6334")
+    s = _FakeSettings()
+    s.postgres_url = "postgres://u:p@host:5432/db"
+    cfg = _build_mem0_config(s)
+    assert cfg is not None
+    assert cfg["vector_store"]["provider"] == "qdrant"
+    assert cfg["vector_store"]["config"]["host"] == "192.168.1.10"
+    assert cfg["vector_store"]["config"]["port"] == 6334
+
+
+def test_build_mem0_config_qdrant_defaults(monkeypatch) -> None:
+    """Qdrant defaults to localhost:6333 when no env vars set."""
+    monkeypatch.setenv("MEM0_VECTOR_STORE", "qdrant")
+    s = _FakeSettings()
+    s.postgres_url = "postgres://u:p@host:5432/db"
+    cfg = _build_mem0_config(s)
+    assert cfg is not None
+    assert cfg["vector_store"]["provider"] == "qdrant"
+    assert cfg["vector_store"]["config"]["host"] == "localhost"
+    assert cfg["vector_store"]["config"]["port"] == 6333
+
+
+def test_build_mem0_config_unknown_store_returns_none(monkeypatch) -> None:
+    """Unknown MEM0_VECTOR_STORE returns None."""
+    monkeypatch.setenv("MEM0_VECTOR_STORE", "chroma")
+    s = _FakeSettings()
+    cfg = _build_mem0_config(s)
+    assert cfg is None
+
+
+# ---------------------------------------------------------------------------
 # Tool graceful degradation (no Postgres available)
 # ---------------------------------------------------------------------------
 
