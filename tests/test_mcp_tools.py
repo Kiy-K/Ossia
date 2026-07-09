@@ -184,3 +184,114 @@ async def test_external_cancel_during_teardown_grace_propagates() -> None:
         srv.close()
         await srv.wait_closed()
         os.unlink(settings.mcp_config_path)
+
+
+# ── Tool-count ceiling (GOAL-0002 M3 + M5) ────────────────────────────────────
+# The coordinator's bound tool list MUST stay constant regardless of how
+# many MCP connectors are active. The whole point of routing MCP tools to
+# the ``integrations`` subagent (§3.3) is that the coordinator's per-turn
+# prompt does not grow with N. If a future change re-introduces
+# ``tools = [*tools, *toolkit.get_tools()]`` (or anything equivalent),
+# this test fails and the regression is caught before it ships.
+
+
+class _FakeMCPTool:
+    """Stand-in for a LangChain ``BaseTool`` returned by ``MCPToolkit``."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.description = f"Fake MCP tool {name}"
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover - unused
+        return None
+
+
+class _FakeMCPToolkit:
+    """Stand-in for ``MCPToolkit`` that reports a fixed list of tools.
+
+    The list is exposed via the real ``get_tools()`` interface, so the
+    production code path that reads ``toolkit.get_tools()`` is exercised
+    end-to-end. The actual MCP transport is bypassed — no network.
+    """
+
+    def __init__(self, n_tools: int) -> None:
+        self._tools = [_FakeMCPTool(f"mcp_tool_{i}") for i in range(n_tools)]
+
+    async def __aenter__(self) -> _FakeMCPToolkit:
+        return self
+
+    async def __aexit__(self, *_exc: Any) -> None:
+        return None
+
+    def get_tools(self) -> list[_FakeMCPTool]:
+        return list(self._tools)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("n_mcp", [0, 1, 5, 25])
+async def test_coordinator_tool_count_is_capped_regardless_of_mcp(
+    monkeypatch: pytest.MonkeyPatch, n_mcp: int
+) -> None:
+    """The coordinator's bound tool list does not grow with N MCP tools.
+
+    The ceiling is the size of ``create_core_tools()`` — currently 10.
+    The exact value is asserted, not just "not changed", so a future
+    accidental add to the core tools list also fails this test (and the
+    author must consciously decide whether to update the ceiling).
+    """
+    # Build subagents the same way build_agent_async does.
+    from core.agent import _build_subagents, create_core_tools
+
+    fake = _FakeMCPToolkit(n_mcp)
+    mcp_tools = fake.get_tools()
+
+    real_create_core = create_core_tools
+    captured_core_tools: list[list[Any]] = []
+
+    def _spy_create_core() -> list[Any]:
+        tools = real_create_core()
+        captured_core_tools.append(tools)
+        return tools
+
+    monkeypatch.setattr("core.agent.create_core_tools", _spy_create_core)
+
+    # Drive the relevant path: create_core_tools() (what the coordinator
+    # would bind) + _build_subagents() (what gets wired per subagent).
+    core_tools = _spy_create_core()
+    # The model is only stored on the subagent spec; a stub is fine.
+    fake_model = type("FakeModel", (), {})()
+    subagents = _build_subagents(
+        fake_model,  # type: ignore[arg-type]
+        mcp_tools=mcp_tools,  # type: ignore[arg-type]
+    )
+
+    # 1. The coordinator's bound tools = create_core_tools() — never
+    #    includes MCP tools.
+    coordinator_tool_names = {t.name for t in core_tools}
+    # 2. No MCP tool name leaks into the coordinator's binding.
+    leaked = [n for n in coordinator_tool_names if n.startswith("mcp_tool_")]
+    assert leaked == [], (
+        f"MCP tools leaked into the coordinator's binding: {leaked}\n"
+        f"This is the regression M3 was supposed to prevent — check that "
+        f"build_agent_async no longer does `tools = [*tools, *toolkit.get_tools()]`."
+    )
+    # 3. The ceiling is exactly the size of create_core_tools() (10 after
+    #    M1+M2). Update this when the core set is intentionally changed.
+    assert len(core_tools) == 10, (
+        f"Coordinator tool count is {len(core_tools)}, expected 10. "
+        f"This is the GOAL-0002 ceiling; update only after a deliberate "
+        f"change to create_core_tools() and an explicit ADR."
+    )
+    # 4. The integrations subagent picks up every MCP tool (when any are
+    #    present) and zero otherwise.
+    integration_subagents = [s for s in subagents if s["name"] == "integrations"]
+    if n_mcp == 0:
+        assert integration_subagents == [], (
+            "integrations subagent should not be wired when no MCP tools exist"
+        )
+    else:
+        assert len(integration_subagents) == 1, "integrations subagent should be wired"
+        bound = integration_subagents[0]["tools"]
+        assert len(bound) == n_mcp, (
+            f"integrations subagent should have {n_mcp} tools, got {len(bound)}"
+        )

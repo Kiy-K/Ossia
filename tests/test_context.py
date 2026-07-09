@@ -94,6 +94,22 @@ def test_compiled_agent_passes_context_schema() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _fake_async_store() -> AsyncMock:
+    """Build a store stub with the async methods ``seed_memory`` calls.
+
+    The lifespan reads ``agent.store`` and stashes it on
+    ``app.state.store``. The chat handler then calls
+    ``await store.aget(...)`` and ``await store.aput(...)`` via
+    ``ensure_caller_memory_seeded``. A plain ``MagicMock`` for the
+    store is not awaitable; ``AsyncMock`` with the two methods
+    configured as no-ops is the minimum the seed path needs.
+    """
+    store = AsyncMock()
+    store.aget = AsyncMock(return_value=None)
+    store.aput = AsyncMock(return_value=None)
+    return store
+
+
 def test_chat_handler_passes_ossia_context_to_ainvoke() -> None:
     """``POST /v1/chat`` constructs an ``OssiaContext`` and passes it
     via ``context=`` to ``agent.ainvoke``.
@@ -105,6 +121,7 @@ def test_chat_handler_passes_ossia_context_to_ainvoke() -> None:
 
     fake_agent = MagicMock()
     fake_agent.ainvoke = AsyncMock(return_value={"messages": []})
+    fake_agent.store = _fake_async_store()
 
     with patch("core.api.build_agent_async") as ba:
 
@@ -161,6 +178,7 @@ def test_chat_stream_handler_passes_ossia_context() -> None:
             raise StopAsyncIteration
 
     fake_agent = MagicMock()
+    fake_agent.store = _fake_async_store()
 
     async def _capture(*_a: Any, **kw: Any) -> _FakeStream:
         captured.update(kw)

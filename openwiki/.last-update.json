@@ -1,0 +1,7 @@
+{
+  "updatedAt": "2026-07-09T12:05:00.000Z",
+  "command": "update",
+  "gitHead": "204d8fa26de8a177c6c68589d9b88be939c54ab5",
+  "note": "All changes since last update are uncommitted working-tree changes: GOAL-0002 tool-calling fix (_ForceToolChoice), coordinator tool-surface modularization (10-tool cap, new research/integrations subagents, MCP routed to integrations), CopilotKit middleware re-wired, /agui AG-UI endpoint, Next.js+CopilotKit Web UI rewrite, memory seed store-key fix.",
+  "model": "openai/gpt-5.4-mini"
+}

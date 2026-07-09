@@ -84,7 +84,14 @@ def test_subagent_count_is_stable() -> None:
 
     Update this assertion when subagents are intentionally added or removed.
     """
-    assert len(_COLLECTED) == 9, (
-        f"Expected 9 subagents (8 sync + 1 async), got {len(_COLLECTED)}.\n"
+    # GOAL-0002: count grew from 9 (8 sync + 1 async) to 11:
+    # M2: added the `research` subagent (internet_search, fetch_url moved
+    #     from the coordinator).
+    # M3: added the `integrations` subagent (MCP tools moved from
+    #     coordinator binding). When no MCP servers are configured, the
+    #     subagent is skipped at build time — this assertion is on the
+    #     declared catalogue, not the wired count, so it stays at 11.
+    assert len(_COLLECTED) == 11, (
+        f"Expected 11 subagents (10 sync + 1 async), got {len(_COLLECTED)}.\n"
         f"Subagent names: {[n for n, _ in _COLLECTED]}"
     )

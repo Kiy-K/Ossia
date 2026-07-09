@@ -80,7 +80,44 @@ AGENTS_MEMORY_KEY: str = "/memories/AGENTS.md"
 
 Path matches what we pass to ``create_deep_agent(memory=...)`` so the
 seeded value is loaded into the system prompt at boot.
+
+The constant is the *full filesystem path* (including the ``/memories/``
+route prefix). The filesystem middleware's ``StoreBackend`` strips this
+prefix and uses the relative path as the store key. Use
+:func:`_store_key_from_memory_path` to derive the store key from this
+full path for direct store operations.
 """
+
+
+def _store_key_from_memory_path(path: str) -> str:
+    """Derive the store key from a full memory filesystem path.
+
+    The agent's filesystem middleware (``CompositeBackend`` with
+    ``StoreBackend`` routes) strips the route prefix (e.g.
+    ``/memories/``) from the file path and stores the remaining
+    relative path as the store key, prepending ``/``.
+
+    ``seed_memory`` writes directly to the store (not through the
+    backend), so it must use this derived key to match what the
+    backend will look up on ``read_file`` calls.
+
+    Examples:
+        ``/memories/AGENTS.md`` → ``/AGENTS.md``
+        ``/policies/compliance.md`` → ``/compliance.md``
+        ``/AGENTS.md`` (already relative) → ``/AGENTS.md``
+
+    Args:
+        path: The full filesystem path, e.g. ``/memories/AGENTS.md``.
+
+    Returns:
+        The store key that ``StoreBackend`` expects after route
+        prefix stripping.
+    """
+    if path.startswith("/") and path.count("/", 1) >= 1:
+        # Strip the first path component (the route prefix).
+        # ``/memories/AGENTS.md`` → ``/AGENTS.md``
+        return "/" + path.split("/", 2)[-1]
+    return path
 
 
 def initial_agents_memory() -> str:
@@ -275,6 +312,11 @@ async def seed_memory(
     deployments. The seed is only written if the key is absent; the
     agent's own ``edit_file`` writes are never overwritten by a re-seed.
 
+    The ``key`` parameter is the *full filesystem path* (e.g.
+    ``/memories/AGENTS.md``). The function derives the store key via
+    :func:`_store_key_from_memory_path` to match what the filesystem
+    middleware's ``StoreBackend`` expects after route prefix stripping.
+
     Args:
         store: The LangGraph ``BaseStore`` to seed.
         namespace: Memory namespace (default: agent-scoped).
@@ -288,17 +330,23 @@ async def seed_memory(
     """
     from core.cache import redis_lock
 
+    # The filesystem middleware's StoreBackend strips the route prefix
+    # (e.g. /memories/) and uses the relative path as the store key.
+    # Direct store writes must use the same derived key so that the
+    # agent's read_file tool can find the seeded data.
+    store_key = _store_key_from_memory_path(key)
+
     # Surface #4: serialize the get-then-put critical section via a
     # short Redis lock. Two concurrent first boots both see "absent"
     # otherwise and both write; lock collapses them to a single
     # writer. When Redis is unset, the lock is a no-op and we fall
     # back to last-write-wins (the previous behavior).
     async with redis_lock("seed_memory", *namespace, key):
-        existing = await store.aget(namespace, key)
+        existing = await store.aget(namespace, store_key)
         if existing is not None:
             return False
         file_data = create_file_data(content or initial_agents_memory())
-        await store.aput(namespace, key, file_data)  # type: ignore[arg-type]
+        await store.aput(namespace, store_key, file_data)  # type: ignore[arg-type]
         return True
 
 

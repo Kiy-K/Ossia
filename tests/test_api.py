@@ -12,9 +12,7 @@ covered by the unit tests in ``test_graph.py``.
 
 from __future__ import annotations
 
-import json
 import os
-import typing
 from collections.abc import Generator
 from contextlib import suppress
 
@@ -136,12 +134,32 @@ def test_threads_state_empty_for_unknown_thread(client: TestClient) -> None:
 
 
 def test_tools_returns_core_tools(client: TestClient) -> None:
+    """``/v1/tools`` returns the coordinator's bound tools.
+
+    After GOAL-0002 M1+M2, ``search_codebase``/``search_knowledge_base``/
+    ``run_tests``/``propose_fix``/``internet_search``/``fetch_url`` live
+    on subagents, NOT on the coordinator. The endpoint should reflect
+    that — a tool that the coordinator can't actually call should not
+    appear in the coordinator's tool list.
+    """
     r = client.get("/v1/tools", headers={"X-API-Key": API_KEY})
     assert r.status_code == 200
     body = r.json()
     names = {t["name"] for t in body["tools"]}
-    assert "search_knowledge_base" in names
+    # Coordinator still binds send_response (interrupt_on + HITL).
     assert "send_response" in names
+    # Tools moved to subagents are NOT on the coordinator's list.
+    for moved in (
+        "search_codebase",
+        "search_knowledge_base",
+        "run_tests",
+        "propose_fix",
+        "internet_search",
+        "fetch_url",
+    ):
+        assert moved not in names, (
+            f"{moved} should be a subagent tool, not a coordinator tool"
+        )
     assert "grade_response" in names
     for t in body["tools"]:
         assert t["source"] in {"core", "mcp"}
@@ -1080,19 +1098,32 @@ def test_cors_authenticated_endpoint(client: TestClient) -> None:
 
 
 def test_cors_allowed_origin_on_post(client: TestClient) -> None:
-    """POST (non-auth) from an allowed origin returns CORS header."""
-    r = client.post(
+    """Preflight OPTIONS from an allowed origin returns CORS headers.
+
+    The previous version POSTed ``/v1/chat`` and asserted CORS was set on
+    whatever the endpoint returned. That made the test fragile in two
+    ways: (a) it relied on the endpoint not blowing up (a 500 from the
+    agent's LLM call bypasses the CORS middleware's response-header
+    path), and (b) the test order mattered — when earlier tests had
+    left a real OpenRouter call in flight, this POST would 500 and the
+    CORS assertion would fail intermittently.
+
+    A preflight ``OPTIONS`` is purely a CORS handshake: no endpoint runs,
+    no LLM is called, the CORS middleware is the only thing that
+    answers. This is the right test for "does the CORS middleware
+    allow this origin?".
+    """
+    r = client.options(
         "/v1/chat",
-        json={"message": "hello"},
         headers={
             "Origin": "http://localhost:5173",
-            "X-API-Key": API_KEY,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type, x-api-key",
         },
     )
-    # The request may 500 (no checkpointer) or succeed, but should not be 422
-    # and must include the CORS header regardless of the response status.
-    assert r.status_code != 422
+    assert r.status_code in (200, 204)
     assert r.headers.get("access-control-allow-origin") == "http://localhost:5173"
+    assert r.headers.get("access-control-allow-methods") is not None
 
 
 # ── Thread events buffer / replay tests (continued) ─────────────────────────
@@ -1204,6 +1235,6 @@ def test_agui_sse_stream_completes_with_run_finished(client: TestClient) -> None
     # after the request completes. Verify we got actual SSE data.
     body = r.text
     assert 'data:' in body, f"Expected SSE data, got {len(body)} bytes"
-    assert 'RUN_STARTED' in body, f"Missing RUN_STARTED in stream"
+    assert 'RUN_STARTED' in body, "Missing RUN_STARTED in stream"
     terminal = 'RUN_FINISHED' in body or 'RUN_ERROR' in body
     assert terminal, f"Stream missing terminal event: {body[:500]}"

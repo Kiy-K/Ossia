@@ -27,7 +27,13 @@ SPEC_PATH = Path(__file__).resolve().parent.parent / "specs" / "openapi.checked.
 
 
 def main() -> int:
-    new_spec = json.dumps(app.openapi(), indent=2, sort_keys=True) + "\n"
+    # The AG-UI endpoint is added at lifespan-time, not at import-time, so
+    # ``app.openapi()`` only sees it once a TestClient has run the lifespan.
+    # Capture inside a TestClient to match what the running server exposes.
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as _client:
+        new_spec = json.dumps(app.openapi(), indent=2, sort_keys=True) + "\n"
     if SPEC_PATH.exists():
         old_spec = SPEC_PATH.read_text(encoding="utf-8")
         if old_spec == new_spec:

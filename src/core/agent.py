@@ -8,10 +8,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+from copilotkit import CopilotKitMiddleware
 from deepagents import create_deep_agent
 from deepagents.backends import CompositeBackend, StateBackend, StoreBackend
 from deepagents.middleware.async_subagents import AsyncSubAgent, AsyncSubAgentMiddleware
 from deepagents.middleware.filesystem import FilesystemPermission
+from langchain.agents.middleware.types import AgentMiddleware
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
 from langchain_quickjs import CodeInterpreterMiddleware
@@ -34,6 +36,7 @@ from core.episodic import (
 )
 from core.llm import create_chat_model
 from core.mcp_tools import MCPToolkit
+from core.mem0_tools import add_memory, search_memory
 from core.memory import (
     AGENT_NAMESPACE,
     AGENTS_MEMORY_KEY,
@@ -65,14 +68,12 @@ from core.tools import (
     fetch_url,
     grade_response,
     internet_search,
-    propose_fix,
     qna_search,
     run_tests,
     search_codebase,
     search_knowledge_base,
     send_response,
 )
-from core.mem0_tools import add_memory, search_memory
 
 logger = logging.getLogger(__name__)
 
@@ -121,9 +122,9 @@ _DEV_CONCIERGE_SUBAGENTS = (
             "  2. Find the relevant source code with search_codebase.\n"
             "  3. Form a hypothesis and the smallest possible reproduction.\n"
             "\n"
-            "IMPORTANT: Return only the distilled diagnosis. Do NOT include "
-            "raw search output or tool transcripts. The main agent relies on "
-            "concise reports to keep its context clean.\n"
+            "IMPORTANT: Return only the distilled diagnosis. Do NOT include raw "
+            "tool output, full file contents, or unprocessed transcripts. The "
+            "main agent receives only this report \u2014 keep the context footprint small.\n"
             "\n"
             "Output format:\n"
             "  - Likely cause (1-2 sentences).\n"
@@ -131,7 +132,7 @@ _DEV_CONCIERGE_SUBAGENTS = (
             "  - Supporting evidence (file paths + short snippets).\n"
             "\n"
             "Do NOT propose a fix. Delegate that to fix-proposer. Keep the "
-            "response under 250 words."
+            "response under 200 words."
         ),
     ),
     (
@@ -145,8 +146,9 @@ _DEV_CONCIERGE_SUBAGENTS = (
             "Use the provided tools to draft a minimal change that resolves the "
             "diagnosed problem.\n"
             "\n"
-            "IMPORTANT: Return only the patch summary — not full file contents, "
-            "not raw tool output. The main agent synthesizes the final patch; "
+            "IMPORTANT: Return only the patch summary. Do NOT include raw "
+            "tool output, full file contents, or unprocessed transcripts. The "
+            "main agent synthesizes the final patch; "
             "your job is a concise, actionable design.\n"
             "\n"
             "Output format:\n"
@@ -155,7 +157,7 @@ _DEV_CONCIERGE_SUBAGENTS = (
             "  - Risk notes (anything the reviewer should double-check).\n"
             "\n"
             "Do not actually apply the change. The main agent decides. Keep the "
-            "response under 250 words."
+            "response under 200 words."
         ),
     ),
     (
@@ -187,7 +189,7 @@ _DEV_CONCIERGE_SUBAGENTS = (
         "Use this when the user uploads a screenshot of a bug, error, "
         "or unexpected UI state that needs visual inspection.",
         (
-            "You are a UI debugger for the Ossia platform.\n"
+            "You are a UI debugger for the Ossia project.\n"
             "\n"
             "Inspect the provided image(s) and extract visible issues:\n"
             "  1. Identify error messages, stack traces, or unexpected UI "
@@ -196,9 +198,9 @@ _DEV_CONCIERGE_SUBAGENTS = (
             "codes with the codebase using search_codebase.\n"
             "  3. Produce a structured diagnosis with evidence.\n"
             "\n"
-            "IMPORTANT: Return only the essential findings. Do NOT include "
-            "raw search output or verbose tool transcripts. Keep the context "
-            "footprint small — the main agent receives only this report.\n"
+            "IMPORTANT: Return only the essential findings. Do NOT include raw "
+            "tool output, full file contents, or unprocessed transcripts. The "
+            "main agent receives only this report — keep the context footprint small.\n"
             "\n"
             "Output format:\n"
             "  - What is visible (1 sentence).\n"
@@ -206,7 +208,7 @@ _DEV_CONCIERGE_SUBAGENTS = (
             "  - Code locations (file paths + snippets).\n"
             "  - Suggested next steps.\n"
             "\n"
-            "Keep the response under 250 words. Use read_file to inspect "
+            "Keep the response under 200 words. Use read_file to inspect "
             "supporting files (e.g. config, logs) when the screenshot "
             "references them."
         ),
@@ -217,7 +219,7 @@ _DEV_CONCIERGE_SUBAGENTS = (
         "graphs from uploaded images. Use this when the user needs "
         "structural understanding of a visual system diagram.",
         (
-            "You are a diagram analyst for the Ossia platform.\n"
+            "You are a diagram analyst for the Ossia project.\n"
             "\n"
             "Analyze the provided architecture diagram, flowchart, or system "
             "graph:\n"
@@ -227,8 +229,9 @@ _DEV_CONCIERGE_SUBAGENTS = (
             "codebase using search_codebase.\n"
             "  3. Trace data and control flow paths between components.\n"
             "\n"
-            "IMPORTANT: Return only the distilled structural analysis. Do NOT "
-            "include raw search output or verbose tool transcripts.\n"
+            "IMPORTANT: Return only the distilled structural analysis. Do NOT include raw "
+            "tool output, full file contents, or unprocessed transcripts. The "
+            "main agent receives only this report \u2014 keep the context footprint small.\n"
             "\n"
             "Output format:\n"
             "  - Overall architecture (2-3 sentences).\n"
@@ -236,7 +239,7 @@ _DEV_CONCIERGE_SUBAGENTS = (
             "  - Data and control flow between components.\n"
             "  - Gaps, ambiguities, or missing detail in the diagram.\n"
             "\n"
-            "Keep the response under 250 words."
+            "Keep the response under 200 words."
         ),
     ),
     (
@@ -245,7 +248,7 @@ _DEV_CONCIERGE_SUBAGENTS = (
         "regressions, layout shifts, or unintended changes. Use this when "
         "the user provides a pair of images for visual diff analysis.",
         (
-            "You are a visual regression reviewer for the Ossia platform.\n"
+            "You are a visual regression reviewer for the Ossia project.\n"
             "\n"
             "Compare the provided before and after UI screenshots:\n"
             "  1. Identify layout changes, new or different elements, "
@@ -253,8 +256,9 @@ _DEV_CONCIERGE_SUBAGENTS = (
             "  2. Distinguish intentional changes from likely regressions.\n"
             "  3. Produce a structured diff report.\n"
             "\n"
-            "IMPORTANT: Return only the distilled regression report. Do NOT "
-            "include raw search output or verbose tool transcripts.\n"
+            "IMPORTANT: Return only the distilled regression report. Do NOT include raw "
+            "tool output, full file contents, or unprocessed transcripts. The "
+            "main agent receives only this report \u2014 keep the context footprint small.\n"
             "\n"
             "Output format:\n"
             "  - Regression summary (1-2 sentences).\n"
@@ -262,7 +266,7 @@ _DEV_CONCIERGE_SUBAGENTS = (
             "  - Severity per change: critical / high / medium / low / info.\n"
             "  - Code areas likely affected, if identifiable.\n"
             "\n"
-            "Keep the response under 250 words."
+            "Keep the response under 200 words."
         ),
     ),
     (
@@ -273,7 +277,7 @@ _DEV_CONCIERGE_SUBAGENTS = (
         "something on a third-party site that the plain HTTP fetch_url tool "
         "cannot reach.",
         (
-            "You are a web reviewer for the Ossia platform.\n"
+            "You are a web reviewer for the Ossia project.\n"
             "\n"
             "You have ONE tool: browser_use_task. It drives a real Chromium "
             "browser (the browser-use cloud browser on the free tier) to "
@@ -314,6 +318,63 @@ _DEV_CONCIERGE_SUBAGENTS = (
             "Keep the response under 200 words."
         ),
     ),
+    (
+        "research",
+        "Run web searches and fetch known URLs to gather external information. "
+        "Use this when the main agent needs a fact from outside the project: "
+        "library docs, vendor announcements, current best practices, a specific "
+        "page, or any answer that requires looking something up on the live web.",
+        (
+            "You are a research assistant for the Ossia project.\n"
+            "\n"
+            "You have two tools: internet_search (broad research) and fetch_url "
+            "(a known page). Use them to answer the question, then return only "
+            "the answer the main agent needs.\n"
+            "\n"
+            "IMPORTANT: Return only the essential findings. Do NOT include raw "
+            "tool output, full file contents, or unprocessed transcripts. The "
+            "main agent receives only this report \u2014 keep the context footprint small.\n"
+            "\n"
+            "Output format:\n"
+            "  - A short summary (1-3 sentences) answering the question.\n"
+            "  - Supporting facts or citations (1-5 bullet points, each with "
+            "the source URL).\n"
+            "  - Any caveats (e.g. conflicting sources, low confidence).\n"
+            "\n"
+            "Keep the response under 200 words. If the page is paywalled or "
+            "returns an error, say so explicitly and try an alternative URL or "
+            "a different search query."
+        ),
+    ),
+    (
+        "integrations",
+        "Call tools exposed by connected MCP servers (e.g. GitHub, Google Drive, "
+        "Slack, internal APIs). Use this when the request needs data or an action "
+        "from a third-party service the main agent cannot reach directly. The "
+        "exact tool list depends on which MCP servers are configured.",
+        (
+            "You are the integrations subagent for the Ossia project.\n"
+            "\n"
+            "You have access to every tool exposed by the connected MCP "
+            "servers (one tool per server endpoint). Your job is to call the "
+            "right tool with the right arguments and return only the result "
+            "the main agent needs.\n"
+            "\n"
+            "IMPORTANT: Return only the essential result. Do NOT include raw "
+            "API responses, full file contents, or verbose tool transcripts. "
+            "The main agent receives only this report, so keep the context "
+            "footprint small.\n"
+            "\n"
+            "Output format:\n"
+            "  - A short summary (1-2 sentences) of what the tool did.\n"
+            "  - The relevant fields (named explicitly, not as a blob).\n"
+            "  - On error, the error verbatim and any actionable hint.\n"
+            "\n"
+            "Keep the response under 200 words. If a tool requires parameters "
+            "the user did not provide, ask for the missing input via your "
+            "final message — do not guess."
+        ),
+    ),
 )
 
 
@@ -328,14 +389,15 @@ def load_system_prompt() -> str:
 
 
 def create_core_tools() -> list[BaseTool]:
+    # Tools delegated to subagents (``search_codebase``, ``search_knowledge_base``,
+    # ``run_tests``, ``propose_fix``, ``internet_search``, ``fetch_url``) are
+    # intentionally NOT bound to the coordinator. The coordinator invokes them
+    # via the ``task`` tool against the matching subagent (``code-researcher``,
+    # ``test-runner``, ``fix-proposer``, ``research``). Keeping them on the
+    # coordinator duplicates the capability and bloats every prompt with two
+    # tool definitions doing the same job. See GOAL-0002 §3.1 and §3.2.
     return [
-        search_codebase,
-        search_knowledge_base,
-        internet_search,
-        fetch_url,
         qna_search,
-        run_tests,
-        propose_fix,
         fetch_issue,
         create_pr,
         grade_response,
@@ -381,6 +443,56 @@ def _build_async_subagents(settings: Settings) -> list[AsyncSubAgent]:
     ]
 
 
+class _ForceToolChoice(AgentMiddleware):
+    """Bind tools + `tool_choice` onto the model before the inner chain runs.
+
+    Three reasons this middleware exists; the third is the live bug:
+
+    1. DeepAgents' ``model_node`` defaults ``tool_choice=None``. Some models
+       (gpt-4o-mini, gpt-5.5) interpret None as "don't call tools" with
+       large prompts containing many tool definitions.
+
+    2. The canonical binding site is langchain's ``_get_bound_model``, but it
+       is only reached when no short-circuiting middleware sits between this
+       one and the inner handler.
+
+    3. Eager tools (``eager_tools_langgraph``) **does** short-circuit. Its
+       ``awrap_model_call`` does ``del handler`` and calls
+       ``request.model.astream(...)`` directly, never reaching
+       ``_get_bound_model``. With nothing binding tools, the model emits an
+       HTTP request with zero tools — the exact "I don't have web access"
+       symptom the user reported (see HANDOFF.md). Pre-binding here means
+       the bound model is configured for tool dispatch regardless of which
+       downstream path takes over.
+
+    We override ``request.tools = []`` after binding so that
+    ``_get_bound_model`` (when reached) does not call ``bind_tools`` a
+    second time on the already-bound ``RunnableBinding`` — which would
+    ``AttributeError`` because ``RunnableBinding`` is not a
+    ``BaseChatModel``. With tools empty, ``_get_bound_model`` falls into
+    its empty-tools branch and just applies ``model_settings`` to the
+    existing binding (line 1404 of langchain/agents/factory.py).
+
+    Uses ``request.override()`` (not direct attribute assignment) because
+    the Pydantic v2 model silently rejects direct mutation.
+    """
+
+    def _enforce(self, request: Any) -> Any:
+        if not request.tools or request.model is None:
+            return request
+        # Preserve an explicit tool_choice (e.g. "any" for structured output)
+        # but default to "auto" when the caller left it None.
+        tool_choice = request.tool_choice if request.tool_choice is not None else "auto"
+        bound = request.model.bind_tools(list(request.tools), tool_choice=tool_choice)
+        return request.override(model=bound, tools=[], tool_choice=tool_choice)
+
+    async def awrap_model_call(self, request: Any, handler: Any) -> Any:
+        return await handler(self._enforce(request))
+
+    def wrap_model_call(self, request: Any, handler: Any) -> Any:
+        return handler(self._enforce(request))
+
+
 def _build_middlewares(
     settings: Settings,
     *,
@@ -409,58 +521,60 @@ def _build_middlewares(
     else:
         middlewares.append(PIIRedactionMiddleware())
 
-    middlewares.extend([
-        # Model retry handles transient LLM provider failures (rate limits,
-        # timeouts) before the call reaches any tool. Placed early so
-        # retries don't exhaust tool-call budgets.
-        ModelRetryMiddleware(
-            max_attempts=settings.model_retry_max_attempts,
-            initial_interval=settings.model_retry_initial_interval,
-            backoff_factor=settings.model_retry_backoff_factor,
-        ),
-        # Model fallback switches to a secondary model when the primary
-        # provider is degraded. Only wired when a fallback model is configured.
-        ModelFallbackMiddleware(
-            fallback_model=create_chat_model(
-                Settings(
-                    provider=settings.fallback_provider,  # type: ignore[arg-type]
-                    model=settings.fallback_model,
-                    openrouter_api_key=settings.openrouter_api_key,
-                    openai_api_key=settings.openai_api_key,
-                    anthropic_api_key=settings.anthropic_api_key,
-                    google_api_key=settings.google_api_key,
+    middlewares.extend(
+        [
+            # Model retry handles transient LLM provider failures (rate limits,
+            # timeouts) before the call reaches any tool. Placed early so
+            # retries don't exhaust tool-call budgets.
+            ModelRetryMiddleware(
+                max_attempts=settings.model_retry_max_attempts,
+                initial_interval=settings.model_retry_initial_interval,
+                backoff_factor=settings.model_retry_backoff_factor,
+            ),
+            # Model fallback switches to a secondary model when the primary
+            # provider is degraded. Only wired when a fallback model is configured.
+            ModelFallbackMiddleware(
+                fallback_model=create_chat_model(
+                    Settings(
+                        provider=settings.fallback_provider,  # type: ignore[arg-type]
+                        model=settings.fallback_model,
+                        openrouter_api_key=settings.openrouter_api_key,
+                        openai_api_key=settings.openai_api_key,
+                        anthropic_api_key=settings.anthropic_api_key,
+                        google_api_key=settings.google_api_key,
+                    )
                 )
             )
-        )
-        if settings.fallback_model
-        else None,
-        # Circuit breaker opens when an external service repeatedly fails,
-        # preventing retries from hammering a downed service. Placed before
-        # RetryToolMiddleware so the breaker fails fast instead of exhausting
-        # retries on a definitely-down backend.
-        CircuitBreakerMiddleware(
-            failure_threshold=settings.circuit_breaker_failure_threshold,
-            recovery_timeout=settings.circuit_breaker_recovery_timeout,
-        ),
-        RetryToolMiddleware(
-            max_attempts=settings.retry_max_attempts,
-            initial_interval=settings.retry_initial_interval,
-            backoff_factor=settings.retry_backoff_factor,
-            jitter=True,
-        ),
-        RevisionLoopCapMiddleware(max_loops=settings.max_revision_loops),
-        ToolCallLimitMiddleware(max_calls=settings.tool_call_limit),
-        CodeInterpreterMiddleware(
-            ptc=[
-                "search_codebase",
-                "read_file",
-                "recall_thread_turns",
-            ],
-            timeout=settings.code_interpreter_timeout,
-            max_ptc_calls=settings.code_interpreter_max_ptc_calls,
-            mode="thread",
-        ),
-    ])
+            if settings.fallback_model
+            else None,
+            # Circuit breaker opens when an external service repeatedly fails,
+            # preventing retries from hammering a downed service. Placed before
+            # RetryToolMiddleware so the breaker fails fast instead of exhausting
+            # retries on a definitely-down backend.
+            CircuitBreakerMiddleware(
+                failure_threshold=settings.circuit_breaker_failure_threshold,
+                recovery_timeout=settings.circuit_breaker_recovery_timeout,
+            ),
+            RetryToolMiddleware(
+                max_attempts=settings.retry_max_attempts,
+                initial_interval=settings.retry_initial_interval,
+                backoff_factor=settings.retry_backoff_factor,
+                jitter=True,
+            ),
+            RevisionLoopCapMiddleware(max_loops=settings.max_revision_loops),
+            ToolCallLimitMiddleware(max_calls=settings.tool_call_limit),
+            CodeInterpreterMiddleware(
+                ptc=[
+                    "search_codebase",
+                    "read_file",
+                    "recall_thread_turns",
+                ],
+                timeout=settings.code_interpreter_timeout,
+                max_ptc_calls=settings.code_interpreter_max_ptc_calls,
+                mode="thread",
+            ),
+        ]
+    )
     # Filter out None entries so an unconfigured fallback doesn't break the list.
     middlewares = [mw for mw in middlewares if mw is not None]
     # Tool result cache: when REDIS_URL is set, the langgraph-redis
@@ -559,13 +673,29 @@ def _build_middlewares(
         except Exception as exc:  # noqa: BLE001
             logger.warning("Failed to wire compact middleware: %s", exc)
 
+    # ── CopilotKit: frontend-declared tool injection & interception ──────────
+    # Must run AFTER CodeInterpreterMiddleware (QuickJS) because code
+    # interpreter's _prepare_for_call expects dict keys with .name attributes,
+    # and CopilotKit-merged frontend tools are dicts. Placed before
+    # _ForceToolChoice so tool_choice enforcement covers the merged set.
+    middlewares.append(CopilotKitMiddleware())
+
+    # ── Force tool_choice=auto ──────────────────────────────────────────────
+    # Must run last (closest to the model) so it survives upstream
+    # request.override() calls from todo/skills/subagents middleware.
+    middlewares.append(_ForceToolChoice())
+
     return middlewares
 
 
 def _interrupt_config(settings: Settings, checkpointer: Any | None) -> dict[str, bool] | None:
     if not settings.enable_human_review or checkpointer is None:
         return None
-    return {"send_response": True}
+    return {
+        "send_response": True,
+        "create_pr": True,
+        "write_file": True,
+    }
 
 
 # Tool groups for subagent permission scoping.
@@ -573,6 +703,10 @@ def _interrupt_config(settings: Settings, checkpointer: Any | None) -> dict[str,
 _READ_ONLY_TOOLS: list[BaseTool] = [search_codebase, search_knowledge_base]
 # Tools that test-runner subagents may also use.
 _TEST_TOOLS: list[BaseTool] = [*_READ_ONLY_TOOLS, run_tests]
+# Research: web search + URL fetch. Read-only network tools, no project
+# filesystem access. The coordinator delegates to this subagent instead of
+# binding these tools directly, so the prompt stays compact (GOAL-0002 §3.2).
+_RESEARCH_TOOLS: list[BaseTool] = [internet_search, fetch_url]
 # Web-reviewer: read-only + the browser-use wrapper. Built lazily because
 # the wrapper may be unavailable (no API key, no package). Resolved once
 # at agent-build time; the subagent simply does not exist if the tool
@@ -607,10 +741,25 @@ _SUBAGENT_TOOL_MAP: dict[str, list[BaseTool]] = {
     "ui-debugger": _READ_ONLY_TOOLS,
     "diagram-analyzer": _READ_ONLY_TOOLS,
     "visual-regression-reviewer": _READ_ONLY_TOOLS,
+    "research": _RESEARCH_TOOLS,
 }
 
 
-def _build_subagents(model: BaseChatModel) -> list[dict[str, Any]]:
+def _build_subagents(
+    model: BaseChatModel,
+    *,
+    mcp_tools: list[BaseTool] | None = None,
+) -> list[dict[str, Any]]:
+    """Assemble the subagent specs the coordinator can delegate to.
+
+    Args:
+        model: The chat model each subagent will use.
+        mcp_tools: Optional list of tools from the connected MCP servers.
+            When non-empty, the ``integrations`` subagent is wired with
+            these tools; when empty (or the toolkit is unavailable),
+            the ``integrations`` subagent is skipped entirely. See
+            GOAL-0002 §3.3 (Option A — single delegation point).
+    """
     web_reviewer_tools = _resolve_web_reviewer_tools()
     out: list[dict[str, Any]] = []
     for name, description, prompt in _DEV_CONCIERGE_SUBAGENTS:
@@ -621,6 +770,14 @@ def _build_subagents(model: BaseChatModel) -> list[dict[str, Any]]:
             if web_reviewer_tools is None:
                 continue
             tools = web_reviewer_tools
+        elif name == "integrations":
+            # Single MCP delegation point (GOAL-0002 §3.3 Option A).
+            # Skip wiring when no MCP servers came up — a subagent with
+            # zero tools is worse than no subagent (the model wastes a
+            # delegation turn on it).
+            if not mcp_tools:
+                continue
+            tools = list(mcp_tools)
         else:
             tools = _SUBAGENT_TOOL_MAP.get(name, _READ_ONLY_TOOLS)
         out.append(
@@ -860,7 +1017,6 @@ async def build_agent_async(
     model = create_chat_model(settings)
     tools = create_core_tools()
     system_prompt = load_system_prompt()
-    subagents = _build_subagents(model)
     toolkit: MCPToolkit | None = None
     if include_mcp_tools:
         try:
@@ -870,6 +1026,12 @@ async def build_agent_async(
                 "MCP toolkit initialization failed (%s); falling back to core tools.", exc
             )
             toolkit = None
+    # MCP tools are routed to the ``integrations`` subagent, not bound on
+    # the coordinator. See GOAL-0002 §3.3 (Option A — single delegation
+    # point). This keeps the coordinator's per-turn prompt compact even
+    # as connectors are added.
+    mcp_tools = toolkit.get_tools() if toolkit is not None else None
+    subagents = _build_subagents(model, mcp_tools=mcp_tools)
     store: BaseStore
     store_cm: Any | None = None
     scratch_store: BaseStore | None = None
@@ -912,12 +1074,13 @@ async def build_agent_async(
     # doesn't have this tool in that mode.
     semantic_tool = make_semantic_recall_tool(store, settings)
     try:
-        if toolkit is not None:
-            tools = [*tools, *toolkit.get_tools()]
-        # Discover and merge plugins AFTER MCP tools so user plugins
-        # can override or extend MCP toolchains. Plugins can also
-        # register middlewares which are appended to the runtime
-        # stack.
+        # MCP tools are NOT appended to the coordinator's binding. They
+        # are routed to the ``integrations`` subagent (GOAL-0002 §3.3
+        # Option A), keeping the coordinator's per-turn prompt compact
+        # regardless of how many connectors are active.
+        # Discover and merge plugins so user plugins can extend the
+        # toolchain. Plugins can also register middlewares which are
+        # appended to the runtime stack.
         from core.plugin import load_plugins_into
 
         plugin_middlewares: list[Any] = []

@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 
 from core.agent import _build_middlewares, build_agent
@@ -141,14 +142,42 @@ def _send_response_ai() -> AIMessage:
     )
 
 
+def _create_pr_ai() -> AIMessage:
+    """An assistant turn that requests the (interrupt-gated) create_pr tool."""
+    return AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "create_pr",
+                "id": "call-pr-1",
+                "args": {
+                    "repo": "owner/repo",
+                    "title": "Fix login bug",
+                    "body": "Fixes the OAuth redirect issue.",
+                    "head": "fix-login",
+                    "base": "main",
+                },
+            }
+        ],
+    )
+
+
 def _human_review_agent(
     *follow_ups: AIMessage,
+    scripted_ai: AIMessage | None = None,
 ) -> tuple[Any, str]:
     """Build a real Ossia agent with human review on and a fake scripted model.
 
     Uses Ossia's actual tools, middleware, and interrupt config so the test
     exercises the production human-in-the-loop path -- only the model is faked
     so the test is deterministic and offline.
+
+    Args:
+        follow_ups: AIMessages emitted by the model after the tool call
+            result is fed back (one per tool call + one final response).
+        scripted_ai: The first AIMessage the model generates. Defaults to
+            a ``send_response`` tool call. Pass a different scripted
+            message to test other gated tools (e.g. ``_create_pr_ai()``).
     """
     from deepagents import create_deep_agent
     from langgraph.checkpoint.memory import InMemorySaver
@@ -156,6 +185,7 @@ def _human_review_agent(
     from core.agent import _build_middlewares, _interrupt_config, create_core_tools
     from core.config import Settings
 
+    first_turn = _send_response_ai() if scripted_ai is None else scripted_ai
     settings = Settings(
         provider=Provider.OPENROUTER,
         model="openai/gpt-4o-mini",
@@ -164,7 +194,7 @@ def _human_review_agent(
         max_revision_loops=3,
     )
     saver = InMemorySaver()
-    model = _FakeToolModel(scripted=[_send_response_ai(), *follow_ups])
+    model = _FakeToolModel(scripted=[first_turn, *follow_ups])
     graph = create_deep_agent(
         name="ossia-test",
         model=model,
@@ -232,6 +262,317 @@ async def test_human_review_reject_blocks_send() -> None:
     )
     assert isinstance(messages[-1], AIMessage), "agent should respond after rejection"
     assert messages[-1].content.strip(), "agent should produce a revision message"
+
+
+@pytest.mark.asyncio
+async def test_human_review_create_pr_blocks_until_approved() -> None:
+    """create_pr triggers an interrupt; approve resumes and executes the tool."""
+    from langchain_core.messages import HumanMessage
+    from langgraph.types import Command
+
+    graph, thread_id = _human_review_agent(
+        AIMessage(content="PR created successfully."),
+        scripted_ai=_create_pr_ai(),
+    )
+    config = {"configurable": {"thread_id": thread_id}}
+
+    await graph.ainvoke(
+        {"messages": [HumanMessage(content="create a PR for the fix")]}, config
+    )
+    state = await graph.aget_state(config)
+    assert any(task.interrupts for task in state.tasks), (
+        "agent should be paused for human review on create_pr"
+    )
+
+    result = await graph.ainvoke(Command(resume={"decisions": [{"type": "approve"}]}), config)
+    messages = result["messages"]
+    assert any(getattr(m, "name", None) == "create_pr" for m in messages), (
+        "create_pr should execute after approval"
+    )
+
+
+@pytest.mark.asyncio
+async def test_human_review_create_pr_reject_blocks_pr() -> None:
+    """Rejecting create_pr review blocks the tool and feeds back the reason."""
+    from langchain_core.messages import HumanMessage
+    from langgraph.types import Command
+
+    graph, thread_id = _human_review_agent(
+        AIMessage(content="Okay, I will wait for approval first."),
+        scripted_ai=_create_pr_ai(),
+    )
+    config = {"configurable": {"thread_id": thread_id}}
+
+    await graph.ainvoke(
+        {"messages": [HumanMessage(content="create a PR for the fix")]}, config
+    )
+    state = await graph.aget_state(config)
+    assert any(task.interrupts for task in state.tasks), (
+        "agent should be paused for human review on create_pr"
+    )
+
+    result = await graph.ainvoke(
+        Command(
+            resume={
+                "decisions": [
+                    {
+                        "type": "reject",
+                        "message": "Don't create the PR yet — tests are still failing.",
+                    }
+                ]
+            }
+        ),
+        config,
+    )
+    messages = result["messages"]
+    pr_msgs = [m for m in messages if getattr(m, "name", None) == "create_pr"]
+    assert pr_msgs, "expected the rejection stub ToolMessage for create_pr"
+    assert all(getattr(m, "status", None) == "error" for m in pr_msgs), (
+        "create_pr must not execute successfully after rejection"
+    )
+    assert isinstance(messages[-1], AIMessage), "agent should respond after rejection"
+    assert messages[-1].content.strip(), "agent should produce a response"
+
+
+def test_interrupt_config_includes_all_gated_tools() -> None:
+    """_interrupt_config returns all three gated tools when HITL is enabled."""
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from core.agent import _interrupt_config
+
+    settings = Settings(
+        provider=Provider.OPENROUTER,
+        model="openai/gpt-4o-mini",
+        openrouter_api_key="sk-test",
+        enable_human_review=True,
+        max_revision_loops=3,
+    )
+    saver = InMemorySaver()
+    config = _interrupt_config(settings, saver)
+
+    assert config is not None
+    assert "send_response" in config, "send_response must be gated"
+    assert config["send_response"] is True
+    assert "create_pr" in config, "create_pr must be gated"
+    assert config["create_pr"] is True
+    assert "write_file" in config, "write_file must be gated"
+    assert config["write_file"] is True
+
+
+def test_interrupt_config_returns_none_when_disabled() -> None:
+    """_interrupt_config returns None when HITL is disabled or no checkpointer."""
+    from core.agent import _interrupt_config
+
+    settings = Settings(
+        provider=Provider.OPENROUTER,
+        model="openai/gpt-4o-mini",
+        openrouter_api_key="sk-test",
+        enable_human_review=False,
+        max_revision_loops=3,
+    )
+    assert _interrupt_config(settings, None) is None, "disabled HITL should return None"
+
+
+# ── _ForceToolChoice middleware tests ────────────────────────────────────────
+# Regression: HANDOFF.md documented the production bug where 33 tools in the
+# closure never reached the HTTP request because eager_tools short-circuits
+# the model call (calls request.model.astream directly, never reaching
+# _get_bound_model). The fix: pre-bind tools onto request.model here so any
+# short-circuiting downstream middleware sees a model that's already
+# configured for tool dispatch.
+
+
+def _recording_request(
+    model: Any,
+    *,
+    tools: list[Any] | None = None,
+    tool_choice: Any = None,
+) -> Any:
+    """Build a minimal ModelRequest for unit-testing the middleware."""
+    from langchain.agents.middleware.types import ModelRequest
+
+    return ModelRequest(
+        model=model,
+        tools=tools or [],
+        tool_choice=tool_choice,
+        system_message=None,
+        messages=[],
+    )
+
+
+class _BindingRecorder:
+    """Minimal chat-model stand-in that records bind_tools() calls.
+
+    Returns itself from bind_tools so the resulting ``RunnableBinding``-like
+    object is still ``isinstance(bound, _BindingRecorder)`` — that is what
+    the unit test asserts (we don't need a real RunnableBinding wrapper here
+    because the middleware only needs ``request.model.bind_tools(...)`` to
+    work; downstream consumption is exercised by other tests).
+    """
+
+    def __init__(self) -> None:
+        self.bind_calls: list[dict[str, Any]] = []
+
+    def bind_tools(self, tools: list[Any], **kwargs: Any) -> _BindingRecorder:
+        self.bind_calls.append({"tools": list(tools), "kwargs": dict(kwargs)})
+        return self
+
+
+@pytest.mark.asyncio
+async def test_force_tool_choice_binds_tools_onto_model() -> None:
+    """With tools present, _ForceToolChoice binds them onto request.model.
+
+    This is the core of the M0 fix: by binding in the middleware (rather
+    than relying on the inner _get_bound_model), the bound model is ready
+    for tool dispatch even when a downstream middleware short-circuits.
+    """
+    from core.agent import _ForceToolChoice
+
+    @tool
+    def sample_tool() -> str:
+        """A test tool."""
+        return ""
+
+    model = _BindingRecorder()
+    mw = _ForceToolChoice()
+    seen: list[Any] = []
+
+    async def _handler(request: Any) -> Any:
+        seen.append(request)
+        return ModelResponse(result=[AIMessage(content="ok")])
+
+    from langchain.agents.middleware.types import ModelResponse
+
+    request = _recording_request(model, tools=[sample_tool], tool_choice=None)
+    await mw.awrap_model_call(request, _handler)
+
+    assert len(model.bind_calls) == 1, "bind_tools should be called exactly once"
+    bind = model.bind_calls[0]
+    assert [t.name for t in bind["tools"]] == ["sample_tool"]
+    assert bind["kwargs"].get("tool_choice") == "auto"
+
+    # The request the inner handler sees must carry the bound model and
+    # empty tools (so _get_bound_model doesn't try to re-bind).
+    assert seen, "handler should have been called"
+    forwarded = seen[0]
+    assert forwarded.model is model, "handler should see the bound model"
+    assert forwarded.tools == [], "tools should be empty after binding"
+    assert forwarded.tool_choice == "auto"
+
+
+@pytest.mark.asyncio
+async def test_force_tool_choice_preserves_explicit_tool_choice() -> None:
+    """An explicit tool_choice (e.g. "any" for structured output) is kept."""
+    from core.agent import _ForceToolChoice
+
+    @tool
+    def sample_tool() -> str:
+        """A test tool."""
+        return ""
+
+    model = _BindingRecorder()
+    mw = _ForceToolChoice()
+    seen: list[Any] = []
+
+    async def _handler(request: Any) -> Any:
+        seen.append(request)
+        return ModelResponse(result=[AIMessage(content="ok")])
+
+    from langchain.agents.middleware.types import ModelResponse
+
+    request = _recording_request(model, tools=[sample_tool], tool_choice="any")
+    await mw.awrap_model_call(request, _handler)
+
+    assert model.bind_calls[0]["kwargs"].get("tool_choice") == "any"
+    assert seen[0].tool_choice == "any"
+
+
+@pytest.mark.asyncio
+async def test_force_tool_choice_no_tools_is_passthrough() -> None:
+    """When tools is empty, _ForceToolChoice must not touch the request.
+
+    The empty-tools case is the "skill-only / memory-only" agent profile;
+    binding would still succeed but is wasted work, and we want the
+    middleware to be a no-op so the inner handler sees the original
+    request unchanged.
+    """
+    from core.agent import _ForceToolChoice
+
+    model = _BindingRecorder()
+    mw = _ForceToolChoice()
+    seen: list[Any] = []
+
+    async def _handler(request: Any) -> Any:
+        seen.append(request)
+        return ModelResponse(result=[AIMessage(content="ok")])
+
+    from langchain.agents.middleware.types import ModelResponse
+
+    request = _recording_request(model, tools=[], tool_choice=None)
+    await mw.awrap_model_call(request, _handler)
+
+    assert model.bind_calls == [], "bind_tools should not be called when tools is empty"
+    assert seen[0] is request, "handler should see the original request unchanged"
+
+
+def test_force_tool_choice_is_in_middleware_stack() -> None:
+    """_ForceToolChoice is the last middleware in the user stack.
+
+    It must run after every other tool-injecting middleware so the bound
+    model sees the final tool list. The order is documented in
+    _build_middlewares; the assertion is a guard against silent
+    reorderings.
+    """
+    from core.agent import _ForceToolChoice
+
+    settings = _test_settings()
+    middlewares = _build_middlewares(settings)
+    assert isinstance(middlewares[-1], _ForceToolChoice), (
+        f"_ForceToolChoice should be last, got {type(middlewares[-1]).__name__}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_force_tool_choice_protects_against_eager_tools_short_circuit() -> None:
+    """The bound model is what a short-circuiting downstream sees.
+
+    Eager tools (``eager_tools_langgraph``) calls
+    ``request.model.astream(...)`` directly without invoking the inner
+    handler. Simulate that path: a downstream middleware that
+    short-circuits, then asserts the model it sees has been pre-bound.
+    This is the integration-level proof that the fix solves the live bug.
+    """
+    from core.agent import _ForceToolChoice
+
+    @tool
+    def search_web() -> str:
+        """Search the web."""
+        return ""
+
+    @tool
+    def read_file() -> str:
+        """Read a file."""
+        return ""
+
+    model = _BindingRecorder()
+    mw = _ForceToolChoice()
+
+    # A "short-circuiting" middleware: del handler, call model directly.
+
+    request = _recording_request(model, tools=[search_web, read_file], tool_choice=None)
+    enforced = mw._enforce(request)
+
+    # Eager tools would now do: `request.model.astream(...)`. Verify the
+    # model it sees already has tools+tool_choice configured.
+    assert enforced.model is model
+    assert len(model.bind_calls) == 1
+    bound_tool_names = sorted(t.name for t in model.bind_calls[0]["tools"])
+    assert bound_tool_names == ["read_file", "search_web"]
+    assert model.bind_calls[0]["kwargs"].get("tool_choice") == "auto"
+
+    # And the original request's tools slot is now empty so that the
+    # normal handler path (when reached) doesn't re-bind.
+    assert enforced.tools == []
 
 
 # ── Interpreter middleware tests ──────────────────────────────────────────────

@@ -1,67 +1,68 @@
-# Handoff: Memory Layer — All Issues Resolved
+# Handoff: Tool-calling — RESOLVED (GOAL-0002 M0)
 
-**Date:** 2026-07-02.
-**Status:** All known memory layer issues fixed and verified. 28 tests pass across 3 test files.
+**Status:** Fixed. Tool-calling now works end-to-end via `_ForceToolChoice`
+binding tools onto the model. See `src/core/agent.py` for the implementation
+and `tests/test_graph.py::test_force_tool_choice_*` for the regression tests.
 
-## What Was Fixed
+## What was wrong
 
-### 1. 🔴 `recall_thread_turns` `InvalidStateError` — Fixed
+`eager_tools_langgraph` (added by default via
+`Settings.enable_eager_tools=true`) short-circuits the model call: its
+`awrap_model_call` does `del handler` and calls
+`request.model.astream(...)` directly, **never reaching
+`_get_bound_model`**. With nothing binding tools, the model emitted an
+HTTP request with zero tools — the "I don't have web access" symptom.
 
-**Root Cause**: The `@tool`-decorated async function's `alist` detection used `getattr(checkpointer, "alist", None)` to choose between sync/async checkpointer APIs, but when invoked through the Deep Agents runtime the async path wouldn't fire correctly, causing the code to fall through to the sync ``list()`` method. `AsyncPostgresSaver` raises `InvalidStateError` when its sync methods are called from the event-loop thread.
+The earlier diagnosis (`AnthropicPromptCachingMiddleware` / `_ToolExclusionMiddleware`)
+was wrong: those middlewares do not strip tools. The chain never reached
+them. The bug was one layer up, in eager_tools.
 
-**Fix**: Replaced the `alist` detection with `anyio.to_thread.run_sync(lambda: list(checkpointer.list(...)))`. This runs the sync `list()` on a thread-pool worker — a **different thread** from the event-loop, which `AsyncPostgresSaver` allows. Works with both sync (`InMemorySaver`) and async checkpointers.
+## What the fix does
 
-**Files touched**: `src/core/episodic.py:131-148`
+`_ForceToolChoice` (in `src/core/agent.py`) now does **two** things when
+`request.tools` is non-empty:
 
-### 2. 🧹 Debug Markers Removed
+1. `request.model = request.model.bind_tools(tools, tool_choice=...)` — so
+   when eager_tools (or any other short-circuiting middleware) calls
+   `request.model.astream(...)`, the underlying chat model is already
+   configured for tool dispatch.
+2. `request.tools = []` — so when the normal handler path *is* reached
+   and `_get_bound_model` runs, it falls into its empty-tools branch
+   (`factory.py:1404`) and just applies `model_settings` to the existing
+   binding instead of trying to call `bind_tools` a second time on a
+   `RunnableBinding` (which would `AttributeError` because
+   `RunnableBinding` is not a `BaseChatModel`).
 
-Removed the `print(f"!!! recall_thread_turns CONFIG: ...")` and `print(f"!!! recall_thread_turns ERROR !!! ...")` debug statements, plus the `import sys` and `import traceback` used only by them. Cleaned the error response to remove `traceback`, `marker` fields — only a concise `error` string remains when recall fails.
+The previous version only set `request.tool_choice="auto"` on the
+`ModelRequest`, expecting `_get_bound_model` to honor it. With eager_tools
+short-circuiting, `_get_bound_model` was never called — and the HTTP
+request went out with zero tools.
 
-**Files touched**: `src/core/episodic.py:130-148`
+## How to verify
 
-### 3. 🟡 Seed Namespace Mismatch — Fixed
-
-**Problem**: `seed_memory()` wrote to `("ossia", "default")` but the agent (in user scope) reads from `("ossia", caller_hash)`, so the seed was invisible.
-
-**Fix (two parts)**:
-- **Base namespace**: Changed `AGENT_NAMESPACE` from `("ossia", "default")` to `("ossia",)` — the true agent-level namespace. Startup seed now aligns with agent-scoped reads.
-- **Per-caller seeding**: Added `ensure_caller_memory_seeded(store, caller)` in `memory.py`, called from both `chat` and `chat_stream` handlers in `api.py` before the agent runs. Each caller's namespace gets seeded on first request (idempotent thereafter).
-
-**Files touched**: `src/core/memory.py:36-51`, `src/core/api.py:560-571`
-
-### 4. 🔧 Tool Runtime Refactoring
-
-Refactored all three memory tools to accept the injected `runtime` parameter (matching the `grade_response` pattern in `tools.py`):
-- `semantic_recall`: Now reads store from `runtime.store` instead of the closure, with a fallback to the closure for backward compatibility (direct `tool.ainvoke()` calls in tests)
-- `recall_thread_turns` and `search_threads`: Added `runtime` parameter for signature consistency (closures still needed for checkpointer/search_fn since they aren't available via runtime)
-
-**Files touched**: `src/core/episodic.py`
-
-### 5. ✅ E2E Test Added
-
-`test_recall_through_agent_with_checkpointer` in `tests/test_episodic.py` builds a real Deep Agents agent with `InMemorySaver` + `recall_thread_turns` tool, populates checkpoints via a real graph run, scripts a tool call through a `_FakeToolModel`, and verifies the tool returns correct content through the agent runtime — the exact failure path that was broken before.
-
-## Verification
-
-All 28 tests pass across 3 test files:
 ```bash
-.venv/bin/python -m pytest tests/test_episodic.py tests/test_memory.py tests/test_semantic_recall.py -v
-# → 28 passed in 1.15s
+# The five new regression tests pin the fix:
+.venv/bin/python -m pytest tests/test_graph.py -v -k force_tool_choice
+# All 36 test_graph.py tests still pass.
 ```
 
-| Test file | Count | Status |
-|-----------|-------|--------|
-| `test_episodic.py` | 10 | ✅ All pass (includes new E2E test) |
-| `test_memory.py` | 11 | ✅ All pass |
-| `test_semantic_recall.py` | 8 | ✅ All pass |
+The regression tests cover:
+- Tools are bound onto the model when `request.tools` is non-empty
+- An explicit `tool_choice` (e.g. `"any"` for structured output) is preserved
+- Empty tools = pass-through (no `bind_tools` call)
+- `_ForceToolChoice` is the last middleware in the stack
+- Integration simulation: a downstream short-circuit sees the bound model
 
-Lint (ruff) and typecheck (pyright): clean on all modified files.
+## Why a regression test, not a monkey-patch log
 
-## Key Files Changed
+The previous "next steps" suggested monkey-patching `_get_bound_model` to
+log `request.tools` at runtime. The fix-and-test path is cleaner: pin
+the contract in a unit test so a future change to `_ForceToolChoice` (or
+a different short-circuiting middleware) gets caught immediately.
 
-| File | What changed |
-|------|-------------|
-| `src/core/episodic.py` | Fixed recall_thread_turns with anyio.to_thread.run_sync(); removed debug prints; cleaned error response; added `runtime` params to all 3 memory tools |
-| `src/core/memory.py` | Changed `AGENT_NAMESPACE` to `("ossia",)`; added `ensure_caller_memory_seeded()` helper |
-| `src/core/api.py` | Added per-caller lazy memory seeding in `chat` and `chat_stream` handlers |
-| `tests/test_episodic.py` | Added E2E test `test_recall_through_agent_with_checkpointer`; added `_FakeToolModel` and `import pytest` |
+## Related
+
+- `GOAL-0002-tool-modularization.md` — M0 was the precondition for M1–M5
+- The `request.tools = []` trick is necessary because the pre-bound
+  `RunnableBinding` is not a `BaseChatModel`; see the long docstring on
+  `_ForceToolChoice` in `src/core/agent.py` for the full reasoning.

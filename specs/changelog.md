@@ -5,6 +5,65 @@ Ossia HTTP contract. The machine-readable record is the git history of
 
 ## Unreleased
 
+### Fix: tool-calling now works end-to-end (`_ForceToolChoice`)
+
+The same-day incident documented in `HANDOFF.md` (33 tools in the
+closure, zero tools reaching the LLM) was caused by `eager_tools_langgraph`
+short-circuiting the model call: its `awrap_model_call` does `del handler`
+and calls `request.model.astream(...)` directly, never reaching
+`_get_bound_model`. The previous `_ForceToolChoice` middleware only set
+`request.tool_choice="auto"` on the request, which the short-circuit
+threw away.
+
+`_ForceToolChoice` now binds tools onto the model itself
+(`request.model = request.model.bind_tools(tools, tool_choice=...)`),
+so when eager-tools (or any other short-circuiting middleware) calls
+`request.model.astream(...)`, the underlying chat model is already
+configured for tool dispatch. The original tool-calling
+("I don't have web access") symptom is gone.
+
+The new behavior is pinned by five regression tests in
+`tests/test_graph.py::test_force_tool_choice_*`.
+
+### Change: coordinator tool surface is bounded and modularized
+
+`create_core_tools()` shrank from 16 to 10 tools, and the coordinator's
+per-turn prompt is now bounded regardless of how many MCP connectors
+are active. The internal refactor is invisible to the HTTP contract —
+no `/v1/*` route changed — but it removes a class of tool-calling
+regressions and lowers per-turn token cost.
+
+What moved and where:
+
+- `search_codebase`, `search_knowledge_base` → `code-researcher`
+  subagent (already there; tools stayed on the subagent)
+- `run_tests` → `test-runner` subagent (already there)
+- `propose_fix` → `fix-proposer` subagent (already there)
+- `internet_search`, `fetch_url` → new `research` subagent
+- All MCP tools (unbounded) → new `integrations` subagent, wired
+  only when at least one MCP server is configured
+
+The coordinator still binds `qna_search`, `fetch_issue`, `create_pr`,
+`grade_response`, `send_response`, `search_memory`, `add_memory`,
+`run_bugfix_pipeline`, `run_audit_pipeline`, `run_refactor_pipeline`.
+`sent_response` stays because it's wired into `interrupt_on` for
+human-in-the-loop review; `create_pr` stays because it's a terminal
+action that should require coordinator-level authority.
+
+The new `integrations` subagent exists only when MCP servers are
+configured — its tool list is `MCPToolkit.get_tools()` at build time,
+and the subagent is not wired when the list is empty. A parameterized
+regression test (`test_coordinator_tool_count_is_capped_regardless_of_mcp`
+in `tests/test_mcp_tools.py`) guards the ceiling: 0, 1, 5, 25 MCP
+tools, the coordinator's binding is always 10.
+
+Trade-off: every request that needs `search_codebase`, `run_tests`,
+`internet_search`, `fetch_url`, or an MCP tool pays one subagent
+round-trip. We accepted the cost because (a) the coordinator's tool
+payload was the dominant cost, and (b) the subagent prompts return
+concise summaries so the round-trip is bounded. See `ADR-0017` and
+`GOAL-0002-tool-modularization.md`.
+
 ### New: Nvidia NIM provider (native ChatNVIDIA)
 
 Nvidia NIM is available as a model provider via the native

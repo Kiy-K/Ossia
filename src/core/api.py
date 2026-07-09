@@ -442,6 +442,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             patched = input.model_copy(
                 update={"forwarded_props": {**input.forwarded_props, **forwarded_props}}
             )
+            logger.debug(
+                "AG-UI run starting — thread_id=%s tools_count=%d state_keys=%s",
+                getattr(patched, "thread_id", None),
+                len(getattr(patched, "tools", []) or []),
+                list(getattr(patched, "state", {}).keys()) if getattr(patched, "state", None) else [],
+            )
             async for event_str in self._handle_stream_events(patched):
                 yield event_str
 

@@ -58,8 +58,20 @@ def _env_lock() -> None:
 
 
 def test_openapi_matches_pinned_spec() -> None:
-    """Generated OpenAPI must match the pinned spec verbatim."""
-    current = json.dumps(app.openapi(), indent=2, sort_keys=True) + "\n"
+    """Generated OpenAPI must match the pinned spec verbatim.
+
+    Captures the spec inside a ``TestClient`` context so the lifespan
+    runs and the AG-UI endpoint is registered — that route is added
+    at lifespan-time, not at import-time, and ``app.openapi()`` only
+    includes it once. The previous version called ``app.openapi()``
+    at module level, which made the result order-dependent: it only
+    matched the pinned spec when the test ran before any other test
+    had triggered the lifespan, so the AG-UI route was missing.
+    """
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as _client:
+        current = json.dumps(app.openapi(), indent=2, sort_keys=True) + "\n"
     pinned = SPEC_PATH.read_text(encoding="utf-8")
     if current == pinned:
         return

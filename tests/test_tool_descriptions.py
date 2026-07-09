@@ -92,6 +92,13 @@ def test_core_tool_count_is_stable() -> None:
     Update this assertion when tools are intentionally added or removed.
     """
     tools = _get_tools()
-    assert len(tools) == 16, (
-        f"Expected 16 tools, got {len(tools)}.\nTool names: {[t[0] for t in tools]}"
+    # GOAL-0002 M1+M2: 6 tools moved from the coordinator to subagents.
+    # M1: search_codebase, search_knowledge_base, run_tests, propose_fix
+    #     (4) -> code-researcher, code-researcher, test-runner, fix-proposer.
+    # M2: internet_search, fetch_url (2) -> new research subagent.
+    # See test_subagent_count_is_stable in test_subagent_descriptions.py
+    # for the matching subagent count (was 9, now 10).
+    assert len(tools) == 10, (
+        f"Expected 10 tools (post-M1+M2), got {len(tools)}.\n"
+        f"Tool names: {[t[0] for t in tools]}"
     )
