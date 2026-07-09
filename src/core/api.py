@@ -1320,7 +1320,7 @@ async def delete_thread(
         await app.state.checkpointer.adelete_thread(scoped)
     except Exception as exc:
         logger.warning("Failed to delete thread %s: %s", scoped, exc)
-        return {"deleted": False, "thread_id": scoped, "error": str(exc)}
+        return {"deleted": False, "thread_id": scoped, "error": "Failed to delete thread"}
 
     # Also clear the event buffer for this thread
     from core.events import get_thread_event_buffer

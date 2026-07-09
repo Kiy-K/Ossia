@@ -31,7 +31,7 @@ const API_KEY = process.env.OSSIA_API_KEY ?? "dev";
 // backend server was started with a different key.
 if (process.env.OSSIA_API_KEY && process.env.OSSIA_API_KEY !== "dev") {
   console.warn(
-    `\n  ⚠ OSSIA_API_KEY is set to "${process.env.OSSIA_API_KEY}" (via env),\n` +
+    `\n  ⚠ OSSIA_API_KEY is set to a non-default value (via env),\n` +
     `     but the project default is "dev". Make sure your backend server\n` +
     `     expects the same key, or unset the env var to use the default.\n`,
   );

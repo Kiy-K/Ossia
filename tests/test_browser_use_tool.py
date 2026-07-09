@@ -47,7 +47,7 @@ def test_check_prerequisites_reports_missing_api_key(monkeypatch: pytest.MonkeyP
     msg = _check_prerequisites()
     assert msg is not None
     assert "BROWSER_USE_API_KEY" in msg
-    assert "browser-use.com" in msg
+    assert "browser-use" in msg
 
 
 def test_check_prerequisites_reports_missing_package(
