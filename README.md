@@ -4,10 +4,8 @@
   <a href="https://github.com/Kiy-K/Ossia/actions/workflows/release.yml">
     <img src="https://img.shields.io/github/actions/workflow/status/Kiy-K/Ossia/release.yml?label=CI&logo=github" alt="CI">
   </a>
-  <img src="https://img.shields.io/badge/coverage-84%25-green" alt="coverage">
   <img src="https://img.shields.io/badge/python-3.12-blue" alt="python">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="license">
-  <a href="https://codebuff.com"><img src="https://img.shields.io/badge/built%20with-Codebuff-8B5CF6" alt="built with Codebuff"></a>
 </p>
 
 <p align="center">
@@ -24,13 +22,12 @@ Think of Ossia as a **digital teammate**: it can research your codebase, diagnos
 
 | Problem | Ossia's approach |
 |---|---|
-| Agent frameworks tied to one provider | **Model-agnostic** — OpenRouter, OpenAI, Anthropic, Google, Nvidia NIM, Nebius, or any OpenAI-compatible endpoint |
+| Agent frameworks tied to one provider | **Model-agnostic** — OpenRouter, OpenAI, Anthropic, Google, NVIDIA NIM, Nebius, or any OpenAI-compatible endpoint |
 | Streaming feels like a black box | **Normalized event protocol** — every message, tool call, subagent spawn, and pipeline step is a typed, ordered, replayable event |
 | Subagents are hard to observe | **Concurrent real-time normalization** — coordinator and subagent events stream together in a single ordered feed |
 | Hard to debug agent runs | **Thread replay buffer** — `GET /v1/threads/{id}/events` replays the full event stream for any thread |
 | Hand-written integration glue | **Spec-driven OpenAPI contract** — `specs/openapi.checked.json` is the pinned source of truth; `test_openapi_drift.py` catches drift |
 | One-off scripts instead of API | **Unified `/v1/*` HTTP API** — scripts, notebooks, TUIs all talk to the same FastAPI server |
-| Scattered top-level AI skill dirs | **Clean repo root** — all AI tool state and runtime artifacts are gitignored under `.kilocode/` |
 
 ## Architecture
 
@@ -39,10 +36,10 @@ flowchart TB
     Client["🌐 Client<br/><i>TUI / Web UI / curl / app</i>"]
     Proxy["🚀 Reverse Proxy<br/><i>Caddy / Nginx</i>"]
     API["⚙️ FastAPI Server<br/><i>POST /v1/chat<br/>POST /v1/chat/stream<br/>GET /v1/tools<br/>GET /v1/threads/*<br/>POST /v1/resume<br/>GET /v1/audit<br/>GET /metrics</i>"]
-    MW["🔒 Middleware Stack<br/><i>13 layers: PII → Tool Cache →<br/>Model Retry → Model Fallback →<br/>Circuit Breaker → Tool Retry →<br/>Revision Cap → Tool Limit →<br/>Eager Tools → Code Interpreter →<br/>Subagents → Compact → Advisor →<br/>Caller Context</i>"]
-    LLM["🤖 LLM Provider<br/><i>OpenRouter / OpenAI /<br/>Anthropic / Google /<br/>Nvidia NIM</i>"]
+    MW["🔒 Middleware Stack<br/><i>PII → Tool Cache →<br/>Model Retry → Model Fallback →<br/>Circuit Breaker → Tool Retry →<br/>Revision Cap → Tool Limit →<br/>Eager Tools → Code Interpreter →<br/>Subagents → Compact → Advisor →<br/>Caller Context</i>"]
+    LLM["🤖 LLM Provider<br/><i>OpenRouter / OpenAI /<br/>Anthropic / Google /<br/>Nvidia NIM / Nebius</i>"]
     COORD["🎯 Coordinator Agent"]
-    SUB["🔧 Subagents<br/><i>code-researcher<br/>bug-diagnostician<br/>fix-proposer<br/>test-runner</i>"]
+    SUB["🔧 Subagents<br/><i>code-researcher<br/>bug-diagnostician<br/>fix-proposer<br/>test-runner<br/>ui-debugger<br/>diagram-analyzer<br/>visual-regression-reviewer<br/>web-reviewer</i>"]
     ASYNC["⏳ Async Subagent<br/><i>researcher</i>"]
     PIPE["🏗️ Pipelines<br/><i>bugfix / audit / refactor</i>"]
     TOOLS["🛠️ Tools<br/><i>search_codebase<br/>internet_search<br/>run_tests<br/>grade_response<br/>send_response</i>"]
@@ -86,14 +83,14 @@ flowchart TB
 
 ### Subsystems at a glance
 
-Ossia's architecture is composed of six interconnected subsystems, each documented in its own Architecture Decision Record (ADR) with detailed Mermaid diagrams:
+Ossia's architecture is composed of interconnected subsystems, each documented in its own Architecture Decision Record (ADR) with detailed Mermaid diagrams:
 
 | Subsystem | ADR | What it does | Key diagram |
 |-----------|-----|-------------|-------------|
 | **API Gateway** | [ADR-0014](docs/adr/0014-standalone-deployment.md) | FastAPI server, auth (Argon2), rate limiting, `/v1/*` routes | [Deployment topology](docs/diagrams.md#5-deployment-topology) |
-| **Middleware Stack** | [ADR-0013](docs/adr/0013-production-readiness-middleware-stack.md) | 13-layer defense-in-depth: PII → Tool Cache → model retry/fallback → circuit breaker → tool retry → caps → eager tools → code interpreter → subagents → compact → advisor → caller context | [Stack order](docs/diagrams.md#2-middleware-stack) + [Request flow](docs/diagrams.md#3-request-flow-sequence) |
+| **Middleware Stack** | [ADR-0013](docs/adr/0013-production-readiness-middleware-stack.md) | Defense-in-depth: PII → tool cache → model retry/fallback → circuit breaker → tool retry → caps → eager tools → code interpreter → subagents → compact → advisor → caller context | [Stack order](docs/diagrams.md#2-middleware-stack) + [Request flow](docs/diagrams.md#3-request-flow-sequence) |
 | **Agent Runtime** | [ADR-0008](docs/adr/0008-subagent-design-and-routing.md) | Coordinator delegates to subagents with scoped tool permissions | [Subagent routing](docs/diagrams.md#1-subagent-routing) |
-| **Event Streaming** | [ADR-0006](docs/adr/0006-streaming-v3-protocol.md) | v3 stream → normalizer (5 concurrent relays) → typed events → SSE | [Event pipeline](docs/diagrams.md#4-event-stream-pipeline) |
+| **Event Streaming** | [ADR-0006](docs/adr/0006-streaming-v3-protocol.md) | v3 stream → normalizer (4 concurrent relays) → typed events → SSE | [Event pipeline](docs/diagrams.md#4-event-stream-pipeline) |
 | **Memory & Persistence** | [ADR-0007](docs/adr/0007-agent-scoped-memory-and-episodic-recall.md) | Postgres + in-memory store, per-caller namespaces, thread replay buffer | [Deployment topology](docs/diagrams.md#5-deployment-topology) |
 | **Orchestrator Pipelines** | [ADR-0008](docs/adr/0008-subagent-design-and-routing.md) | bugfix/audit/refactor pipelines via code interpreter with multi-step workflows | [Subagent routing](docs/diagrams.md#1-subagent-routing) |
 | **Terminal UI** | `src/tui/` | OpenTUI/React 19 terminal client consuming `/v1/chat/stream` over SSE | [TUI README](src/tui/README.md) |
@@ -105,9 +102,9 @@ A typical request flows through the stack as follows:
 
 1. **Client** sends a request to `POST /v1/chat` via the reverse proxy (Caddy on port 443)
 2. **FastAPI** authenticates via `X-API-Key` (Argon2 caller-id derivation), sets rate limits, injects `request_id` and `caller` context
-3. **Middleware stack** processes the request through 13 layers — PII redaction strips secrets, tool cache short-circuits repeated reads, model retry/fallback handles provider failures, circuit breaker blocks dead services, tool retry adds backoff, revision cap and tool-call limit prevent runaway agents, eager-tools dispatches tool calls concurrently for lower latency, code interpreter runs sandboxed JS, subagents fan out work, compact middleware manages context window pressure, and caller context injects identity
+3. **Middleware stack** processes the request through its layers — PII redaction strips secrets, tool cache short-circuits repeated reads, model retry/fallback handles provider failures, circuit breaker blocks dead services, tool retry adds backoff, revision cap and tool-call limit prevent runaway agents, eager-tools dispatches tool calls concurrently for lower latency, code interpreter runs sandboxed JS, subagents fan out work, compact middleware manages context window pressure, and caller context injects identity
 4. **Deep Agent runtime** invokes the coordinator, which may delegate to subagents or call tools
-5. **EventNormalizer** converts the v3 stream into typed events in real-time via 5 concurrent relays
+5. **EventNormalizer** converts the v3 stream into typed events in real-time via 4 concurrent relays
 6. **Response** flows back through the middleware stack in reverse, serialized as SSE events or a JSON response
 7. **Cleanup** clears context vars, emits Prometheus metrics, stores events in the thread buffer for replay
 
@@ -122,7 +119,7 @@ make env
 # 2. Edit .env with your API keys
 #    vim .env   (set OSSIA_API_KEY and OPENROUTER_API_KEY)
 
-# 3. Install dependencies
+# 3. Install dependencies (uv-managed — creates .venv, installs from uv.lock)
 make install
 
 # 4. Start the dev server
@@ -130,7 +127,7 @@ make dev
 
 # 5. Test it with curl, or open the Web UI:
 curl -X POST http://localhost:8000/v1/chat \
-  -H "X-API-Key: dev" \
+  -H "X-API-Key: ***" \
   -H "Content-Type: application/json" \
   -d '{"message": "Hello!"}'
 
@@ -154,13 +151,13 @@ curl http://localhost/metrics                   # → Prometheus metrics
 
 # 3. Chat through the proxy
 curl -X POST http://localhost/v1/chat \
-  -H "X-API-Key: dev" \
+  -H "X-API-Key: ***" \
   -H "Content-Type: application/json" \
   -d '{"message": "Hello!"}'
 
 # 4. Stream
 curl -X POST http://localhost/v1/chat/stream \
-  -H "X-API-Key: dev" \
+  -H "X-API-Key: ***" \
   -H "Content-Type: application/json" \
   -d '{"message": "Explain the architecture"}'
 ```
@@ -168,15 +165,15 @@ curl -X POST http://localhost/v1/chat/stream \
 ### Raw (no Docker)
 
 ```bash
-# Install dependencies
-uv pip install -e ".[dev,notebook]"
+# Install dependencies (uv sync from uv.lock)
+uv sync --locked
 
 # Start the server
 OSSIA_API_KEY=dev .venv/bin/python -m uvicorn core.api:app --host 127.0.0.1 --port 8000
 
 # Chat
 curl -X POST http://localhost:8000/v1/chat \
-  -H "X-API-Key: dev" \
+  -H "X-API-Key: ***" \
   -H "Content-Type: application/json" \
   -d '{"message": "What files are in the project?"}'
 ```
@@ -190,7 +187,7 @@ The project includes a `Makefile` with 40+ targets organized by category. Run `m
 | **Setup** | `make install`, `make env` — install deps, create `.env` |
 | **Development** | `make dev`, `make lint`, `make typecheck`, `make check` |
 | **Testing** | `make test`, `make test-focused path=...`, `make test-coverage` |
-| **Docker** | `make docker-up`, `make docker-down`, `make docker-logs`, `make docker-ps` |
+| **Docker** | `make docker-build`, `make docker-up`, `make docker-down`, `make docker-logs`, `make docker-ps` |
 | **Monitoring** | `make monitor-up`, `make monitor-down`, `make monitor-logs`, `make metrics` |
 | **Quality** | `make audit`, `make eval`, `make openapi-drift` |
 | **Spec** | `make spec-docs`, `make spec-coverage`, `make changelog` |
@@ -237,7 +234,7 @@ make monitor-up
 |-----------|--------|---------|
 | **Prometheus** | `http://localhost:9090` | Scrapes `/metrics` from ossia every 15s. 30d retention. |
 | **Loki** | `http://localhost:3100` | Aggregates Docker container logs |
-| **Grafana** | `http://localhost:3000` (admin/ossia) | 11-panel pre-loaded dashboard |
+| **Grafana** | `http://localhost:3000` (admin/ossia) | Pre-loaded dashboard |
 
 The Grafana dashboard includes:
 - Request rate and HTTP status code distribution
@@ -250,7 +247,7 @@ The Grafana dashboard includes:
 ## Key Capabilities
 
 ### Model-Agnostic Runtime
-Plug in any provider via a single env var: `OpenRouter`, `OpenAI`, `Anthropic`, `Google Gemini`, or any OpenAI-compatible endpoint. The agent framework, tools, subagents, and pipeline logic are entirely provider-independent.
+Plug in any provider via a single env var: `OpenRouter`, `OpenAI`, `Anthropic`, `Google Gemini`, `NVIDIA NIM`, `Nebius`, or any OpenAI-compatible endpoint. The agent framework, tools, subagents, and pipeline logic are entirely provider-independent.
 
 ### Real-Time Event Streaming
 The EventNormalizer converts the raw DeepAgent v3 stream into a typed, ordered event protocol — coordinator messages, subagent lifecycle, tool calls, pipeline steps, async tasks, and multimodal artifacts all stream in a single ordered feed via SSE.
@@ -259,7 +256,7 @@ The EventNormalizer converts the raw DeepAgent v3 stream into a typed, ordered e
 Every streamed run's normalized events are stored in an in-memory buffer. Clients can late-join or replay via `GET /v1/threads/{id}/events` — useful for session recovery, debugging, and audit.
 
 ### Subagent Delegation
-7 synchronous subagents (`code-researcher`, `bug-diagnostician`, `fix-proposer`, `test-runner`, `ui-debugger`, `diagram-analyzer`, `visual-regression-reviewer`) and 1 async subagent (`researcher`) handle specialized work without filling the coordinator's context.
+8 named synchronous subagents (`code-researcher`, `bug-diagnostician`, `fix-proposer`, `test-runner`, `ui-debugger`, `diagram-analyzer`, `visual-regression-reviewer`, `web-reviewer`) and 1 async subagent (`researcher`) handle specialized work without filling the coordinator's context.
 
 ### Programmatic Pipelines
 Three orchestrator pipelines (`run_bugfix_pipeline`, `run_audit_pipeline`, `run_refactor_pipeline`) automate multi-step workflows via the code interpreter — diagnose → propose → test, or research → report, or research → plan → rewrite → validate.
@@ -274,16 +271,7 @@ Human-in-the-loop interrupts on sensitive actions (`send_response`). Reviewers c
 The OpenAPI spec at `specs/openapi.checked.json` is the pinned source of truth. `pytest -k openapi_drift` catches any drift between the code and the contract. Breaking changes bump the URL prefix.
 
 ### Security Hardening
-All code scanning alerts are resolved (0 open). Caller authentication uses
-**Argon2id** for key hashing (memory-hard, GPU-resistant). The eval endpoint
-uses a hardcoded dataset path to prevent path traversal. Web search fallback
-uses the modern `ddgs` package. See `specs/changelog.md` for details.
-
-### Clean Repo Root
-All AI tool state, runtime artifacts, and skill directories are scoped to a
-single `.kilocode/` directory at the repo root — no more scattered `.claude/`,
-`.windsurf/`, `.openhands/`, or `.firecrawl/` directories littering the tree.
-The `.gitignore` keeps everything but `kilocode.json` out of version control.
+All code scanning alerts are resolved (0 open). Caller authentication uses **Argon2id** for key hashing (memory-hard, GPU-resistant). The eval endpoint uses a hardcoded dataset path to prevent path traversal. Web search fallback uses the modern `ddgs` package. See `specs/changelog.md` for details.
 
 ## Finishing Touches
 
@@ -355,6 +343,7 @@ All settings are driven by environment variables parsed through Pydantic in `src
 | `OPENAI_API_KEY` | OpenAI key | — |
 | `ANTHROPIC_API_KEY` | Anthropic key | — |
 | `GOOGLE_API_KEY` | Google Gemini key | — |
+| `NEBIUS_API_KEY` | Nebius key | — |
 | `NVIDIA_API_KEY` | Nvidia NIM key (free at build.nvidia.com) | — |
 | `NIM_BASE_URL` | Nvidia NIM base URL | `https://integrate.api.nvidia.com/v1` |
 | `POSTGRES_URL` | Postgres DSN for checkpointing | — |
@@ -365,6 +354,8 @@ All settings are driven by environment variables parsed through Pydantic in `src
 | `GRAFANA_PASSWORD` | Grafana admin password | `ossia` |
 | `PROMETHEUS_RETENTION` | Prometheus data retention period | `30d` |
 | `LOG_DRIVER` | Docker log driver | `json-file` |
+
+> **Note:** `OSSIA_API_KEY` and a provider key (e.g. `OPENROUTER_API_KEY`) are **required for the server to boot** — the FastAPI lifespan builds the agent at startup and fails fast if no provider key is configured.
 
 ### Community Middleware Settings
 
@@ -389,12 +380,12 @@ src/
                      # sessions, middleware_adapters
   tui/               # Terminal UI (bun + OpenTUI/React)
   webui/             # Web UI (React + Vite + Tailwind v4)
-tests/               # 100+ tests across all modules
+tests/               # Test suite (pytest)
 scripts/             # Audit, eval, OpenAPI spec generation, coverage matrix
 specs/               # OpenAPI contract, changelog, feature specs, coverage
 monitoring/          # Prometheus, Loki, Grafana configs
 docs/
-  adr/               # Architecture Decision Records (0001..0015)
+  adr/               # Architecture Decision Records (0001..0017)
   agents/            # Agent context reference
   skills/            # Loadable skill files (web-search, code-review)
   diagrams.md        # 📊 Index of all architecture diagrams
@@ -422,6 +413,20 @@ docker compose --profile monitoring up -d
 # Raw process
 .venv/bin/python -m uvicorn core.api:app --host 0.0.0.0 --port 8000
 ```
+
+### ⚠️ A note on `langgraph build` / `langgraph.json`
+
+The repo includes `langgraph.json` registering four graph modules (`supervisor`, `researcher`, `tester`, `auditor`) for use with the **LangGraph Agent Server** (`langgraph build` / `langgraph up`). **This path is not free:**
+
+- Running the standalone Agent Server requires a **`LANGGRAPH_CLOUD_LICENSE_KEY`** (authenticated once at startup).
+- It also requires **Redis + Postgres** backing services and egress to `beacon.langchain.com` for license verification.
+- The LangGraph docs explicitly warn **not** to run it in serverless/scale-to-zero environments (task loss).
+
+For self-hosted, license-free deployment — including the Nebius Serverless Challenge — **use `make docker-build` (plain `docker build .`)**, which serves your `core.api:app` directly via uvicorn. No license, no mandatory datastores, runs on any persistent VM.
+
+**About the graphs in `langgraph.json` and async subagents:** the `researcher`, `tester`, and `auditor` graph IDs registered there correspond to the agent's subagent roles. Per ADR-0016, only `researcher` is actually wired as a runtime **async subagent** (`AsyncSubAgentMiddleware` registers `graph_id="researcher"`); `tester` and `auditor` are covered by sync declarative subagents and the `run_audit_pipeline` tool, not by the LangGraph-hosted graphs. So the `tester`/`auditor` entries in `langgraph.json` are latent — they'll only execute if you stand up the (licensed) LangGraph Agent Server and point the async middleware at them. In the license-free `docker build` path, subagents run entirely inside `core.agent` via DeepAgents' own `SubAgentMiddleware` and need no LangGraph server at all.
+
+The `langgraph.json` entries are only relevant if you specifically want the LangGraph Platform API surface (threads/runs/assistants) and accept the license requirement.
 
 ## License
 
