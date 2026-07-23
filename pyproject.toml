@@ -46,7 +46,7 @@ dependencies = [
     "langgraph-checkpoint-postgres>=3.0.0",
     "psycopg[binary]>=3.2.0",
     # MCP client for LangChain docs server
-    "mcp>=1.0.0",
+    "mcp>=1.28.1",
     "httpx>=0.28.0",
     "httpx-sse>=0.4.0",
     # Web search and URL extraction (primary path)
